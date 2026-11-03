@@ -41,6 +41,7 @@ B:  v ← v + (Δt/2) F/m
 `V = ONE_4PI_EPS0 · q_i q_j · exp(−κ r) / (ε_r · r)`, ε_r = 78.5 (Default), κ aus Ionenstärke.
 
 **Cutoff:** Beide Terme mit Switching-Funktion zwischen r_s und r_c (Default r_s = 1.8, r_c = 2.0 nm; bei κ⁻¹ ≈ 0.8 nm für 150 mM ist DH bei r_c auf < 1 % abgefallen). Box-Bedingung: L_x, L_y ≥ 2 r_c.
+Switching wie OpenMM (`useSwitchingFunction`): `V = (V_LJ + V_el)·S(r)` mit `S = 1 − 10x³ + 15x⁴ − 6x⁵ = (1−x)³(1 + 3x + 6x²)`, `x = (r − r_s)/(r_c − r_s)` für r_s < r < r_c (S = 1 darunter, 0 darüber); die Kraft enthält den Term −V·dS/dr. Im Kernel faktorisiert ausgewertet (keine Auslöschung für x → 1).
 
 **Exclusions:** 1-2 und 1-3 vollständig ausgeschlossen, 1-4 im Non-Bonded-Kernel ausgeschlossen (werden in der Bonded-Stufe skaliert berechnet). Kodierung als 32-bit-Bitmaske pro (Atom, Tile).
 
