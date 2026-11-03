@@ -187,3 +187,12 @@ x = sim.positions(dlpack=True)   # Zero-Copy nach CuPy/PyTorch
 - Topologie je Replica (ADR 0005): LJ-Typtabelle (T × T, (σ, ε), Typ 0 = Padding mit ε = 0, im Shared
   Memory) und Exclusion-Bitmasken je Tile-Paar (`mask_index` −1 = keine). Erzeugung im Python-Builder
   `biooptomd.nonbonded.nonbonded_topology()`; LJ-Typen der Atome in `types[..., 0]`.
+
+### 3.4 Constraints und HMR (Phase 5)
+
+- `ConstraintSet` (`src/core/constraints.*`) gehört zum `SimulationContext` (kein ForcePlugin, weil es in
+  die Integrator-Teilschritte eingreift): `ctx.set_constraints(topologies, replica_topology, tolerance)`.
+- Mit Constraints läuft BAOAB in Teilschritten (Kernels B, A, O + Cluster-Kernels SHAKE/RATTLE); ohne
+  Constraints bleibt der fusionierte Kernel (bitidentisch zu Phase 2).
+- Python-Builder `biooptomd.constraints`: `repartition_hydrogen_mass` (HMR), `constraint_topology`
+  (Cluster + kovalente Topologie ohne constrainte Bindungen).

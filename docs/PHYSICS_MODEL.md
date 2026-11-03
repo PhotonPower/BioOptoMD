@@ -23,6 +23,7 @@ B:  v ← v + (Δt/2) F/m
 - Mit Constraints (Phase 5): Positions-Constraints nach jedem A, Geschwindigkeits-Constraints (RATTLE) nach jedem B und nach O.
 - Atome mit `inv_mass = 0` bewegen sich nicht und erhalten kein Rauschen.
 - Freiheitsgrade pro Replica: `N_dof = 3·N_mobile − N_constraints` (kein Abzug für Schwerpunkt, da die Wand Translationsinvarianz in z bricht und Langevin ohnehin keinen Impuls erhält).
+- **Bekannte Eigenschaft (gemessen in Phase 5):** BAOAB sampelt Konfigurationen sehr genau, die kinetische Temperatur aus den Geschwindigkeiten am vollen Schritt ist aber um O(Δt²) zu niedrig (harmonischer Oszillator: ⟨p²⟩/m = kT·(1 − ω²Δt²/4)). Duplex-System, HMR + H-Constraints, 300 K: T_kin = 268 / 292 / 298 / 299.5 K bei Δt = 4 / 2 / 1 / 0.5 fs, ⟨E_pot⟩ dagegen unabhängig von Δt. Konfigurationsgrößen (E_pot, Geometrie, n(z)) sind daher die verlässlichen Observablen; die „Temperatur“ aus `energies()` ist bei 4 fs kein Maß für die Thermostat-Temperatur (OQ-11).
 
 ## 2. Kovalente Terme (Phase 3)
 
@@ -81,7 +82,7 @@ V_i(z) = q_i Φ₀ exp(−κ z),     F_z,i = q_i Φ₀ κ exp(−κ z)
 ## 5. Constraints & HMR (Phase 5)
 
 - **HMR:** Wasserstoffmasse auf 3.024 amu, Differenz vom gebundenen Schweratom abgezogen (Gesamtmasse erhalten).
-- **H-Bindungs-Constraints:** SHAKE/RATTLE, parallelisiert über Cluster (Schweratom + seine H-Atome), Toleranz 1e-6 relativ.
+- **H-Bindungs-Constraints:** SHAKE/RATTLE, parallelisiert über Cluster (Schweratom + seine H-Atome, ≤ 3 H), Toleranz 1e-6 relativ. Ein Thread pro Cluster, FP64 auf dem Mixed-Precision-Zustand (ADR 0007). Ablauf: B, RATTLE, A+SHAKE (Geschwindigkeitskorrektur v += Δx/(Δt/2)), O, RATTLE, A+SHAKE, Kräfte, B, RATTLE. Constrainte Bindungen werden aus dem Bindungsterm entfernt (wie OpenMM `constraints=HBonds`). Nicht-Konvergenz setzt `STATUS_CONSTRAINT_FAILURE`.
 - Ziel: Δt = 4 fs stabil bei 300 K mit implizitem Lösungsmittel.
 
 ## 6. In-situ Optik-Observer (Phase 6)
