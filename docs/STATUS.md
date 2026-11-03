@@ -2,8 +2,8 @@
 
 > Diese Datei wird am Ende **jeder** Arbeitssitzung aktualisiert (AGENTS.md §2.4).
 
-**Aktive Phase:** 3 – Kovalente Kräfte
-(Implementierung vollständig, alle Abnahmetests grün auf RTX 3090; **Abnahme durch den Projektinhaber offen**)
+**Aktive Phase:** 4 – Nicht-kovalente Kräfte (Tiled All-Pairs)
+**Phase 3 abgenommen** am 2026-11-03 durch den Projektinhaber (RTX 3090).
 **Referenz-Hardware:** RTX 6000 Ada 48 GB (CC 8.9), Host 1 TB RAM
 
 ## Abgeschlossen
