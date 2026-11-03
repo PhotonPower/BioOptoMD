@@ -57,6 +57,9 @@ __global__ void k_wrap_xy(DeviceState s) {
   const float2 box = s.d_box[r];
   float4 p = s.d_pos[i];
   int2 img = s.d_image[i];
+  // ADR 0006: außerhalb |x/L| < 2^20 ist der FP32-Wrap nicht mehr exakt genug.
+  if (!(fabsf(p.x) < 1048576.0f * box.x && fabsf(p.y) < 1048576.0f * box.y))
+    atomicOr(s.d_status, kStatusWrapRange);
   img.x += wrap_coordinate(p.x, box.x);
   img.y += wrap_coordinate(p.y, box.y);
   s.d_pos[i] = p;  // z und q unverändert.

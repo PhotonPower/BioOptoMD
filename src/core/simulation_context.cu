@@ -43,6 +43,7 @@ SimulationContext::SimulationContext(int n_replicas, int n_atoms, int device) : 
   box_ = DeviceBuffer<float2>(n_replicas);
   temperature_ = DeviceBuffer<float>(n_replicas);
   image_ = DeviceBuffer<int2>(n_total);
+  status_ = DeviceBuffer<unsigned int>(1);
   energy_frame_ =
       DeviceBuffer<double>(static_cast<std::size_t>(n_replicas) * detail::kEnergyFrameColumns);
   // Blockierender Stream ⇒ implizit geordnet mit dem Legacy-Default-Stream (z. B. von CuPy).
@@ -58,6 +59,7 @@ SimulationContext::SimulationContext(int n_replicas, int n_atoms, int device) : 
   box_.zero_async(stream_.get());
   temperature_.zero_async(stream_.get());
   image_.zero_async(stream_.get());
+  status_.zero_async(stream_.get());
 
   state_.n_replicas = n_replicas;
   state_.n_atoms = n_atoms;
@@ -71,6 +73,7 @@ SimulationContext::SimulationContext(int n_replicas, int n_atoms, int device) : 
   state_.d_box = box_.data();
   state_.d_temperature = temperature_.data();
   state_.d_image = image_.data();
+  state_.d_status = status_.data();
 
   synchronize();
 }
@@ -87,6 +90,19 @@ SimulationContext::~SimulationContext() {
 
 void SimulationContext::activate() const {
   BOMD_CUDA_CHECK(cudaSetDevice(device_));
+}
+
+unsigned int SimulationContext::status() {
+  activate();
+  unsigned int value = 0;
+  status_.download_async(&value, stream_.get());
+  synchronize();
+  return value;
+}
+
+void SimulationContext::clear_status() {
+  activate();
+  status_.zero_async(stream_.get());
 }
 
 void SimulationContext::synchronize() {

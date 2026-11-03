@@ -73,6 +73,11 @@ class SimulationContext {
   void set_temperatures(const float* t_k);
   bool box_is_set() const { return box_set_; }
 
+  /// Geräte-Statuswort (Bits bomd::StatusBit, ADR 0006). Synchronisiert.
+  unsigned int status();
+  /// Setzt das Statuswort auf 0 (asynchron).
+  void clear_status();
+
   // --- Kernels (asynchron auf stream()) ----------------------------------------------------
 
   /// d_force_fp und d_energy_fp auf 0 setzen.
@@ -158,6 +163,7 @@ class SimulationContext {
   DeviceBuffer<float2> box_;
   DeviceBuffer<float> temperature_;
   DeviceBuffer<int2> image_;
+  DeviceBuffer<unsigned int> status_;
 
   DeviceBuffer<double> energy_frame_;  // Arbeitspuffer für energy_frame()
 

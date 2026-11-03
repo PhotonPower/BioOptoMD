@@ -9,7 +9,7 @@ import pytest
 from philox_ref import KAT, philox4x32_10
 from restraint_ref import com_pulling, com_pulling_work_increment, position_restraint
 from scipy import stats
-from surface_ref import gouy_chapman, surface_energy_force
+from surface_ref import clamp_distance, gouy_chapman, surface_energy_force
 
 pytestmark = pytest.mark.gpu
 
@@ -304,7 +304,8 @@ def test_philox_kat_on_device():
 
 
 def test_surface_vs_numpy():
-    """9-3-Wand + Gouy-Chapman gegen NumPy: mehrere Typen, ε = 0, Clamp, unbekannter Typ."""
+    """9-3-Wand + Gouy-Chapman gegen NumPy: mehrere Typen, ε = 0, Clamp mit Kraftschranke
+    (ADR 0006), unbekannter Typ. Alle Kräfte werden verglichen, auch an der Wand."""
     rng = np.random.default_rng(17)
     n = 500
     eps = np.array([2.0, 0.0, 5.0], np.float32)
@@ -312,11 +313,11 @@ def test_surface_vs_numpy():
     z0, clamp, phi0, kappa = 0.2, 0.1, 3.0, 1.5
     ctx = _ctx(2, n)
     xyz = rng.uniform(0.0, 5.0, (2, n, 3)).astype(np.float32)
-    xyz[..., 2] = rng.uniform(z0 + 0.08, z0 + 2.0, (2, n))  # Energien < 2^31 (OQ-10)
-    xyz[:, :1, 2] = z0 + 0.01  # unterhalb ζ_c = 0.1·σ ⇒ Clamp
+    xyz[..., 2] = rng.uniform(z0 + 0.01, z0 + 2.0, (2, n))  # inkl. Bereich unterhalb ζ_c
+    xyz[:, :5, 2] = z0 + 0.01  # sicher unterhalb ζ_c ⇒ Clamp
     types = np.zeros((2, n, 2), np.int32)
     types[..., 1] = rng.integers(0, 3, (2, n))
-    types[:, :1, 1] = 0
+    types[:, :5, 1] = 0
     types[1, -1, 1] = 7  # unbekannter Typ ⇒ keine Wand, Zähler
     q = rng.uniform(-1, 1, (2, n)).astype(np.float32)
     ctx.set_positions(xyz)
@@ -333,17 +334,17 @@ def test_surface_vs_numpy():
         xyz[..., 2].astype(np.float64), q.astype(np.float64), e_t, s_t, z0, clamp, phi0, kappa
     )
     f = ctx.forces()[:, :n].astype(np.float64)
-    # Am Clamp-Punkt ist |F| ≈ 1e11 > 2^31 (Fixed-Point-Grenze, ADR 0002) – siehe OQ-10.
-    # Kräfte nur im darstellbaren Bereich vergleichen; geclampte Atome über Energie/Zähler.
-    representable = np.abs(f_ref) < 2.0**30
-    assert (~representable).sum() >= clamped.sum()
-    np.testing.assert_allclose(f[..., 2][representable], f_ref[representable], rtol=2e-5, atol=1e-4)
-    assert np.all(f[..., 2][clamped] > 1e9), "geclampte Atome: Kraft muss repulsiv und groß sein"
+    np.testing.assert_allclose(f[..., 2], f_ref, rtol=2e-5, atol=1e-4)
+    assert np.abs(f[..., 2]).max() <= 1.0e6 * (1 + 1e-5), "Kraftschranke am Clamp verletzt"
     assert not f[..., :2].any()
     e_gpu = ctx.energies()[:, TERM["surface"]]
     np.testing.assert_allclose(e_gpu, e_ref.sum(axis=1), rtol=1e-5)
-    assert surf.clamp_count() == clamped.sum() == 2
+    assert surf.clamp_count() == clamped.sum() >= 10
     assert surf.unknown_type_count() == 1
+    zeta_c = [clamp_distance(float(e), float(s), clamp) for e, s in zip(eps, sigma, strict=True)]
+    np.testing.assert_allclose(surf.clamp_distances(), zeta_c, rtol=1e-6)
+    assert zeta_c[0] > clamp * sigma[0], "ζ_F muss für ε = 2 den 0.1·σ-Clamp dominieren"
+    assert ctx.status() == 0, "keine Sättigung bei begrenzter Wandkraft"
     assert not ctx.forces()[:, n:].any(), "Padding-Atome erhalten Kraft"
 
 
@@ -504,3 +505,41 @@ def test_pulling_follows_mass_change_and_dt_change():
     ctx.set_integrator(0.001, 1.0, seed=0)
     ctx.step(10)
     assert ctx.time == pytest.approx(0.03)
+
+
+def test_fixed_point_saturation_and_status():
+    """ADR 0006: Beiträge > 2^30 werden gesättigt, NaN zu 0; beides setzt Statusbits."""
+    ctx = _ctx(1, 4)
+    assert ctx.status() == 0
+    atom = np.array([0, 0, 1, 2], np.int32)
+    f = np.array(
+        [[1e12, -1e12, 5.0], [1e3, 0.0, 0.0], [3.0, 0.0, 0.0], [np.nan, 1.0, 0.0]], np.float32
+    )
+    ctx.clear_forces()
+    _core.testing.accumulate_forces(ctx, atom, f)
+    ctx.fixed_point_to_float()
+    fp = ctx.forces_fixed_point()[:, 0, :4]
+    limit = 2**30 * 2**32
+    # Ein gesättigter Beitrag + 1e3. (Zwei gesättigte gleichgerichtete Beiträge würden 2^63
+    # erreichen und überlaufen – laut ADR 0006 nicht verhinderbar, aber per Flag erkannt.)
+    assert fp[0, 0] == limit + 1000 * 2**32
+    assert fp[1, 0] == -limit and fp[2, 0] == 5 * 2**32
+    assert fp[0, 1] == 3 * 2**32
+    assert fp[0, 2] == 0 and fp[1, 2] == 2**32  # NaN → 0, Rest unverändert
+    status = ctx.status()
+    assert status & _core.STATUS_FIXED_POINT_SATURATED
+    assert status & _core.STATUS_NON_FINITE
+    assert not status & _core.STATUS_WRAP_RANGE
+    ctx.clear_status()
+    assert ctx.status() == 0
+
+
+def test_wrap_range_status():
+    """ADR 0006: wrap_xy mit |x/L| >= 2^20 setzt STATUS_WRAP_RANGE (z. B. explodierende Atome)."""
+    ctx = _ctx(1, 4, box=2.0)
+    ctx.set_positions(np.ones((1, 4, 3), np.float32))
+    ctx.wrap_xy()
+    assert ctx.status() == 0
+    _core.testing.shift_x(ctx, 3.0e6)  # 3e6 / 2 > 2^20
+    ctx.wrap_xy()
+    assert ctx.status() == _core.STATUS_WRAP_RANGE

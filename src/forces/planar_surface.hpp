@@ -16,8 +16,10 @@ struct PlanarSurfaceParams {
   std::vector<float> epsilon_kj_mol;
   /// σ_w pro Oberflächen-Typ [nm], >= 0; σ = 0 ⇒ keine Wand.
   std::vector<float> sigma_nm;
-  float z0_nm = 0.0f;          ///< Lage der Wand [nm]
-  float clamp_factor = 0.1f;   ///< ζ wird auf >= clamp_factor·σ geclampt (> 0)
+  float z0_nm = 0.0f;         ///< Lage der Wand [nm]
+  float clamp_factor = 0.1f;  ///< ζ_c >= clamp_factor·σ (> 0)
+  /// Kraftschranke am Clamp (ADR 0006): ζ_c >= ζ_F mit |F_wall(ζ_F)| = max_force [kJ/mol/nm].
+  float max_force_kj_mol_nm = 1.0e6f;
   float phi0_kj_mol_e = 0.0f;  ///< Φ0 [kJ/(mol·e)], 0 ⇒ kein Gouy-Chapman-Term
   float kappa_per_nm = 0.0f;   ///< inverse Debye-Länge κ [1/nm], >= 0
 };
@@ -32,6 +34,8 @@ class PlanarSurfaceForce final : public ForcePlugin {
   void compute(DeviceState& s, cudaStream_t stream) override;
 
   const PlanarSurfaceParams& params() const { return params_; }
+  /// ζ_c,t = max(clamp_factor·σ_t, ζ_F,t) pro Typ [nm] (0 für Typen ohne Wand).
+  const std::vector<float>& clamp_distances() const { return zeta_c_; }
   /// Anzahl Kraftauswertungen mit geclamptem ζ seit dem letzten reset_counters() (synchronisiert).
   std::uint64_t clamp_count() const;
   /// Anzahl Auswertungen mit Oberflächen-Typ >= Anzahl Typen (keine Wand angewendet).
@@ -43,7 +47,8 @@ class PlanarSurfaceForce final : public ForcePlugin {
 
   PlanarSurfaceParams params_;
   SimulationContext* ctx_ = nullptr;
-  DeviceBuffer<float2> type_params_;           // (ε, σ) pro Typ
+  std::vector<float> zeta_c_;
+  DeviceBuffer<float4> type_params_;           // (ε, σ, ζ_c, 0) pro Typ
   DeviceBuffer<unsigned long long> counters_;  // [clamp, unknown_type]
 };
 

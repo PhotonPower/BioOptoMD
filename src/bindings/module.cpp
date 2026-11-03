@@ -138,6 +138,10 @@ NB_MODULE(_core, m) {
 
   m.attr("TILE_SIZE") = bomd::kTileSize;
   m.attr("N_ENERGY_TERMS") = static_cast<int>(bomd::kNumEnergyTerms);
+  m.attr("STATUS_FIXED_POINT_SATURATED") =
+      static_cast<unsigned int>(bomd::kStatusFixedPointSaturated);
+  m.attr("STATUS_NON_FINITE") = static_cast<unsigned int>(bomd::kStatusNonFinite);
+  m.attr("STATUS_WRAP_RANGE") = static_cast<unsigned int>(bomd::kStatusWrapRange);
 
   // Kompilierte Konstanten aus units.hpp (Test: test_units.py).
   auto units = m.def_submodule("units", "Konstanten aus include/biooptomd/units.hpp.");
@@ -228,6 +232,9 @@ NB_MODULE(_core, m) {
            "x/y echter Atome nach [0, L) wrappen, Imagezähler fortschreiben (asynchron).")
       .def("compute_forces", &SimulationContext::compute_forces,
            "clear_forces → Nonbonded → ForcePlugins → fixed_point_to_float (asynchron).")
+      .def("status", &SimulationContext::status,
+           "Geräte-Statuswort (Bits STATUS_*, ADR 0006); 0 = in Ordnung. Synchronisiert.")
+      .def("clear_status", &SimulationContext::clear_status, "Statuswort auf 0 setzen.")
       .def("synchronize", &SimulationContext::synchronize,
            "Wartet auf alle Arbeit im Stream des Kontexts.");
 
@@ -350,22 +357,31 @@ NB_MODULE(_core, m) {
            "Anzahl Auswertungen mit geclamptem Wandabstand.")
       .def("unknown_type_count", &bomd::PlanarSurfaceForce::unknown_type_count,
            "Anzahl Auswertungen mit Oberflächen-Typ außerhalb der Parametertabelle.")
-      .def("reset_counters", &bomd::PlanarSurfaceForce::reset_counters);
+      .def("reset_counters", &bomd::PlanarSurfaceForce::reset_counters)
+      .def(
+          "clamp_distances",
+          [](const bomd::PlanarSurfaceForce& f) {
+            const auto& z = f.clamp_distances();
+            return vector_to_numpy(z, {z.size()});
+          },
+          "float32 (n_surface_types,): zeta_c = max(clamp_factor*sigma, zeta_F) [nm], ADR 0006.");
   cls.def(
       "add_planar_surface",
       [](SimulationContext& c, HostInput<float> epsilon, HostInput<float> sigma, float z0,
-         float clamp_factor, float phi0, float kappa) -> bomd::PlanarSurfaceForce& {
+         float clamp_factor, float phi0, float kappa,
+         float max_force) -> bomd::PlanarSurfaceForce& {
         if (epsilon.ndim() != 1 || sigma.ndim() != 1)
           throw nb::value_error("epsilon und sigma: 1D-Arrays (n_surface_types,)");
         bomd::PlanarSurfaceParams p{
-            to_vector(epsilon), to_vector(sigma), z0, clamp_factor, phi0, kappa};
+            to_vector(epsilon), to_vector(sigma), z0, clamp_factor, max_force, phi0, kappa};
         return static_cast<bomd::PlanarSurfaceForce&>(
             c.add_force(std::make_unique<bomd::PlanarSurfaceForce>(std::move(p))));
       },
       "epsilon"_a, "sigma"_a, "z0"_a = 0.0f, "clamp_factor"_a = 0.1f, "phi0"_a = 0.0f,
-      "kappa"_a = 0.0f, nb::rv_policy::reference_internal,
+      "kappa"_a = 0.0f, "max_force"_a = 1.0e6f, nb::rv_policy::reference_internal,
       "9-3-Wand bei z0 [nm]: epsilon [kJ/mol], sigma [nm] pro Oberflächen-Typ (types[..., 1]);\n"
-      "optional Gouy-Chapman mit phi0 [kJ/(mol e)] und kappa [1/nm].");
+      "optional Gouy-Chapman mit phi0 [kJ/(mol e)] und kappa [1/nm]. Clamp bei\n"
+      "zeta_c = max(clamp_factor*sigma, zeta_F) mit |F(zeta_F)| = max_force [kJ/mol/nm].");
 
   nb::class_<bomd::HarmonicRestraintPullingForce>(
       m, "HarmonicRestraintPullingForce", "Positions-Restraints / Schwerpunkt-Pulling, §4.2.")
