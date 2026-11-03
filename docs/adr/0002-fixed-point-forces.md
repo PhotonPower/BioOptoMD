@@ -18,3 +18,4 @@ Kräfte und Energien werden als `long long` mit Skala 2³² akkumuliert (`atomic
 - Wertebereich: |F| < 2³¹ ≈ 2.1·10⁹ kJ/mol/nm – überlauf praktisch ausgeschlossen; Auflösung 2.3·10⁻¹⁰.
 - Bitidentische Trajektorien bei gleichem Seed möglich (Test `test_determinism`).
 - Leichter Mehraufwand durch Konvertierungskernel.
+- Ergänzt durch ADR 0006: Sättigung pro Beitrag auf ±2³⁰, Statusflags, Kraftschranke am Wand-Clamp.

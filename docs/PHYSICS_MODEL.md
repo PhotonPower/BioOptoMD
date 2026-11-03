@@ -60,7 +60,7 @@ B:  v ← v + (Δt/2) F/m
 V_i(z) = ε_w,i [ (2/15)(σ_w,i/z)⁹ − (σ_w,i/z)³ ]
 F_z,i  = ε_w,i [ (6/5) σ_w,i⁹/z¹⁰ − 3 σ_w,i³/z⁴ ]
 ```
-Minimum bei z* = (2/5)^(1/6) σ_w mit V(z*) ≈ −1.054 ε_w. Der Builder akzeptiert wahlweise die Topftiefe und rechnet um. Für z < z_clamp (Default 0.1 σ_w) wird z geclampt; das Ereignis wird in einem Device-Zähler registriert (Diagnose).
+Minimum bei z* = (2/5)^(1/6) σ_w mit V(z*) ≈ −1.054 ε_w. Der Builder akzeptiert wahlweise die Topftiefe und rechnet um. Für z < z_clamp wird z geclampt; das Ereignis wird in einem Device-Zähler registriert (Diagnose). z_clamp = max(0.1 σ_w, ζ_F) mit |F(ζ_F)| = F_max (Default 10⁶ kJ/mol/nm), damit die Wandkraft im Fixed-Point-Bereich bleibt (ADR 0006).
 
 Optional elektrochemisches Potential (linearisiertes Gouy-Chapman):
 ```
