@@ -1,0 +1,32 @@
+name: CI (ohne GPU)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint-and-cpu-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Abhängigkeiten
+        run: pip install ruff pytest numpy scipy
+      - name: Ruff
+        run: ruff check python tests && ruff format --check python tests
+      - name: clang-format
+        run: |
+          sudo apt-get install -y clang-format
+          files=$(git ls-files '*.hpp' '*.cpp' '*.cu' '*.cuh')
+          [ -z "$files" ] || clang-format --dry-run --Werror $files
+      - name: CPU-Tests (ohne kompiliertes Modul)
+        env:
+          PYTHONPATH: python
+        run: pytest -m "not gpu and not reference" -v
+      - name: Secret-Scan
+        run: |
+          if git grep -nE 'ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}'; then
+            echo "Möglicher GitHub-Token im Repository!"; exit 1; fi

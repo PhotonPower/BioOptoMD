@@ -1,0 +1,25 @@
+name: biooptomd
+channels:
+  - conda-forge
+dependencies:
+  - python=3.12
+  - cuda-version=12.6
+  - cuda-nvcc
+  - cuda-cudart-dev
+  - libcurand-dev
+  - cmake>=3.26
+  - ninja
+  - cxx-compiler
+  - numpy
+  - scipy
+  - pytest
+  - ruff
+  - clang-format
+  - nanobind
+  - scikit-build-core
+  - openmm>=8.1
+  - parmed
+  - mdtraj
+  - h5py
+  - cupy
+  - pip

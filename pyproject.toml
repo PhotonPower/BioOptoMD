@@ -1,0 +1,35 @@
+[build-system]
+requires = ["scikit-build-core>=0.10", "nanobind>=2.0"]
+build-backend = "scikit_build_core.build"
+
+[project]
+name = "biooptomd"
+version = "0.0.1.dev0"
+description = "GPU-Molekulardynamik für Biosensoren mit In-situ-Optik-Observern"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+dependencies = ["numpy>=1.24"]
+
+[project.optional-dependencies]
+test = ["pytest>=8", "scipy", "cupy-cuda12x"]
+reference = ["openmm>=8.1", "parmed"]
+dev = ["ruff", "pre-commit"]
+
+[tool.scikit-build]
+cmake.version = ">=3.26"
+wheel.packages = ["python/biooptomd"]
+build-dir = "build/{wheel_tag}"
+cmake.build-type = "Release"
+
+[tool.pytest.ini_options]
+testpaths = ["tests/python"]
+markers = [
+  "gpu: benötigt ein CUDA-Gerät",
+  "slow: Laufzeit > 30 s",
+  "reference: benötigt OpenMM/ParmEd",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"

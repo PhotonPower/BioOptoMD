@@ -1,0 +1,39 @@
+# Build
+build/
+_skbuild/
+dist/
+*.egg-info/
+*.so
+*.o
+*.ptx
+*.cubin
+*.fatbin
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.venv/
+
+# Daten / Ausgaben
+tests/reference/data/
+*.dcd
+*.xtc
+*.h5
+*.nc
+*.npz
+!tests/reference/inputs/*.npz
+*.ncu-rep
+*.nsys-rep
+
+# Secrets
+.env
+*.token
+secrets*
+
+# Editor
+.vscode/
+.idea/
+*.swp
+.DS_Store
