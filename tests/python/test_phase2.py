@@ -1,0 +1,506 @@
+"""Abnahmetests Phase 2: Langevin-BAOAB, PlanarSurfaceForce, HarmonicRestraintPullingForce.
+
+Siehe docs/ROADMAP.md, Phase 2, und docs/TESTING.md (statistische Toleranzen: 4σ aus
+Blockmittelung, Verteilungstests mit p > 0.001, feste Seeds).
+"""
+
+import numpy as np
+import pytest
+from philox_ref import KAT, philox4x32_10
+from restraint_ref import com_pulling, com_pulling_work_increment, position_restraint
+from scipy import stats
+from surface_ref import gouy_chapman, surface_energy_force
+
+pytestmark = pytest.mark.gpu
+
+_core = pytest.importorskip("biooptomd._core")
+KB = _core.units.KB
+TERM = {name: 1 + j for j, name in enumerate(_core.ENERGY_TERMS)}  # Spalte in energies()
+
+
+def _ctx(n_replicas, n_atoms, box=5.0, mass=20.0, temperatures=300.0):
+    ctx = _core.SimulationContext(n_replicas, n_atoms)
+    ctx.set_box(np.full((n_replicas, 2), box, np.float32))
+    ctx.set_masses(np.broadcast_to(np.float32(mass), (n_replicas, n_atoms)).astype(np.float32))
+    ctx.set_temperatures(np.broadcast_to(temperatures, (n_replicas,)).astype(np.float32))
+    return ctx
+
+
+def _block_mean_sigma(x, n_blocks=20):
+    """Mittelwert und σ des Mittelwerts aus Blockmittelung über die letzte Achse."""
+    n = x.shape[-1] // n_blocks * n_blocks
+    blocks = x[..., :n].reshape(x.shape[:-1] + (n_blocks, -1)).mean(axis=-1)
+    return blocks.mean(axis=-1), blocks.std(axis=-1, ddof=1) / np.sqrt(n_blocks)
+
+
+def _chi2_pvalue(samples, edges, expected_prob):
+    """χ²-Test eines Histogramms gegen erwartete Bin-Wahrscheinlichkeiten (Bins mit < 5 erwarteten
+    Einträgen werden mit Nachbarn zusammengelegt)."""
+    observed, _ = np.histogram(samples, edges)
+    expected = expected_prob / expected_prob.sum() * observed.sum()
+    obs_m, exp_m, acc_o, acc_e = [], [], 0.0, 0.0
+    for o, e in zip(observed, expected, strict=True):
+        acc_o += o
+        acc_e += e
+        if acc_e >= 5.0:
+            obs_m.append(acc_o)
+            exp_m.append(acc_e)
+            acc_o = acc_e = 0.0
+    obs_m[-1] += acc_o
+    exp_m[-1] += acc_e
+    return stats.chisquare(obs_m, exp_m).pvalue
+
+
+# --- Abnahmetests (Namen verbindlich laut ROADMAP.md) ----------------------------------------
+
+
+def test_equipartition_per_replica():
+    """4 Replicas bei 250/300/350/400 K, 2000 freie Atome: ⟨E_kin⟩ = ½ N_dof k_B T_r (4σ)."""
+    temps = np.array([250.0, 300.0, 350.0, 400.0])
+    gamma, dt = 2.0, 0.002
+    ctx = _ctx(4, 2000, temperatures=temps)
+    rng = np.random.default_rng(10)
+    ctx.set_positions(rng.uniform(0.0, 5.0, (4, 2000, 3)))
+    ctx.set_integrator(dt, gamma, seed=1234)
+    ctx.step(int(5.0 / gamma / dt))  # Equilibrierung 5/γ
+    tracker = ctx.add_energy_tracker(stride=10, capacity=4000)
+    ctx.step(30000)  # 60 ps; Korrelationszeit von E_kin: 1/(2γ) = 0.25 ps
+
+    e_kin = tracker.result()["energies"][:, :, 0]
+    mean, sigma = _block_mean_sigma(e_kin)  # 20 Blöcke à 3 ps = 12 Korrelationszeiten
+    expected = 0.5 * ctx.degrees_of_freedom() * KB * temps
+    assert np.all(np.abs(mean - expected) < 4.0 * sigma), (mean, expected, sigma)
+    assert np.all(sigma < 0.01 * expected)  # Test ist aussagekräftig
+
+
+def test_velocity_distribution():
+    """Maxwell-Boltzmann pro Komponente (verschiedene Massen und T): KS-Test p > 0.001."""
+    temps = np.array([280.0, 420.0])
+    gamma, dt = 2.0, 0.002
+    ctx = _core.SimulationContext(2, 2000)
+    ctx.set_box(np.full((2, 2), 5.0, np.float32))
+    masses = np.tile(np.array([1.0, 16.0, 100.0], np.float32), (2, 667))[:, :2000]
+    ctx.set_masses(masses)
+    ctx.set_temperatures(temps.astype(np.float32))
+    ctx.set_integrator(dt, gamma, seed=99)
+    ctx.step(int(5.0 / gamma / dt))
+
+    scaled = [[] for _ in temps]
+    for _ in range(6):
+        ctx.step(int(2.5 / dt))  # 2.5 ps ≫ 1/γ zwischen den Schnappschüssen
+        v = ctx.velocities()[:, :2000, :3].astype(np.float64)
+        for r, t in enumerate(temps):
+            scaled[r].append((v[r] * np.sqrt(masses[r, :, None] / (KB * t))).ravel())
+    for r in range(len(temps)):
+        p = stats.kstest(np.concatenate(scaled[r]), "norm").pvalue
+        assert p > 1e-3, f"Replica {r}: KS p = {p:.2e}"
+
+
+def test_restraint_boltzmann():
+    """Unabhängige Atome im harmonischen Restraint (auch über die Boxgrenze): P(Δ) ∝ exp(−V/k_BT)."""
+    temps = np.array([300.0, 400.0])
+    k, gamma, dt, n = 200.0, 2.0, 0.002, 1000
+    ctx = _ctx(2, n, temperatures=temps)
+    rng = np.random.default_rng(11)
+    ref = rng.uniform(0.0, 5.0, (2, n, 3)).astype(np.float32)
+    ref[:, : n // 4, 0] = 0.01  # Referenz direkt an der Boxgrenze ⇒ Minimum Image nötig
+    ref[..., 2] += 2.0
+    ctx.set_positions(ref)
+    replica, atom = np.divmod(np.arange(2 * n, dtype=np.int32), n)
+    ctx.add_position_restraints(
+        replica.astype(np.int32),
+        atom.astype(np.int32),
+        ref.reshape(-1, 3),
+        np.full(2 * n, k, np.float32),
+    )
+    ctx.set_integrator(dt, gamma, seed=5)
+    ctx.step(int(5.0 / gamma / dt))
+
+    deltas = [[] for _ in temps]
+    for _ in range(30):
+        ctx.step(1500)  # 3 ps; Abklingrate γ/2 = 1/ps
+        pos = ctx.positions()[:, :n, :3].astype(np.float64)
+        d = pos - ref
+        d[..., :2] -= 5.0 * np.rint(d[..., :2] / 5.0)
+        for r in range(2):
+            deltas[r].append(d[r].ravel())
+    for r, t in enumerate(temps):
+        sigma = np.sqrt(KB * t / k)
+        edges = np.linspace(-4.5 * sigma, 4.5 * sigma, 46)
+        prob = np.diff(stats.norm.cdf(edges, scale=sigma))
+        p = _chi2_pvalue(np.concatenate(deltas[r]), edges, prob)
+        assert p > 1e-3, f"Replica {r}: χ² p = {p:.2e}"
+
+
+def test_wall_boltzmann():
+    """Atome zwischen 9-3-Wand und harmonischem z-Restraint: P(z) vs. Boltzmann (χ²)."""
+    temps = np.array([300.0, 350.0])
+    eps_w, sigma_w, k_z, z_ref = 2.0, 0.3, 100.0, 0.7
+    gamma, dt, n = 2.0, 0.001, 2000
+    ctx = _ctx(2, n, mass=40.0, temperatures=temps)
+    rng = np.random.default_rng(12)
+    start = rng.uniform(0.0, 5.0, (2, n, 3)).astype(np.float32)
+    start[..., 2] = z_ref
+    ctx.set_positions(start)
+    ctx.add_planar_surface(np.array([eps_w], np.float32), np.array([sigma_w], np.float32))
+    replica, atom = np.divmod(np.arange(2 * n, dtype=np.int32), n)
+    ctx.add_position_restraints(
+        replica.astype(np.int32),
+        atom.astype(np.int32),
+        start.reshape(-1, 3),
+        np.full(2 * n, k_z, np.float32),
+        dims=(False, False, True),
+    )
+    ctx.set_integrator(dt, gamma, seed=6)
+    ctx.step(int(5.0 / gamma / dt))
+
+    zs = [[] for _ in temps]
+    for _ in range(40):
+        ctx.step(2000)  # 2 ps
+        z = ctx.positions()[:, :n, 2].astype(np.float64)
+        for r in range(2):
+            zs[r].append(z[r])
+    grid = np.linspace(0.05, 2.0, 200001)
+    v_tot = eps_w * (2.0 / 15.0 * (sigma_w / grid) ** 9 - (sigma_w / grid) ** 3)
+    v_tot += 0.5 * k_z * (grid - z_ref) ** 2
+    edges = np.linspace(0.15, 1.5, 55)
+    for r, t in enumerate(temps):
+        w = np.exp(-(v_tot - v_tot.min()) / (KB * t))
+        cdf = np.concatenate([[0.0], np.cumsum(0.5 * (w[1:] + w[:-1]) * np.diff(grid))])
+        prob = np.diff(np.interp(edges, grid, cdf))
+        p = _chi2_pvalue(np.concatenate(zs[r]), edges, prob)
+        assert p > 1e-3, f"Replica {r}: χ² p = {p:.2e}"
+
+
+def test_gouy_chapman_force():
+    """Gouy-Chapman: Referenzkraft = −dE/dz (finite Differenzen, FP64, rel. < 1e-4);
+    GPU-Kraft und -Energie gegen die Referenz."""
+    rng = np.random.default_rng(13)
+    n = 300
+    z = rng.uniform(0.0, 3.0, n)
+    q = rng.uniform(-1.0, 1.0, n)
+    phi0, kappa, h = 4.8, 1.04, 1e-4  # Φ0 ≈ 50 mV in kJ/(mol·e)
+
+    _, f_ref = gouy_chapman(z, q, phi0, kappa)
+    e_plus, _ = gouy_chapman(z + h, q, phi0, kappa)
+    e_minus, _ = gouy_chapman(z - h, q, phi0, kappa)
+    inside = z > 2 * h
+    f_fd = -(e_plus - e_minus) / (2 * h)
+    rel = np.abs(f_fd - f_ref)[inside] / np.abs(f_ref[inside])
+    assert rel.max() < 1e-4
+
+    ctx = _ctx(1, n)
+    xyz = np.zeros((1, n, 3), np.float32)
+    xyz[0, :, 0] = rng.uniform(0.0, 5.0, n)
+    xyz[0, :, 2] = z
+    ctx.set_positions(xyz)
+    ctx.set_charges(q[None].astype(np.float32))
+    ctx.add_planar_surface(np.zeros(1, np.float32), np.zeros(1, np.float32), phi0=phi0, kappa=kappa)
+    ctx.compute_forces()
+    zf = xyz[0, :, 2].astype(np.float64)  # tatsächlich verwendete float32-Werte
+    qf = q.astype(np.float32).astype(np.float64)
+    e_ref, f_ref = gouy_chapman(zf, qf, phi0, kappa)
+    f_gpu = ctx.forces()[0, :n].astype(np.float64)
+    np.testing.assert_allclose(f_gpu[:, 2], f_ref, rtol=1e-5, atol=1e-6)
+    assert not f_gpu[:, :2].any()
+    e_gpu = ctx.energies()[0, TERM["surface"]]
+    assert abs(e_gpu - e_ref.sum()) < 1e-5 * np.abs(e_ref).sum()
+
+
+def test_determinism():
+    """Gleicher Seed ⇒ bitidentische Trajektorie (inkl. Wand, Restraints, Pulling); anderer Seed
+    ⇒ verschieden."""
+
+    def run(seed):
+        n, n_rep = 300, 3
+        ctx = _ctx(n_rep, n, temperatures=np.array([280.0, 300.0, 320.0]))
+        rng = np.random.default_rng(14)
+        xyz = rng.uniform(0.0, 5.0, (n_rep, n, 3)).astype(np.float32)
+        xyz[..., 2] += 0.5
+        ctx.set_positions(xyz)
+        ctx.set_charges(rng.uniform(-1, 1, (n_rep, n)).astype(np.float32))
+        ctx.add_planar_surface(
+            np.array([2.0], np.float32), np.array([0.3], np.float32), phi0=2.0, kappa=1.0
+        )
+        replica, atom = np.divmod(np.arange(n_rep * 50, dtype=np.int32), 50)
+        ctx.add_position_restraints(
+            replica.astype(np.int32),
+            atom.astype(np.int32),
+            xyz[:, :50].reshape(-1, 3),
+            np.full(n_rep * 50, 100.0, np.float32),
+        )
+        offsets = np.arange(n_rep + 1, dtype=np.int32) * 20
+        group = np.tile(np.arange(100, 120, dtype=np.int32), n_rep)
+        pull = ctx.add_com_pulling(
+            offsets,
+            group,
+            np.full((n_rep, 3), 2.5, np.float32),
+            np.tile(np.float32([1.0, 0.0, 0.0]), (n_rep, 1)),
+            np.full(n_rep, 0.1, np.float32),
+            np.full(n_rep, 50.0, np.float32),
+        )
+        ctx.set_integrator(0.002, 1.0, seed)
+        ctx.step(2000)
+        return (
+            ctx.positions(),
+            ctx.velocities(),
+            ctx.forces_fixed_point(),
+            ctx.images(),
+            ctx.energies_fixed_point(),
+            pull.work(),
+        )
+
+    a, b, c = run(7), run(7), run(8)
+    for x, y in zip(a, b, strict=True):
+        assert np.array_equal(x.view(np.uint8), y.view(np.uint8)), "nicht bitidentisch"
+    assert not np.array_equal(a[0], c[0]), "anderer Seed liefert gleiche Trajektorie"
+
+
+def test_jarzynski_harmonic():
+    """Pulling in rein harmonischem Potential: ΔG = −k_BT ln⟨exp(−βW)⟩ = 0 innerhalb 4σ."""
+    n_rep, temp, mass, k, v, gamma, dt = 2000, 300.0, 20.0, 100.0, 0.1, 5.0, 0.002
+    kt = KB * temp
+    ctx = _ctx(n_rep, 1, mass=mass, temperatures=temp, box=10.0)
+    rng = np.random.default_rng(15)
+    r0 = np.full((n_rep, 3), [5.0, 5.0, 3.0], np.float32)
+    # Exakter Gleichgewichtsstart bei t = 0: x ~ N(R₀, k_BT/k), v ~ Maxwell-Boltzmann.
+    xyz = r0[:, None, :] + np.zeros((n_rep, 1, 3), np.float32)
+    xyz[:, 0, 0] += rng.normal(0.0, np.sqrt(kt / k), n_rep).astype(np.float32)
+    ctx.set_positions(xyz)
+    ctx.set_velocities(rng.normal(0.0, np.sqrt(kt / mass), (n_rep, 1, 3)).astype(np.float32))
+    pull = ctx.add_com_pulling(
+        np.arange(n_rep + 1, dtype=np.int32),
+        np.zeros(n_rep, np.int32),
+        r0,
+        np.tile(np.float32([1.0, 0.0, 0.0]), (n_rep, 1)),
+        np.full(n_rep, v, np.float32),
+        np.full(n_rep, k, np.float32),
+    )
+    ctx.set_integrator(dt, gamma, seed=21)
+    ctx.step(1000)  # 2 ps, Zugstrecke 0.2 nm
+
+    work = pull.work()
+    assert work.mean() > 0.0  # zweiter Hauptsatz: ⟨W⟩ ≥ ΔG = 0
+    expw = np.exp(-(work - work.min()) / kt)
+    delta_g = -kt * np.log(expw.mean()) + work.min()
+    sigma = kt * expw.std(ddof=1) / (np.sqrt(n_rep) * expw.mean())  # Delta-Methode
+    assert abs(delta_g) < 4.0 * sigma, (delta_g, sigma, work.mean())
+
+
+# --- Referenzvergleiche und Infrastruktur ----------------------------------------------------
+
+
+def test_philox_kat_on_device():
+    """Philox4x32-10 auf dem Gerät: Random123-KAT und bitgenau gleich der NumPy-Referenz."""
+    for counter, key, expected in KAT:
+        out = _core.testing.philox(np.array([counter], np.uint32), key[0], key[1])[0]
+        assert tuple(int(x) for x in out) == expected
+    rng = np.random.default_rng(16)
+    counters = rng.integers(0, 2**32, (4096, 4), dtype=np.uint64).astype(np.uint32)
+    np.testing.assert_array_equal(
+        _core.testing.philox(counters, 0xDEADBEEF, 0x12345678),
+        philox4x32_10(counters, np.array([0xDEADBEEF, 0x12345678], np.uint32)),
+    )
+
+
+def test_surface_vs_numpy():
+    """9-3-Wand + Gouy-Chapman gegen NumPy: mehrere Typen, ε = 0, Clamp, unbekannter Typ."""
+    rng = np.random.default_rng(17)
+    n = 500
+    eps = np.array([2.0, 0.0, 5.0], np.float32)
+    sigma = np.array([0.3, 0.3, 0.25], np.float32)
+    z0, clamp, phi0, kappa = 0.2, 0.1, 3.0, 1.5
+    ctx = _ctx(2, n)
+    xyz = rng.uniform(0.0, 5.0, (2, n, 3)).astype(np.float32)
+    xyz[..., 2] = rng.uniform(z0 + 0.08, z0 + 2.0, (2, n))  # Energien < 2^31 (OQ-10)
+    xyz[:, :1, 2] = z0 + 0.01  # unterhalb ζ_c = 0.1·σ ⇒ Clamp
+    types = np.zeros((2, n, 2), np.int32)
+    types[..., 1] = rng.integers(0, 3, (2, n))
+    types[:, :1, 1] = 0
+    types[1, -1, 1] = 7  # unbekannter Typ ⇒ keine Wand, Zähler
+    q = rng.uniform(-1, 1, (2, n)).astype(np.float32)
+    ctx.set_positions(xyz)
+    ctx.set_types(types)
+    ctx.set_charges(q)
+    surf = ctx.add_planar_surface(eps, sigma, z0=z0, clamp_factor=clamp, phi0=phi0, kappa=kappa)
+    ctx.compute_forces()
+
+    t = types[..., 1]
+    known = t < len(eps)
+    e_t = np.where(known, eps[np.minimum(t, 2)], 0.0)
+    s_t = np.where(known, sigma[np.minimum(t, 2)], 0.0)
+    e_ref, f_ref, clamped = surface_energy_force(
+        xyz[..., 2].astype(np.float64), q.astype(np.float64), e_t, s_t, z0, clamp, phi0, kappa
+    )
+    f = ctx.forces()[:, :n].astype(np.float64)
+    # Am Clamp-Punkt ist |F| ≈ 1e11 > 2^31 (Fixed-Point-Grenze, ADR 0002) – siehe OQ-10.
+    # Kräfte nur im darstellbaren Bereich vergleichen; geclampte Atome über Energie/Zähler.
+    representable = np.abs(f_ref) < 2.0**30
+    assert (~representable).sum() >= clamped.sum()
+    np.testing.assert_allclose(f[..., 2][representable], f_ref[representable], rtol=2e-5, atol=1e-4)
+    assert np.all(f[..., 2][clamped] > 1e9), "geclampte Atome: Kraft muss repulsiv und groß sein"
+    assert not f[..., :2].any()
+    e_gpu = ctx.energies()[:, TERM["surface"]]
+    np.testing.assert_allclose(e_gpu, e_ref.sum(axis=1), rtol=1e-5)
+    assert surf.clamp_count() == clamped.sum() == 2
+    assert surf.unknown_type_count() == 1
+    assert not ctx.forces()[:, n:].any(), "Padding-Atome erhalten Kraft"
+
+
+def test_restraint_vs_numpy():
+    """Positions-Restraints (Minimum Image, Achsenmaske) und Schwerpunkt-Pulling (ungewrappt,
+    Massengewichte, Arbeit nach einem Schritt) gegen NumPy."""
+    rng = np.random.default_rng(18)
+    n, n_rep, box = 64, 2, 4.0
+    ctx = _ctx(n_rep, n, box=box)
+    masses = rng.uniform(1.0, 30.0, (n_rep, n)).astype(np.float32)
+    ctx.set_masses(masses)
+    xyz = rng.uniform(-6.0, 10.0, (n_rep, n, 3)).astype(np.float32)  # teils außerhalb ⇒ Images
+    ctx.set_positions(xyz)
+    ctx.wrap_xy()
+
+    m = 40
+    replica = rng.integers(0, n_rep, m).astype(np.int32)
+    atom = rng.choice(n, m, replace=False).astype(np.int32)
+    ref = rng.uniform(0.0, box, (m, 3)).astype(np.float32)
+    k = rng.uniform(10.0, 500.0, m).astype(np.float32)
+    ctx.add_position_restraints(replica, atom, ref, k, dims=(True, False, True))
+
+    offsets = np.array([0, 10, 25], np.int32)
+    group = np.concatenate([rng.choice(n, 10, replace=False), rng.choice(n, 15, replace=False)])
+    group = group.astype(np.int32)
+    r0 = rng.uniform(0.0, box, (n_rep, 3)).astype(np.float32)
+    direction = np.array([[1.0, 2.0, 0.5], [0.0, -1.0, 1.0]], np.float32)
+    vel = np.array([0.3, -0.2], np.float32)
+    kp = np.array([80.0, 150.0], np.float32)
+    pull = ctx.add_com_pulling(offsets, group, r0, direction, vel, kp)
+    ctx.set_integrator(0.002, 1.0, seed=3)
+    ctx.compute_forces()
+
+    pos = ctx.positions()[:, :n, :3].astype(np.float64)
+    img = ctx.images()[:, :n].astype(np.float64)
+    boxes = np.full((n_rep, 2), box)
+    f_ref = np.zeros((n_rep, n, 3))
+    e_ref = np.zeros(n_rep)
+    e, f = position_restraint(pos[replica, atom], ref, k, [1, 0, 1], boxes[replica])
+    np.add.at(f_ref, (replica, atom), f)
+    np.add.at(e_ref, replica, e)
+    unwrapped = pos.copy()
+    unwrapped[..., :2] += img * box
+    for r in range(n_rep):
+        g = group[offsets[r] : offsets[r + 1]]
+        w = masses[r, g].astype(np.float64)
+        w /= w.sum()
+        e_hat = direction[r] / np.linalg.norm(direction[r].astype(np.float64))
+        e, f, _ = com_pulling(unwrapped[r, g], w, r0[r], e_hat, vel[r], kp[r], 0.0)
+        f_ref[r, g] += f
+        e_ref[r] += e
+    np.testing.assert_allclose(ctx.forces()[:, :n, :3], f_ref, rtol=1e-4, atol=1e-4)
+    np.testing.assert_allclose(ctx.energies()[:, TERM["restraint"]], e_ref, rtol=1e-5)
+    assert not pull.work().any()
+
+    # Ein Schritt: ΔW = V(x₁, Δt) − V(x₁, 0) bei den Positionen der Kraftauswertung.
+    ctx.step(1)
+    pos = ctx.positions()[:, :n, :3].astype(np.float64)
+    unwrapped = pos.copy()
+    unwrapped[..., :2] += ctx.images()[:, :n] * box
+    for r in range(n_rep):
+        g = group[offsets[r] : offsets[r + 1]]
+        w = masses[r, g].astype(np.float64)
+        w /= w.sum()
+        e_hat = direction[r] / np.linalg.norm(direction[r].astype(np.float64))
+        dw = com_pulling_work_increment(unwrapped[r, g], w, r0[r], e_hat, vel[r], kp[r], 0.0, 0.002)
+        np.testing.assert_allclose(pull.work()[r], dw, rtol=1e-4, atol=1e-6)
+
+
+def test_nve_harmonic():
+    """γ = 0: Gesamtenergie in harmonischen Restraints erhalten (Plausibilität von B/A/O-Reihenfolge)."""
+    n, k, dt = 500, 300.0, 0.001
+    ctx = _ctx(2, n)
+    rng = np.random.default_rng(19)
+    ref = rng.uniform(1.0, 4.0, (2, n, 3)).astype(np.float32)
+    ctx.set_positions(ref + rng.normal(0.0, 0.05, ref.shape).astype(np.float32))
+    ctx.set_velocities(rng.normal(0.0, 0.3, (2, n, 3)).astype(np.float32))
+    replica, atom = np.divmod(np.arange(2 * n, dtype=np.int32), n)
+    ctx.add_position_restraints(
+        replica.astype(np.int32),
+        atom.astype(np.int32),
+        ref.reshape(-1, 3),
+        np.full(2 * n, k, np.float32),
+    )
+    ctx.set_integrator(dt, 0.0, seed=0)
+    tracker = ctx.add_energy_tracker(stride=10, capacity=1000)
+    ctx.step(5000)
+    e = tracker.result()["energies"]
+    total = e[:, :, 0] + e[:, :, TERM["restraint"]]
+    # Gemessen ~3e-6; ein O(ωΔt)-Fehler (z. B. falsche B/A-Reihenfolge) läge bei ~4e-3.
+    assert np.all(total.std(axis=1) < 5e-5 * e[:, :, 0].mean(axis=1))
+    assert np.all(np.abs(total[:, -1] - total[:, 0]) < 5e-5 * e[:, :, 0].mean(axis=1))
+
+
+def test_integrator_api_and_padding():
+    ctx = _core.SimulationContext(2, 40)
+    with pytest.raises(RuntimeError):
+        ctx.step(1)  # kein Integrator
+    with pytest.raises(ValueError):
+        ctx.set_integrator(0.0, 1.0, 0)
+    ctx.set_integrator(0.002, 1.0, 0)
+    with pytest.raises(RuntimeError):
+        ctx.step(1)  # keine Box
+    ctx.set_box(np.full((2, 2), 3.0, np.float32))
+    ctx.set_masses(np.full((2, 40), 10.0, np.float32))
+    ctx.set_temperatures(np.full(2, 300.0, np.float32))
+    ctx.step(100)
+    assert ctx.current_step == 100 and ctx.time == pytest.approx(0.2)
+    assert not ctx.positions()[:, 40:].any() and not ctx.velocities()[:, 40:].any()
+    assert ctx.velocities()[:, :40, :3].any()
+    tracker = ctx.add_energy_tracker(stride=3, capacity=5)
+    ctx.step(30)
+    assert tracker.n_frames == 5 and tracker.dropped_frames == 5
+    np.testing.assert_array_equal(tracker.result()["steps"], [102, 105, 108, 111, 114])
+
+
+@pytest.mark.slow
+@pytest.mark.parametrize("seed", [101, 202, 303, 404, 505])
+def test_equipartition_and_velocities_seeds(seed):
+    """TESTING.md §Statistische Toleranzen 5: Equipartition und Maxwell-Boltzmann für 5 Seeds."""
+    temps = np.array([250.0, 400.0])
+    gamma, dt, n = 2.0, 0.002, 2000
+    ctx = _ctx(2, n, mass=12.0, temperatures=temps)
+    ctx.set_integrator(dt, gamma, seed=seed)
+    ctx.step(int(5.0 / gamma / dt))
+    tracker = ctx.add_energy_tracker(stride=10, capacity=4000)
+    ctx.step(30000)
+    mean, sigma = _block_mean_sigma(tracker.result()["energies"][:, :, 0])
+    expected = 0.5 * ctx.degrees_of_freedom() * KB * temps
+    assert np.all(np.abs(mean - expected) < 4.0 * sigma), (mean, expected, sigma)
+    v = ctx.velocities()[:, :n, :3].astype(np.float64)
+    for r, t in enumerate(temps):
+        assert stats.kstest((v[r] * np.sqrt(12.0 / (KB * t))).ravel(), "norm").pvalue > 1e-3
+
+
+def test_pulling_follows_mass_change_and_dt_change():
+    """Gewichte folgen set_masses nach add_com_pulling; t läuft bei dt-Wechsel fortlaufend weiter."""
+    ctx = _ctx(1, 2, box=6.0)
+    ctx.set_masses(np.array([[1.0, 1.0]], np.float32))
+    xyz = np.array([[[1.0, 3.0, 3.0], [3.0, 3.0, 3.0]]], np.float32)
+    ctx.set_positions(xyz)
+    pull = ctx.add_com_pulling(
+        np.array([0, 2], np.int32),
+        np.array([0, 1], np.int32),
+        np.zeros((1, 3), np.float32),
+        np.array([[1.0, 0.0, 0.0]], np.float32),
+        np.zeros(1, np.float32),
+        np.ones(1, np.float32),
+    )
+    ctx.compute_forces()
+    assert pull.extension()[0] == pytest.approx(2.0)  # Schwerpunkt bei x = 2
+    ctx.set_masses(np.array([[3.0, 1.0]], np.float32))
+    ctx.compute_forces()
+    assert pull.extension()[0] == pytest.approx(1.5)  # neuer Schwerpunkt (3·1 + 1·3)/4
+
+    ctx.set_integrator(0.002, 1.0, seed=0)
+    ctx.step(10)
+    ctx.set_integrator(0.001, 1.0, seed=0)
+    ctx.step(10)
+    assert ctx.time == pytest.approx(0.03)
