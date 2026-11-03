@@ -1,5 +1,6 @@
 // BioOptoMD – elementweise Kern-Kernels: clear_forces, fixed_point_to_float, wrap_xy, Scatter.
 #include "biooptomd/cuda_check.hpp"
+#include "biooptomd/units.hpp"
 #include "core/core_kernels.cuh"
 #include "core/fixed_point.cuh"
 
@@ -80,6 +81,35 @@ __global__ void k_scatter_w(DeviceState s, float4* dst, const float* src) {
   dst[r * s.n_pad + i_local].w = src[static_cast<long long>(r) * s.n_atoms + i_local];
 }
 
+/// Blockgröße der Energiereduktion (ein Block pro Replica).
+constexpr int kEnergyBlock = 256;
+
+__global__ void k_energy_frame(DeviceState s, double* frame) {
+  __shared__ double partial[kEnergyBlock];
+  const int r = blockIdx.x;
+  double sum = 0.0;
+  for (int i_local = threadIdx.x; i_local < s.n_atoms; i_local += blockDim.x) {
+    const float4 v = s.d_vel[r * s.n_pad + i_local];
+    if (v.w > 0.0f) {
+      const double v2 = static_cast<double>(v.x) * v.x + static_cast<double>(v.y) * v.y +
+                        static_cast<double>(v.z) * v.z;
+      sum += v2 / static_cast<double>(v.w);
+    }
+  }
+  partial[threadIdx.x] = sum;
+  __syncthreads();
+  for (int stride = blockDim.x / 2; stride > 0;
+       stride >>= 1) {  // feste Reihenfolge ⇒ deterministisch
+    if (threadIdx.x < stride) partial[threadIdx.x] += partial[threadIdx.x + stride];
+    __syncthreads();
+  }
+  double* out = frame + static_cast<long long>(r) * kEnergyFrameColumns;
+  if (threadIdx.x == 0) out[0] = 0.5 * partial[0];
+  if (threadIdx.x < kNumEnergyTerms)
+    out[1 + threadIdx.x] = static_cast<double>(s.d_energy_fp[r * kNumEnergyTerms + threadIdx.x]) *
+                           (1.0 / units::FIXED_POINT_SCALE);
+}
+
 /// Grid für Kernels mit blockIdx.y = Replica: so muss kein Thread r = i / n_atoms berechnen,
 /// und Padding-Atome werden per Index ausgeschlossen.
 dim3 per_replica_grid(const DeviceState& s) {
@@ -103,6 +133,12 @@ void launch_fixed_point_to_float(const DeviceState& s, cudaStream_t stream) {
 void launch_wrap_xy(const DeviceState& s, cudaStream_t stream) {
   if (s.n_total() == 0) return;
   k_wrap_xy<<<per_replica_grid(s), kElementwiseBlock, 0, stream>>>(s);
+  BOMD_LAUNCH_CHECK();
+}
+
+void launch_energy_frame(const DeviceState& s, double* frame, cudaStream_t stream) {
+  if (s.n_total() == 0) return;
+  k_energy_frame<<<s.n_replicas, kEnergyBlock, 0, stream>>>(s, frame);
   BOMD_LAUNCH_CHECK();
 }
 

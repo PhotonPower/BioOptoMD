@@ -48,4 +48,18 @@ __device__ __forceinline__ void add_energy(const DeviceState& s, int replica, in
   atomic_add_fixed_point(s.d_energy_fp + replica * kNumEnergyTerms + term, e);
 }
 
+/// Warpweite Summe einer Energie e [kJ/mol] (Fixed-Point, daher deterministisch) und eine
+/// atomare Addition pro Warp. Voraussetzungen: alle 32 Lanes des Warps rufen die Funktion auf
+/// (inaktive Atome mit e = 0) und gehören zur selben Replica (blockIdx.y = Replica).
+__device__ __forceinline__ void warp_add_energy(const DeviceState& s, int replica, int term,
+                                                float e) {
+  long long v = to_fixed_point(e);
+#pragma unroll
+  for (int offset = 16; offset > 0; offset >>= 1) v += __shfl_down_sync(0xffffffffu, v, offset);
+  if ((threadIdx.x & 31) == 0 && v != 0)
+    atomicAdd(
+        reinterpret_cast<unsigned long long*>(s.d_energy_fp + replica * kNumEnergyTerms + term),
+        static_cast<unsigned long long>(v));
+}
+
 }  // namespace bomd::detail

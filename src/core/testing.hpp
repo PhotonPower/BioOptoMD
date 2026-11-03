@@ -21,6 +21,10 @@ void shift_x(SimulationContext& ctx, float dx_nm);
 void accumulate_forces(SimulationContext& ctx, const int* atom_global, const float* f_kj_mol_nm,
                        int m);
 
+/// Wertet Philox4x32-10 auf dem Gerät aus: out[j] = philox(counter[j], key), je 4 uint32.
+void philox(const unsigned int* counters, int n, unsigned int key_lo, unsigned int key_hi,
+            unsigned int* out);
+
 /// Test-ForcePlugin: konstante Kraft f [kJ/mol/nm] auf jedes echte Atom, keine Energie.
 std::unique_ptr<ForcePlugin> make_uniform_force(float fx, float fy, float fz);
 

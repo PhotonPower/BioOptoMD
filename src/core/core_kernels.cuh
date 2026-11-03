@@ -30,4 +30,12 @@ void launch_scatter_xyz(const DeviceState& s, float4* dst, const float* src, cud
 /// dst[r·n_pad + i].w = src[r·n_atoms + i] für i < n_atoms; xyz unverändert.
 void launch_scatter_w(const DeviceState& s, float4* dst, const float* src, cudaStream_t stream);
 
+/// Spalten eines Energie-Frames: [E_kin, E_pot(Term 0), …, E_pot(Term N_TERMS−1)] in kJ/mol.
+inline constexpr int kEnergyFrameColumns = 1 + kNumEnergyTerms;
+
+/// Schreibt pro Replica r einen Frame nach frame[r·kEnergyFrameColumns + c] (double):
+/// E_kin = ½ Σ m v² über echte Atome mit inv_mass > 0 (FP64-Reduktion) und die Terme aus
+/// d_energy_fp (Fixed-Point → double, exakt bis 2^53).
+void launch_energy_frame(const DeviceState& s, double* frame, cudaStream_t stream);
+
 }  // namespace bomd::detail
