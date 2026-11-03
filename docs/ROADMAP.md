@@ -60,7 +60,7 @@ Dokumentation, Verzeichnisstruktur, Agenten-Anweisungen, Build-Entwürfe.
 - `test_phase3.py::test_bonded_vs_numpy` – jeder Term einzeln, rel. Kraftfehler < 1e-5.
 - `test_phase3.py::test_bonded_vs_openmm` – Gesamtkraft aller Atome, max. Abweichung < 1e-4 relativ zur RMS-Kraft.
 - `test_phase3.py::test_degenerate_geometries` – kollineare Winkel, Torsion bei 0/π, kein NaN/Inf.
-- `test_phase3.py::test_nve_energy_conservation` – γ = 0, Δt = 0.5 fs, 5000 Schritte: Drift < 1e-4 kJ/mol/ps/Atom, Fluktuation < 1e-3 der mittleren E_kin.
+- `test_phase3.py::test_nve_energy_conservation` – γ = 0, Δt = 0.5 fs, 200 000 Schritte (100 ps; geändert am 2026-11-03 durch den Projektinhaber, da 5000 Schritte eine Drift von 1e-4 statistisch nicht auflösen): Drift (Regressionssteigung) < 1e-4 kJ/mol/ps/Atom, Fluktuation < 1e-3 der mittleren E_kin.
 
 ---
 
