@@ -7,6 +7,7 @@
 #include "biooptomd/simulation_context.hpp"
 #include "core/core_kernels.cuh"
 #include "core/fixed_point.cuh"
+#include "core/pbc.cuh"
 #include "forces/harmonic_restraint.hpp"
 
 namespace bomd {
@@ -29,10 +30,8 @@ __global__ void k_position_restraints(DeviceState s, const int2* atom, const flo
   const float4 p = s.d_pos[i];
   const float4 q = ref[k];
   const float2 box = s.d_box[r];
-  float dx = p.x - q.x, dy = p.y - q.y;
-  dx -= box.x * rintf(dx / box.x);  // Minimum Image (ADR 0003); Box > 0 garantiert
-  dy -= box.y * rintf(dy / box.y);
-  const float dz = p.z - q.z;
+  const float3 d = detail::minimum_image_delta(p, q, box);  // ADR 0003; Box > 0 garantiert
+  const float dx = d.x, dy = d.y, dz = d.z;
   const float kk = q.w;
   const float energy = 0.5f * kk * (mx * dx * dx + my * dy * dy + mz * dz * dz);
   detail::add_force(s, i, -kk * mx * dx, -kk * my * dy, -kk * mz * dz);
