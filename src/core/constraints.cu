@@ -86,7 +86,7 @@ __global__ void k_shake(DeviceState s, const int4* clusters, const float4* dista
   for (int k = 1; k <= c.n_h; ++k) ref[k - 1] = delta(c.x[k], c.x[0], box);
   double3 x_un[1 + kMaxH];
   for (int k = 0; k <= c.n_h; ++k) {
-    if (drift) {
+    if (drift && c.w[k] > 0.0) {  // unbewegliche Atome (inv_mass = 0) bleiben stehen
       c.x[k].x += h * c.v[k].x;
       c.x[k].y += h * c.v[k].y;
       c.x[k].z += h * c.v[k].z;
@@ -148,7 +148,9 @@ __global__ void k_rattle(DeviceState s, const int4* clusters, const float4* dist
       const double rv = dot3(rk[k - 1], dv);
       if (fabs(rv) > tol_v * r2[k - 1]) {
         converged = false;
-        const double kappa = rv / (r2[k - 1] * (c.w[0] + c.w[k]));
+        const double denom = r2[k - 1] * (c.w[0] + c.w[k]);
+        if (denom == 0.0) continue;  // beide Atome unbeweglich: nichts zu projizieren
+        const double kappa = rv / denom;
         c.v[k].x -= kappa * c.w[k] * rk[k - 1].x;
         c.v[k].y -= kappa * c.w[k] * rk[k - 1].y;
         c.v[k].z -= kappa * c.w[k] * rk[k - 1].z;
