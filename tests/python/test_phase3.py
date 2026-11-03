@@ -102,15 +102,19 @@ def _context(core, n_rep, pos, masses, box=10.0):
     return ctx
 
 
-def _gpu_eval(core, topologies, replica_topology, positions, masses, box=10.0):
+def _gpu_eval(
+    core, topologies, replica_topology, positions, masses, box=10.0, kappa=None, eps_r=None
+):
     n_rep = len(replica_topology)
+    kappa = np.full(n_rep, KAPPA) if kappa is None else np.asarray(kappa)
+    eps_r = np.full(n_rep, EPS_R) if eps_r is None else np.asarray(eps_r)
     ctx = _context(core, n_rep, positions[0], masses, box)
     ctx.set_positions(np.asarray(positions, np.float32))
     ctx.add_bonded(
         topologies,
         np.asarray(replica_topology, np.int32),
-        np.full(n_rep, KAPPA, np.float32),
-        np.full(n_rep, EPS_R, np.float32),
+        kappa.astype(np.float32),
+        eps_r.astype(np.float32),
     )
     ctx.compute_forces()
     n = positions.shape[1]
@@ -195,7 +199,10 @@ def test_degenerate_geometries(core):
 
 @pytest.mark.gpu
 def test_nve_energy_conservation(core):
-    """γ = 0, Δt = 0.5 fs, 5000 Schritte: Drift < 1e-4 kJ/mol/ps/Atom, Fluktuation < 1e-3·⟨E_kin⟩."""
+    """γ = 0, Δt = 0.5 fs, 200 000 Schritte (100 ps): Drift (Regressionssteigung) < 1e-4
+    kJ/mol/ps/Atom, Fluktuation < 1e-3·⟨E_kin⟩. Molekül bei realistischen Koordinaten (~5 nm),
+    wo FP32-Zustand die Grenze verfehlen würde (ADR 0007). Protokoll: Entscheidung des
+    Projektinhabers 2026-11-03 (5000 Schritte lösen 1e-4 statistisch nicht auf)."""
     topo, pos, masses = _load()
     n = pos.shape[0]
     kb = core.units.KB
@@ -208,8 +215,8 @@ def test_nve_energy_conservation(core):
         [topo], np.zeros(4, np.int32), np.full(4, KAPPA, np.float32), np.full(4, EPS_R, np.float32)
     )
     ctx.set_integrator(0.0005, 0.0, seed=0)
-    tracker = ctx.add_energy_tracker(stride=10, capacity=1000)
-    ctx.step(5000)
+    tracker = ctx.add_energy_tracker(stride=100, capacity=2000)
+    ctx.step(200_000)
     e = tracker.result()["energies"]
     total = e[:, :, 0] + e[:, :, 1:].sum(axis=2)
     t_ps = tracker.result()["steps"] * 0.0005
@@ -233,6 +240,38 @@ def test_replica_topologies_and_padding(core):
     np.testing.assert_array_equal(f[0], f[2])
     assert e[1, 2:5].tolist() == [0.0, 0.0, 0.0]
     np.testing.assert_allclose(e[1, 1], e[0, 1], rtol=1e-6)
-    with pytest.raises(ValueError):
-        bad = dict(bonds_only, bonds=np.array([[0, 500]]), bond_k=[1.0], bond_r0=[0.1])
-        _gpu_eval(core, [bad], [0], p[None], masses)
+
+
+@pytest.mark.gpu
+def test_pair14_screening_per_replica(core):
+    """κ und ε_r der 1-4-Debye-Hückel-Abschirmung gelten pro Replica (z. B. Temperaturleiter)."""
+    topo, pos, masses = _load()
+    t = _as_float32(_only(topo, "pair14"))
+    p = (pos - pos.mean(axis=0) + [5.0, 5.0, 3.0]).astype(np.float32).astype(np.float64)
+    kappa = np.array([0.0, 1.0, 3.0], np.float32)
+    eps_r = np.array([1.0, 78.5, 40.0], np.float32)
+    _, f, e = _gpu_eval(core, [t], [0, 0, 0], np.stack([p, p, p]), masses, kappa=kappa, eps_r=eps_r)
+    for r in range(3):
+        e_ref, f_ref = ref.term("pair14", p, t, float(kappa[r]), float(eps_r[r]))
+        assert np.abs(f[r] - f_ref).max() < 1e-5 * _rms(f_ref), r
+        assert e[r, ENERGY_COL["pair14"]] == pytest.approx(e_ref, rel=1e-5), r
+    assert len({round(float(x), 6) for x in e[:, ENERGY_COL["pair14"]]}) == 3
+
+
+@pytest.mark.gpu
+def test_topology_validation(core):
+    """add_bonded lehnt Tippfehler in Schlüsseln, falsche Shapes, verlustbehaftete Casts und
+    Indizes außerhalb [0, n_atoms) ab."""
+    topo, pos, masses = _load()
+    p = pos - pos.mean(axis=0) + [5.0, 5.0, 3.0]
+    good = _only(topo, "bond")
+    bad_cases = [
+        {**good, "dihedrals": topo["torsions"]},  # unbekannter Schlüssel
+        {**good, "bonds": good["bonds"].T.copy()},  # (2, n) statt (n, 2)
+        {**good, "bonds": good["bonds"].astype(np.float64) + 0.5},  # Float-Indizes
+        {**good, "bonds": good["bonds"].astype(np.int64) + 2**32},  # int32-Überlauf
+        {**good, "bonds": np.array([[0, 500]]), "bond_k": [1.0], "bond_r0": [0.1]},  # Index > n
+    ]
+    for bad in bad_cases:
+        with pytest.raises(ValueError):
+            _gpu_eval(core, [bad], [0], p[None], masses)

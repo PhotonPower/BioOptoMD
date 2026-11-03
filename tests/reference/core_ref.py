@@ -1,4 +1,4 @@
-"""NumPy-Referenzen für die Kern-Kernels aus Phase 1 (fixed_point, wrap_xy).
+"""NumPy-Referenzen für die Kern-Kernels (fixed_point, wrap_xy in FP64 nach ADR 0007).
 
 Die Referenzen bilden die Gerätearithmetik bitgenau nach, damit Tests exakt (nicht mit
 Toleranz) vergleichen können. Einheiten: nm, kJ/mol/nm.
@@ -36,25 +36,28 @@ def accumulate_fixed_point(n_total: int, atom_index: np.ndarray, forces: np.ndar
     return acc
 
 
-def wrap_coordinate(x: np.ndarray, box_length: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
-    """Bitgenaue Nachbildung von ``wrap_coordinate`` in src/core/core_kernels.cu.
+def wrap_coordinate_mixed(hi, lo, box_length):
+    """Bitgenaue Nachbildung des FP64-Wraps (ADR 0007) in src/core/core_kernels.cu.
 
     Args:
-        x: Koordinaten [nm], float32.
-        box_length: Boxlänge [nm] > 0, float32, broadcastbar zu ``x``.
+        hi, lo: FP32-Position und FP32-Korrektur (x = hi + lo in FP64) [nm].
+        box_length: Boxlänge [nm] > 0 (float32), broadcastbar.
 
     Returns:
-        (x_wrapped in [0, L) als float32, n als int32) mit x ≈ x_wrapped + n·L.
+        (hi', lo', n): neue FP32-Teile mit hi' + lo' ∈ [0, L) und x = hi' + lo' + n·L exakt.
     """
-    x = np.asarray(x, dtype=np.float32)
-    big_l = np.asarray(box_length, dtype=np.float32)
-    n = np.floor(x / big_l).astype(np.float32)  # IEEE-Division in float32 wie CUDA ohne fast-math
-    # fmaf(-n, L, x): exaktes x − n·L (in float64 exakt darstellbar), einmal nach float32 gerundet.
-    r = (x.astype(np.float64) - n.astype(np.float64) * big_l.astype(np.float64)).astype(np.float32)
+    x = np.asarray(hi, np.float32).astype(np.float64) + np.asarray(lo, np.float32).astype(
+        np.float64
+    )
+    big_l = np.asarray(box_length, np.float32).astype(np.float64)
+    n = np.floor(x / big_l)
+    r = x - n * big_l  # in FP64 exakt (≤ 48 signifikante Bit), entspricht fma(−n, L, x)
     neg = r < 0
-    r = np.where(neg, r + big_l, r).astype(np.float32)
-    n = np.where(neg, n - np.float32(1), n)
+    r = np.where(neg, r + big_l, r)
+    n = np.where(neg, n - 1, n)
     over = r >= big_l
-    r = np.where(over, r - big_l, r).astype(np.float32)
-    n = np.where(over, n + np.float32(1), n)
-    return r, n.astype(np.int32)
+    r = np.where(over, r - big_l, r)
+    n = np.where(over, n + 1, n)
+    new_hi = r.astype(np.float32)
+    new_lo = (r - new_hi.astype(np.float64)).astype(np.float32)
+    return new_hi, new_lo, n.astype(np.int32)
