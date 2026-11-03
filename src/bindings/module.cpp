@@ -12,6 +12,7 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 #include "biooptomd/cuda_check.hpp"
@@ -19,6 +20,7 @@
 #include "biooptomd/simulation_context.hpp"
 #include "biooptomd/units.hpp"
 #include "core/testing.hpp"
+#include "forces/bonded.hpp"
 #include "forces/harmonic_restraint.hpp"
 #include "forces/planar_surface.hpp"
 #include "observers/energy_tracker.hpp"
@@ -104,6 +106,35 @@ std::vector<T> to_vector(const HostInput<T>& a) {
   return std::vector<T>(a.data(), a.data() + a.size());
 }
 
+/// dict[key] → std::vector<T> (mit impliziter dtype-Konvertierung; fehlender Schlüssel ⇒ leer).
+template <typename T>
+std::vector<T> dict_vector(const nb::dict& d, const char* key) {
+  if (!d.contains(key)) return {};
+  constexpr const char* dtype = std::is_floating_point_v<T> ? "float32" : "int32";
+  nb::object arr =
+      nb::module_::import_("numpy").attr("ascontiguousarray")(d[key], "dtype"_a = dtype);
+  return to_vector(nb::cast<HostInput<T>>(arr));
+}
+
+bomd::BondedTopology topology_from_dict(const nb::dict& d) {
+  bomd::BondedTopology t;
+  t.bonds = dict_vector<int32_t>(d, "bonds");
+  t.bond_k = dict_vector<float>(d, "bond_k");
+  t.bond_r0 = dict_vector<float>(d, "bond_r0");
+  t.angles = dict_vector<int32_t>(d, "angles");
+  t.angle_k = dict_vector<float>(d, "angle_k");
+  t.angle_theta0 = dict_vector<float>(d, "angle_theta0");
+  t.torsions = dict_vector<int32_t>(d, "torsions");
+  t.torsion_k = dict_vector<float>(d, "torsion_k");
+  t.torsion_n = dict_vector<int32_t>(d, "torsion_n");
+  t.torsion_phase = dict_vector<float>(d, "torsion_phase");
+  t.pairs14 = dict_vector<int32_t>(d, "pairs14");
+  t.pair_qq = dict_vector<float>(d, "pair_qq");
+  t.pair_sigma = dict_vector<float>(d, "pair_sigma");
+  t.pair_eps = dict_vector<float>(d, "pair_eps");
+  return t;
+}
+
 Shape atoms_shape(const SimulationContext& c, std::size_t last) {
   return {static_cast<std::size_t>(c.n_replicas()), static_cast<std::size_t>(c.n_pad()), last};
 }
@@ -151,6 +182,7 @@ NB_MODULE(_core, m) {
   units.attr("DEBYE_PER_ENM") = bomd::units::DEBYE_PER_ENM;
   units.attr("FIXED_POINT_SCALE") = bomd::units::FIXED_POINT_SCALE;
   units.attr("EPS_R2") = static_cast<double>(bomd::units::EPS_R2);
+  units.attr("EPS_CROSS2") = static_cast<double>(bomd::units::EPS_CROSS2);
   m.def("padded_atom_count", &bomd::padded_atom_count, "n_atoms"_a,
         "Gepaddete Atomzahl ceil(n_atoms/32)·32.");
 
@@ -430,6 +462,30 @@ NB_MODULE(_core, m) {
       "Schwerpunkt-Pulling pro Replica: Gruppen als CSR (group_offsets (n_replicas+1,),\n"
       "group_atoms lokal), r0 [nm] und direction (n_replicas, 3), velocity [nm/ps] und\n"
       "k [kJ/mol/nm^2] (n_replicas,). Massen müssen vorher gesetzt sein.");
+
+  nb::class_<bomd::BondedForce>(m, "BondedForce",
+                                "Bonds, Angles, Torsionen, 1-4-Paare, PHYSICS_MODEL.md §2.")
+      .def("term_counts", &bomd::BondedForce::term_counts, "replica"_a,
+           "[n_bonds, n_angles, n_torsions, n_pairs14] der Replica.");
+  cls.def(
+      "add_bonded",
+      [](SimulationContext& c, nb::list topologies, HostInput<int32_t> replica_topology,
+         HostInput<float> kappa, HostInput<float> eps_r) -> bomd::BondedForce& {
+        bomd::BondedParams p;
+        for (nb::handle h : topologies)
+          p.topologies.push_back(topology_from_dict(nb::cast<nb::dict>(h)));
+        p.replica_topology = to_vector(replica_topology);
+        p.kappa_per_nm = to_vector(kappa);
+        p.eps_r = to_vector(eps_r);
+        return static_cast<bomd::BondedForce&>(
+            c.add_force(std::make_unique<bomd::BondedForce>(std::move(p))));
+      },
+      "topologies"_a, "replica_topology"_a, "kappa"_a, "eps_r"_a, nb::rv_policy::reference_internal,
+      "Kovalente Terme. topologies: Liste von dicts mit bonds (n,2), bond_k [kJ/mol/nm^2],\n"
+      "bond_r0 [nm], angles (n,3), angle_k [kJ/mol/rad^2], angle_theta0 [rad], torsions (n,4),\n"
+      "torsion_k [kJ/mol], torsion_n, torsion_phase [rad], pairs14 (n,2), pair_qq [e^2],\n"
+      "pair_sigma [nm], pair_eps [kJ/mol] (lokale Atomindizes). replica_topology int32\n"
+      "(n_replicas,), kappa [1/nm] und eps_r (n_replicas,) für die 1-4-Debye-Hückel-Abschirmung.");
 
   // --- Test-Hooks ---------------------------------------------------------------------------
   auto testing = m.def_submodule("testing", "Test-Hooks für pytest; keine Produktions-API.");

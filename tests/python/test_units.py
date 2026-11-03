@@ -27,3 +27,4 @@ def test_compiled_constants_identical():
         assert getattr(core.units, name) == getattr(units, name), name
     # EPS_R2 ist in C++ ein float.
     assert core.units.EPS_R2 == float(np.float32(units.EPS_R2))
+    assert core.units.EPS_CROSS2 == float(np.float32(units.EPS_CROSS2))
