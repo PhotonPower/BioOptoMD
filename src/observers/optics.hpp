@@ -97,6 +97,7 @@ class RefractiveIndexProfiler final : public ObserverPlugin {
   void reset() override;
   /// "z" (n_bins,) Schichtmitten [nm], "n" (n_replicas, n_bins), "s_alpha_mean"/"s_alpha_var",
   /// "s_volume_mean"/"s_volume_var" (n_replicas, n_bins) [nm³ bzw. nm⁶], "n_frames" (1,).
+  /// n = NaN, wo L >= 1 (unphysikalische Parameter). Die Box darf sich seit reset() nicht ändern.
   ObserverResult download() const override;
   int n_frames() const { return n_frames_; }
 
@@ -104,6 +105,7 @@ class RefractiveIndexProfiler final : public ObserverPlugin {
   RefractiveIndexParams params_;
   int stride_;
   int n_frames_ = 0;
+  std::uint64_t box_version_ = 0;
   SimulationContext* ctx_ = nullptr;
   DeviceBuffer<float2> d_type_params_;    // (α′, v)
   DeviceBuffer<long long> d_frame_hist_;  // (n_replicas, 2, n_bins) Fixed-Point

@@ -256,6 +256,7 @@ void SimulationContext::set_box(const float* box_nm) {
   forces_valid_ = false;
   box_.upload_async(h_box_.data(), stream_.get());
   image_.zero_async(stream_.get());  // neue Box = neuer ungewrappter Ursprung
+  ++box_version_;
   synchronize();
 }
 

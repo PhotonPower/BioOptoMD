@@ -107,7 +107,19 @@ VoxelGridForce3D::~VoxelGridForce3D() {
   if (array_) cudaFreeArray(array_);
 }
 
+void VoxelGridForce3D::check_box() const {
+  const auto& p = params_;
+  if (!p.periodic_xy) return;
+  require(!ctx_->host_box().empty(), "periodic_xy verlangt eine gesetzte Box");
+  for (const float2& b : ctx_->host_box())
+    require(std::fabs(p.shape[0] * p.spacing_nm[0] - b.x) <= 1e-5f * b.x &&
+                std::fabs(p.shape[1] * p.spacing_nm[1] - b.y) <= 1e-5f * b.y,
+            "periodic_xy verlangt nx·Δx = L_x und ny·Δy = L_y für jede Replica");
+}
+
 void VoxelGridForce3D::initialize(SimulationContext& ctx) {
+  ctx_ = &ctx;
+  box_version_ = ctx.box_version();
   const auto& p = params_;
   if (p.periodic_xy) {
     for (const float2& b : ctx.host_box())
@@ -143,6 +155,10 @@ void VoxelGridForce3D::initialize(SimulationContext& ctx) {
 }
 
 void VoxelGridForce3D::compute(DeviceState& s, cudaStream_t stream) {
+  if (box_version_ != ctx_->box_version()) {  // Box geändert: Periodizität erneut prüfen
+    check_box();
+    box_version_ = ctx_->box_version();
+  }
   const auto& p = params_;
   const GridGeometry g{p.shape[0],
                        p.shape[1],

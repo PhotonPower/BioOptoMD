@@ -58,6 +58,8 @@ __device__ void probe(const DeviceState& s, int r, const int* offsets, const int
       for (int c = 0; c < 4; ++c) sh[c][threadIdx.x] += sh[c][threadIdx.x + stride];
     __syncthreads();
   }
+  if (sh[3][0] <= 0.0 && threadIdx.x == 0)  // keine Massen gesetzt (inv_mass = 0): R_F = NaN
+    atomicOr(s.d_status, kStatusNonFinite);
   com = make_double3(sh[0][0] / sh[3][0], sh[1][0] / sh[3][0], sh[2][0] / sh[3][0]);
   const double3 xa = detail::load_position(s, base + axis.x);
   const double3 xb = detail::load_position(s, base + axis.y);
@@ -322,6 +324,12 @@ void RefractiveIndexProfiler::initialize(SimulationContext& ctx) {
 }
 
 void RefractiveIndexProfiler::observe(const DeviceState& s, std::int64_t, cudaStream_t stream) {
+  // V_k = L_x L_y Δz wird beim Download aus der aktuellen Box berechnet ⇒ Box muss seit reset()
+  // gleich sein.
+  if (n_frames_ == 0) box_version_ = ctx_->box_version();
+  if (box_version_ != ctx_->box_version())
+    throw std::logic_error(
+        "RefractiveIndexProfiler: Box seit reset() geändert – erst reset() aufrufen");
   const dim3 grid_atoms(detail::elementwise_grid(s.n_atoms), s.n_replicas);
   k_layer_histogram<<<grid_atoms, detail::kElementwiseBlock, 0, stream>>>(
       s, d_type_params_.data(), static_cast<int>(params_.alpha_nm3.size()), params_.z_min_nm,
@@ -375,7 +383,8 @@ ObserverResult RefractiveIndexProfiler::download() const {
       }
       const double fw = std::max(0.0, 1.0 - vm.data[o] / vk);
       const double big_l = 4.0 * kPi / 3.0 * am.data[o] / vk + fw * lw;
-      n.data[o] = std::sqrt((1.0 + 2.0 * big_l) / (1.0 - big_l));
+      // L >= 1 (Lorentz-Katastrophe, unphysikalische α′/Dichte) ⇒ NaN statt einer Scheinzahl.
+      n.data[o] = big_l < 1.0 ? std::sqrt((1.0 + 2.0 * big_l) / (1.0 - big_l)) : std::nan("");
     }
   }
   HostArray z{"z", "nm", {nb}, {}};

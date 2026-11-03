@@ -5,6 +5,7 @@
 #include <cuda_runtime.h>
 
 #include <array>
+#include <cstdint>
 #include <string_view>
 #include <vector>
 
@@ -44,7 +45,11 @@ class VoxelGridForce3D final : public ForcePlugin {
   void compute(DeviceState& s, cudaStream_t stream) override;
 
  private:
+  void check_box() const;
+
   VoxelGridParams params_;
+  SimulationContext* ctx_ = nullptr;
+  std::uint64_t box_version_ = 0;
   cudaArray_t array_ = nullptr;
   cudaTextureObject_t texture_ = 0;
   DeviceBuffer<float> d_scale_;
