@@ -2,8 +2,9 @@
 
 > Diese Datei wird am Ende **jeder** Arbeitssitzung aktualisiert (AGENTS.md §2.4).
 
-**Aktive Phase:** 1 – Build-System, DeviceState, Plugin-Gerüst, Python-Bindings
-(Implementierung vollständig, **Abnahme auf der Referenz-GPU RTX 6000 Ada steht noch aus**)
+**Aktive Phase:** 2 – Langevin-BAOAB & Basis-Umgebungsplugins
+**Phase 1 abgenommen** am 2026-11-03 durch den Projektinhaber auf RTX 3090 (CC 8.6, Zielarchitektur);
+ein Kontrolllauf auf der RTX 6000 Ada wird nachgeholt.
 **Referenz-Hardware:** RTX 6000 Ada 48 GB (CC 8.9), Host 1 TB RAM
 
 ## Abgeschlossen
@@ -48,13 +49,11 @@ CuPy 14 (cupy-cuda12x):
 - Setter synchronisieren den Stream (bewusst, nicht im Hot-Path).
 
 ## Nächster konkreter Schritt
-1. Auf der RTX 6000 Ada: `conda env create -f environment.yml`, `pip install -v -e . --no-build-isolation`,
-   `pytest` und `compute-sanitizer` ausführen und die CUDA-Version hier eintragen. Danach Phase 1 als
-   abgeschlossen markieren und PR nach `main` mergen.
-2. Phase 2, Aufgabe 1: `LangevinIntegrator` (BAOAB, Philox), zuerst NumPy-Referenz.
+1. Phase 2, Aufgabe 1: `LangevinIntegrator` (BAOAB, Philox), zuerst NumPy-Referenz.
+2. Nachholen: Kontrolllauf `pytest` + `compute-sanitizer` auf der RTX 6000 Ada, CUDA-Version hier eintragen.
 
 ## Sitzungslog
 | Datum | Agent/Person | Zusammenfassung |
 |---|---|---|
 | 2026-11-03 | Claude (Setup) | Phase 0 angelegt. Build-Dateien sind ungetestete Entwürfe. |
-| 2026-11-03 | Claude Opus 5.5 | Phase 1 implementiert und auf RTX 3090/Windows getestet; Abnahme auf Referenz-GPU offen. |
+| 2026-11-03 | Claude Opus 5.5 | Phase 1 implementiert und auf RTX 3090/Windows getestet (PR #1). Projektinhaber hat Phase 1 auf RTX 3090 abgenommen. |
