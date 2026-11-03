@@ -12,3 +12,4 @@ Im Code referenziert als `// ASSUMPTION(OQ-NN): …`.
 | OQ-05 | open | Wie wird die 9-3-Wand für Graphen vs. Gold parametrisiert (ε_w, σ_w pro Atomtyp)? Literatur (z. B. Steele-Potential) oder eigener Fit an All-Atom-Graphen? | Steele-artige Werte für Graphen, Platzhalter für Gold |
 | OQ-06 | open | Ist linearisiertes Gouy-Chapman bei relevanten Elektrodenpotentialen (> 25 mV) ausreichend, oder nichtlineare Lösung als Tabelle? | linearisiert |
 | OQ-07 | open | Thiol-Gold-Anker: harter Positions-Restraint oder lateral beweglicher Anker (nur z-Restraint)? | nur z-Restraint + schwacher xy-Restraint |
+| OQ-08 | assumption | ROADMAP Phase 1 fordert für `test_wrap_xy` eine „exakte“ ungewrappte Rekonstruktion. In FP32 ist x − n·L für x ∈ (−L, 0) nicht immer darstellbar. Was ist gemeint? | Exakt (bitgenau) für \|x\| ≥ L, sonst Fehler ≤ ½ ulp(L) (eine Rundung von x + L); gewrappte Werte und Imagezähler bitgenau gleich der NumPy-Referenz. Projektinhaber bitte bestätigen. |
