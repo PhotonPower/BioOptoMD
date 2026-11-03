@@ -2,8 +2,8 @@
 
 > Diese Datei wird am Ende **jeder** Arbeitssitzung aktualisiert (AGENTS.md §2.4).
 
-**Aktive Phase:** 6 – In-situ Observer & VoxelGridForce3D
-(Implementierung vollständig, alle Abnahmetests grün auf RTX 3090; **Abnahme durch den Projektinhaber offen**)
+**Aktive Phase:** 7 – Python-Builder, I/O & End-to-End (noch nicht begonnen)
+**Phase 6 abgenommen** am 2026-11-04 durch den Projektinhaber (RTX 3090).
 **Referenz-Hardware:** RTX 6000 Ada 48 GB (CC 8.9), Host 1 TB RAM
 
 ## Abgeschlossen
@@ -64,7 +64,8 @@
   Structs unterschiedlich aus. Vor dem Push mit beiden prüfen oder Kommentare über die Member setzen.
 
 ## Nächster konkreter Schritt
-1. Projektinhaber: Phase 6 abnehmen; OQ-11 (Temperaturschätzer) entscheiden; PRs #1 → … → Phase 6 mergen.
+1. Projektinhaber: OQ-11 (Temperaturschätzer) entscheiden; PRs #1 → #6 nacheinander mergen (gestapelt,
+   nach jedem Merge Basis des nächsten PR auf `main` umstellen).
 2. Phase 7, Aufgabe 1: `biooptomd.builder.from_parmed()/from_openmm()` – die bisher in den Tests verstreuten
    Schritte (Topologie-Extraktion, LJ-Typen, Ausschlüsse, HMR, Constraints) zu einem Builder bündeln.
 3. Nachholen: Kontrolllauf auf der RTX 6000 Ada; Nsight Compute (Counter-Freigabe).
@@ -79,3 +80,4 @@
 | 2026-11-03 | Claude Opus 5.5 | Phase 4 implementiert (Tiled All-Pairs, Builder, OpenMM-Vergleich), 47/47 Tests grün; Nsight Compute blockiert (Counter-Rechte). |
 | 2026-11-03 | Claude Opus 5.5 | Phase 5 implementiert (HMR, SHAKE/RATTLE, N_dof), 52/52 Tests grün; BAOAB-Kinetikbias dokumentiert (OQ-11). |
 | 2026-11-04 | Claude Opus 5.5 | Phase-5-Review-Nacharbeit (Stabilitätstest nach Regel 8); Phase 6 implementiert (Optik-Observer, Ringpuffer, VoxelGridForce3D), Review umgesetzt, 63/63 Tests grün. |
+| 2026-11-04 | Claude Opus 5.5 | Phase 6 abgenommen (PR #6). Sitzungsende; nächster Schritt: Phase 7 auf neuem Branch `phase-7/...` ab `phase-6/observers-voxel`. |
