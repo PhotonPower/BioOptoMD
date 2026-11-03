@@ -142,6 +142,9 @@ class SimulationContext {
   /// Übernimmt den Besitz, ruft initialize() auf und gibt eine Referenz zurück.
   ForcePlugin& add_force(std::unique_ptr<ForcePlugin> plugin);
   ObserverPlugin& add_observer(std::unique_ptr<ObserverPlugin> plugin);
+  /// Führt alle Observer einmal am aktuellen Zustand aus (unabhängig von stride; Schritt =
+  /// current_step). Asynchron.
+  void observe_now();
   void set_nonbonded(std::unique_ptr<NonbondedStrategy> strategy);
   std::size_t num_forces() const { return forces_.size(); }
   std::size_t num_observers() const { return observers_.size(); }

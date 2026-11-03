@@ -393,6 +393,11 @@ ObserverPlugin& SimulationContext::add_observer(std::unique_ptr<ObserverPlugin> 
   return *observers_.back();
 }
 
+void SimulationContext::observe_now() {
+  activate();
+  for (auto& observer : observers_) observer->observe(state_, step_, stream_.get());
+}
+
 void SimulationContext::set_nonbonded(std::unique_ptr<NonbondedStrategy> strategy) {
   activate();
   if (strategy) strategy->initialize(*this);
