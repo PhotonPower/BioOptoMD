@@ -45,8 +45,8 @@ def repartition_hydrogen_mass(masses, bonds, is_hydrogen, h_mass: float = 3.024)
     m = np.array(masses, np.float64, copy=True)
     h = np.asarray(is_hydrogen, bool)
     partners = _bond_partners(bonds, is_hydrogen)
-    bonded_h = {hh for _, hh, _ in partners}
-    if bonded_h != set(np.flatnonzero(h)):
+    bonded_h = [hh for _, hh, _ in partners]
+    if len(bonded_h) != h.sum() or set(bonded_h) != set(np.flatnonzero(h)):
         raise ValueError("jedes H-Atom braucht genau eine Bindung zu einem Schweratom")
     for heavy, hh, _ in partners:
         delta = h_mass - m[hh]

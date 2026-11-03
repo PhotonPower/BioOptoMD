@@ -87,7 +87,7 @@ def core():
     return _core
 
 
-def _context(core, d, n_rep, dt, gamma, seed=1, surface=False, temperature=300.0):
+def _context(core, d, n_rep, dt, gamma, seed=1, surface=False, temperature=300.0, anchors=2):
     """Duplex-System mit HMR + H-Constraints, kovalent + nicht-kovalent (+ optional Oberfläche)."""
     n = len(d["masses"])
     topo = {k: d[k] for k in BONDED_KEYS}
@@ -113,15 +113,10 @@ def _context(core, d, n_rep, dt, gamma, seed=1, surface=False, temperature=300.0
         # Ankeratom (tiefstes Schweratom): z-Restraint + schwacher xy-Restraint (ASSUMPTION(OQ-07)).
         ctx.add_planar_surface(np.array([2.0], np.float32), np.array([0.3], np.float32))
         z = d["positions"][:, 2]
-        half = n // 2
-        anchors = [
-            int(np.argmin(np.where(~is_h[s], z[s], np.inf))) + s.start
-            for s in (slice(0, half), slice(half, n))
-        ]
-        rep, atom = (
-            np.repeat(np.arange(n_rep), 2).astype(np.int32),
-            np.tile(anchors, n_rep).astype(np.int32),
-        )
+        parts = [slice(0, n)] if anchors == 1 else [slice(0, n // 2), slice(n // 2, n)]
+        anchor_atoms = [int(np.argmin(np.where(~is_h[s], z[s], np.inf))) + s.start for s in parts]
+        rep = np.repeat(np.arange(n_rep), len(anchor_atoms)).astype(np.int32)
+        atom = np.tile(anchor_atoms, n_rep).astype(np.int32)
         ref = d["positions"][atom].astype(np.float32)
         ctx.add_position_restraints(
             rep, atom, ref, np.full(len(atom), 1000.0, np.float32), dims=(False, False, True)
@@ -228,38 +223,66 @@ def test_equipartition_with_constraints(core):
     assert ctx.status() == 0
 
 
+def _single_duplex(d):
+    """Erster Duplex des Systems (ohne Ionen und ohne zweiten Duplex) als "Aptamer"."""
+    d = _load(drop_ions=True) if d is None else d
+    n = len(d["masses"]) // 2
+    out = dict(d)
+    for k in ("positions", "masses", "charges", "sigma", "epsilon"):
+        out[k] = d[k][:n]
+    out["excluded"] = d["excluded"][(d["excluded"] < n).all(axis=1)]
+    for idx, params in (
+        ("bonds", ("bond_k", "bond_r0")), ("angles", ("angle_k", "angle_theta0")),
+        ("torsions", ("torsion_k", "torsion_n", "torsion_phase")),
+        ("pairs14", ("pair_qq", "pair_sigma", "pair_eps")),
+    ):  # fmt: skip
+        keep = (d[idx] < n).all(axis=1)
+        assert ((d[idx] >= n).all(axis=1) | keep).all(), "Duplexe sind kovalent gekoppelt"
+        out[idx] = d[idx][keep]
+        for p in params:
+            out[p] = d[p][keep]
+    return out
+
+
 @pytest.mark.gpu
 @pytest.mark.slow
 def test_stability_4fs(core):
-    """Duplexe an der Oberfläche (9-3-Wand, verankert), HMR + H-Constraints, Δt = 4 fs, 1 ns bei
-    300 K ohne Explosion (endlich, Constraints erfüllt, Statuswort 0, Moleküle über der Wand);
-    Verteilung der potentiellen Energie im Fenster 50–250 ps konsistent mit Δt = 1 fs (KS, p > 0.001).
+    """DNA-Duplex an der Oberfläche (9-3-Wand, verankert), HMR + H-Constraints, Δt = 4 fs, 1 ns bei
+    300 K ohne Explosion (endlich, Constraints erfüllt, Statuswort 0, Molekül über der Wand); die
+    Verteilung der potentiellen Energie ist konsistent mit einem 1-ns-Lauf bei Δt = 1 fs.
+
+    Statistik (AGENTS.md Regel 8): Auswertung erst nach 500 ps (das System relaxiert langsam), je
+    Lauf 8 unabhängige Replicas. (a) ⟨E_pot⟩ mit σ aus den Replica-Mittelwerten: |Δ| < 4σ. (b) KS-Test
+    auf Samples im Abstand von 50 ps (Autokorrelation von E_pot dort ≈ 0.08), p > 0.001.
 
     Verglichen wird E_pot (Konfigurationen): BAOAB sampelt Konfigurationen sehr genau, die kinetische
     Temperatur aus Geschwindigkeiten ist dagegen bei großem Δt um O(Δt²) zu niedrig (PHYSICS_MODEL §1).
     """
-    d = _load(drop_ions=True)
+    d = _single_duplex(None)
     n = len(d["masses"])
-    n_rep = 4
+    n_rep = 8
 
-    def run(dt, total_ps):
-        ctx, cons, _ = _context(core, d, n_rep, dt, 1.0, seed=int(dt * 1e6), surface=True)
-        stride = round(5.0 / dt)  # alle 5 ps (≫ Korrelationszeit der schnellen Moden)
-        tracker = ctx.add_energy_tracker(stride=stride, capacity=10_000)
-        ctx.step(round(total_ps / dt))
+    def run(dt):
+        ctx, cons, _ = _context(
+            core, d, n_rep, dt, 1.0, seed=int(dt * 1e6), surface=True, anchors=1
+        )
+        tracker = ctx.add_energy_tracker(stride=round(50.0 / dt), capacity=100)
+        ctx.step(round(1000.0 / dt))
         res = tracker.result()
         t_ps = res["steps"] * dt
-        window = (t_ps > 50.0) & (t_ps <= 250.0)
         e_pot = res["energies"][:, :, 1:].sum(axis=2)
-        return ctx, cons, e_pot, window
+        return ctx, cons, e_pot[:, t_ps > 500.0]
 
-    ctx4, cons, e4, w4 = run(0.004, 1000.0)
+    ctx4, cons, e4 = run(0.004)
     x = ctx4.positions_precise()[:, :n]
     assert np.isfinite(e4).all() and np.isfinite(x).all()
     assert ctx4.status() == 0
     assert _bond_deviation(x, cons["clusters"], cons["distances"], d["box"]) < 1e-6
     assert x[..., 2].min() > 0.1, "Atom durch die Wand"
     assert x[..., 2].max() < 15.0, "Molekül hat sich von der Oberfläche gelöst"
-    _, _, e1, w1 = run(0.001, 250.0)
-    p = stats.ks_2samp(e4[:, w4].ravel(), e1[:, w1].ravel()).pvalue
+    _, _, e1 = run(0.001)
+    m4, m1 = e4.mean(axis=1), e1.mean(axis=1)  # je Replica (unabhängig)
+    sigma = np.sqrt(m4.var(ddof=1) / n_rep + m1.var(ddof=1) / n_rep)
+    assert abs(m4.mean() - m1.mean()) < 4.0 * sigma, (m4.mean(), m1.mean(), sigma)
+    p = stats.ks_2samp(e4.ravel(), e1.ravel()).pvalue
     assert p > 1e-3, f"KS p = {p:.2e}"

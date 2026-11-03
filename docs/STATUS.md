@@ -36,6 +36,16 @@
   `test_equipartition_with_constraints`, `test_stability_4fs` (slow, 148 s) + Builder- und Schritt-Referenztest.
 - `compute-sanitizer --tool memcheck` (Phase 5): 0 Fehler.
 
+## Phase 5 – Nacharbeit nach Review (2026-11-04)
+- `test_stability_4fs` statistisch neu aufgebaut (AGENTS.md Regel 8): Review maß im alten Fenster 50–250 ps
+  noch Relaxation (Drift ≈ 0.65σ) und korrelierte 5-ps-Samples. Jetzt: ein Duplex, 8 unabhängige Replicas,
+  beide Läufe 1 ns, Auswertung ab 500 ps; ⟨E_pot⟩-Vergleich mit σ aus Replica-Mittelwerten (4σ) und KS auf
+  50-ps-Samples. Grün (330 s, `slow`).
+- `inv_mass = 0` in Clustern: SHAKE bewegt solche Atome nicht mehr, RATTLE überspringt Nenner 0 (kein NaN).
+- `repartition_hydrogen_mass` lehnt H-Atome mit mehreren Bindungen ab.
+- Bekannte Testlücke (vom Review als physikalisch irrelevant eingestuft): Das RATTLE nach dem ersten B und
+  nach O ist durch keinen Test einzeln abgesichert (die SHAKE-Geschwindigkeitskorrektur kompensiert es).
+
 ## Rote Tests
 – keine.
 
