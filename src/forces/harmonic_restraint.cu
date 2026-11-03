@@ -231,8 +231,8 @@ void HarmonicRestraintPullingForce::compute(DeviceState& s, cudaStream_t stream)
   const bool do_work = has_last_step_ && step == last_step_ + 1;
   k_com_pulling<<<s.n_replicas, kPullBlock, 0, stream>>>(
       s, d_group_offsets_.data(), d_group_atoms_.data(), d_group_weights_.data(), d_r0_k_.data(),
-      d_dir_v_.data(), ctx_->time_ps(), ctx_->previous_time_ps(), do_work ? 1 : 0,
-      d_work_.data(), d_extension_.data());
+      d_dir_v_.data(), ctx_->time_ps(), ctx_->previous_time_ps(), do_work ? 1 : 0, d_work_.data(),
+      d_extension_.data());
   BOMD_LAUNCH_CHECK();
   last_step_ = step;
   has_last_step_ = true;
