@@ -48,6 +48,8 @@
 - Tiled All-Pairs prüft alle Tile-Paare (keine Cutoff-Vorauswahl); Optimierung/Cell-List später (Phase 8/9).
 - nanobind-„leaked instances“ nur unter compute-sanitizer mit mehreren Tests pro Prozess (siehe frühere Notiz).
 - Explodierende Trajektorien setzen Statusbits; `step()` prüft sie nicht selbst.
+- clang-format: CI (ubuntu) nutzt Version 21, lokal (pip) Version 18; sie richten nachgestellte Kommentare in
+  Structs unterschiedlich aus. Vor dem Push mit beiden prüfen oder Kommentare über die Member setzen.
 
 ## Nächster konkreter Schritt
 1. Projektinhaber: Phase 4 abnehmen; PRs #1 → #2 → #3 → Phase 4 nacheinander mergen.

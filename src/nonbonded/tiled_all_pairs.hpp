@@ -13,10 +13,14 @@ namespace bomd {
 
 /// Eine Nonbonded-Topologie. Erzeugung: biooptomd.nonbonded.nonbonded_topology().
 struct NonbondedTopology {
-  int n_types = 0;              ///< Anzahl LJ-Typen T (Typ 0 = Padding, ε = 0), 1 ≤ T ≤ 64
-  std::vector<float> lj_table;  ///< (T, T, 2): (σ_ij [nm], ε_ij [kJ/mol])
-  std::vector<int> mask_index;  ///< (n_tile_pairs,): Index in masks oder −1
-  std::vector<std::uint32_t> masks;  ///< (n_mask_tiles, 32): Ausschluss-Bitmasken
+  /// Anzahl LJ-Typen T (Typ 0 = Padding, ε = 0), 1 ≤ T ≤ 64
+  int n_types = 0;
+  /// (T, T, 2): (σ_ij [nm], ε_ij [kJ/mol])
+  std::vector<float> lj_table;
+  /// (n_tile_pairs,): Index in masks oder −1
+  std::vector<int> mask_index;
+  /// (n_mask_tiles, 32): Ausschluss-Bitmasken
+  std::vector<std::uint32_t> masks;
 };
 
 struct TiledAllPairsParams {
