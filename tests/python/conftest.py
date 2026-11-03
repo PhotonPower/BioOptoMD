@@ -1,8 +1,13 @@
 """Gemeinsame pytest-Konfiguration: automatische Skips für gpu/reference-Tests."""
 
 import importlib.util
+import sys
+from pathlib import Path
 
 import pytest
+
+# NumPy-Referenzimplementierungen (tests/reference/*_ref.py) importierbar machen.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "reference"))
 
 
 def _cuda_available() -> bool:
