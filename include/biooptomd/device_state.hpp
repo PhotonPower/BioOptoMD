@@ -32,6 +32,7 @@ enum StatusBit : unsigned int {
   kStatusNonFinite = 2u,            ///< ein Beitrag war NaN (als 0 gezählt)
   kStatusWrapRange = 4u,            ///< wrap_xy mit |x/L| >= 2^20 (FP32-Wrap ungenau)
   kStatusUnknownType = 8u,          ///< LJ-Typ >= n_types im Nonbonded-Kernel (als Typ 0 behandelt)
+  kStatusConstraintFailure = 16u,   ///< SHAKE/RATTLE nicht konvergiert (max_iterations erreicht)
 };
 
 enum EnergyTerm : int {
