@@ -72,6 +72,8 @@ class SimulationContext {
   /// Temperaturen [K] pro Replica, Shape (n_replicas,), endlich und >= 0.
   void set_temperatures(const float* t_k);
   bool box_is_set() const { return box_set_; }
+  /// Host-Kopie der Box (Lx, Ly) [nm] je Replica; leer, solange keine Box gesetzt ist.
+  const std::vector<float2>& host_box() const { return h_box_; }
 
   /// Geräte-Statuswort (Bits bomd::StatusBit, ADR 0006). Synchronisiert.
   unsigned int status();
@@ -136,6 +138,7 @@ class SimulationContext {
   std::size_t num_forces() const { return forces_.size(); }
   std::size_t num_observers() const { return observers_.size(); }
   bool has_nonbonded() const { return nonbonded_ != nullptr; }
+  NonbondedStrategy* nonbonded() { return nonbonded_.get(); }
 
   /// Aktiviert das Gerät dieses Kontexts für den aufrufenden Host-Thread.
   void activate() const;

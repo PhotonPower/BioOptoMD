@@ -1,0 +1,238 @@
+// BioOptoMD – TiledAllPairs, siehe tiled_all_pairs.hpp. Formeln: PHYSICS_MODEL.md §3 und
+// tests/reference/nonbonded_ref.py (V = (V_LJ + V_el)·S(r), Switching wie OpenMM).
+#include <algorithm>
+#include <cmath>
+#include <stdexcept>
+#include <string>
+#include <utility>
+
+#include "biooptomd/cuda_check.hpp"
+#include "biooptomd/simulation_context.hpp"
+#include "biooptomd/units.hpp"
+#include "core/fixed_point.cuh"
+#include "core/pbc.cuh"
+#include "nonbonded/electrostatics.cuh"
+#include "nonbonded/tiled_all_pairs.hpp"
+
+namespace bomd {
+namespace {
+
+/// Warps pro Block; jeder Warp bearbeitet ein Tile-Paar. 4 Warps = 128 Threads: genug Warps
+/// pro SM für Latenzverdeckung bei kleinem Shared-Memory-Bedarf (Tabelle + 4 × 32 j-Atome).
+constexpr int kWarpsPerBlock = 4;
+constexpr int kMaxTypes = 64;
+
+struct SwitchParams {
+  float r_s, r_c, r_c2, inv_width;  // r_s, r_c [nm], r_c² [nm²], 1/(r_c − r_s) [1/nm]
+};
+
+/// Ein Warp pro Tile-Paar (I ≤ J), blockIdx.y = Replica. Lane a hält Atom i = I·32 + a; die
+/// 32 j-Atome liegen im Shared Memory und werden rotierend (b = (a + k) mod 32) besucht, sodass
+/// in jedem Schritt jede Lane ein anderes j schreibt (konfliktfreie j-Kraftakkumulation).
+/// Ausgeschlossen: Bit b der Exclusion-Maske, in Diagonal-Tiles b ≤ a (jedes Paar genau einmal),
+/// Padding-Atome (i_local >= n_atoms) und r² < EPS_R2.
+template <typename Elec>
+__global__ void __launch_bounds__(kWarpsPerBlock * 32)
+    k_tiled_all_pairs(DeviceState s, const int2* tile_pairs, int n_tile_pairs, const float2* lj,
+                      const int* mask_index, const std::uint32_t* masks, const int4* replica,
+                      const typename Elec::Params* elec, SwitchParams sw) {
+  extern __shared__ float2 sh_lj[];  // T × T (σ, ε)
+  __shared__ float4 sh_pos[kWarpsPerBlock][32];
+  __shared__ int sh_type[kWarpsPerBlock][32];
+  __shared__ float3 sh_fj[kWarpsPerBlock][32];
+
+  const int r = blockIdx.y;
+  const int4 rep = replica[r];  // (lj_offset, n_types, mask_index_offset, mask_base)
+  const int n_types = rep.y;
+  for (int k = threadIdx.x; k < n_types * n_types; k += blockDim.x) sh_lj[k] = lj[rep.x + k];
+  __syncthreads();
+
+  const int warp = threadIdx.x / 32;
+  const int a = threadIdx.x % 32;
+  const int p = blockIdx.x * kWarpsPerBlock + warp;
+  if (p >= n_tile_pairs) return;  // ganzer Warp; danach nur noch __syncwarp
+
+  const int2 tp = tile_pairs[p];
+  const int base = r * s.n_pad;
+  const int i_local = tp.x * 32 + a;
+  const int j_local = tp.y * 32 + a;
+  const bool valid_i = i_local < s.n_atoms;
+  const bool valid_j = j_local < s.n_atoms;
+
+  const float4 pi = s.d_pos[base + i_local];
+  int ti = s.d_types[base + i_local].x;
+  int tj = s.d_types[base + j_local].x;
+  if (ti >= n_types || tj >= n_types) atomicOr(s.d_status, kStatusUnknownType);
+  ti = ti < n_types ? ti : 0;
+  sh_pos[warp][a] = s.d_pos[base + j_local];
+  sh_type[warp][a] = tj < n_types ? tj : 0;
+  sh_fj[warp][a] = make_float3(0.0f, 0.0f, 0.0f);
+
+  const unsigned int valid_j_bits = __ballot_sync(0xffffffffu, valid_j);
+  const int mi = mask_index[rep.z + p];
+  unsigned int skip = mi >= 0 ? masks[rep.w + mi * 32 + a] : 0u;
+  if (tp.x == tp.y) skip |= (2u << a) - 1u;  // Bits 0..a (für a = 31 alle Bits)
+  skip |= ~valid_j_bits;
+  if (!valid_i) skip = 0xffffffffu;
+
+  const typename Elec::Params ep = elec[r];
+  const float2 box = s.d_box[r];
+  float3 fi = make_float3(0.0f, 0.0f, 0.0f);
+  float energy = 0.0f;
+  __syncwarp();
+
+  for (int k = 0; k < 32; ++k) {
+    const int b = (a + k) & 31;
+    if (!((skip >> b) & 1u)) {
+      const float3 d = detail::minimum_image_delta(pi, sh_pos[warp][b], box);
+      const float r2 = d.x * d.x + d.y * d.y + d.z * d.z;
+      if (r2 < sw.r_c2 && r2 >= units::EPS_R2) {
+        const float dist = sqrtf(r2);
+        const float inv_r = 1.0f / dist;
+        const float2 se = sh_lj[ti * n_types + sh_type[warp][b]];  // (σ, ε)
+        float v = 0.0f, f = 0.0f;                                  // f = −dV/dr
+        if (se.y != 0.0f) {  // ε = 0: kein LJ (vermeidet 0·inf = NaN bei r ≪ σ)
+          const float sr2 = se.x * se.x * inv_r * inv_r;
+          const float sr6 = sr2 * sr2 * sr2;
+          v = 4.0f * se.y * (sr6 * sr6 - sr6);
+          f = 4.0f * se.y * (12.0f * sr6 * sr6 - 6.0f * sr6) * inv_r;
+        }
+        float v_el, f_el;
+        Elec::pair(ep, pi.w * sh_pos[warp][b].w, dist, inv_r, v_el, f_el);
+        v += v_el;
+        f += f_el;
+        if (dist > sw.r_s) {
+          // S = 1 − 10x³ + 15x⁴ − 6x⁵ = y³(1 + 3x + 6x²), dS/dx = −30 x² y², y = 1 − x;
+          // faktorisiert, weil die Monomform für x → 1 in FP32 auslöscht. y direkt aus r_c − r.
+          const float x = (dist - sw.r_s) * sw.inv_width;
+          const float y = (sw.r_c - dist) * sw.inv_width;
+          const float sv = y * y * y * (1.0f + x * (3.0f + 6.0f * x));
+          const float ds = -30.0f * x * x * y * y * sw.inv_width;
+          f = f * sv - v * ds;
+          v *= sv;
+        }
+        const float c = f * inv_r;
+        const float3 fv = make_float3(c * d.x, c * d.y, c * d.z);
+        fi.x += fv.x;
+        fi.y += fv.y;
+        fi.z += fv.z;
+        float3& fj = sh_fj[warp][b];
+        fj.x -= fv.x;
+        fj.y -= fv.y;
+        fj.z -= fv.z;
+        energy += v;
+      }
+    }
+    __syncwarp();
+  }
+
+  if (valid_i && (fi.x != 0.0f || fi.y != 0.0f || fi.z != 0.0f))
+    detail::add_force(s, base + i_local, fi.x, fi.y, fi.z);
+  const float3 fj = sh_fj[warp][a];
+  if (valid_j && (fj.x != 0.0f || fj.y != 0.0f || fj.z != 0.0f))
+    detail::add_force(s, base + j_local, fj.x, fj.y, fj.z);
+  detail::warp_add_energy(s, r, kEnergyNonbonded, energy);
+}
+
+void require(bool condition, const std::string& message) {
+  if (!condition) throw std::invalid_argument("TiledAllPairs: " + message);
+}
+
+}  // namespace
+
+TiledAllPairs::TiledAllPairs(TiledAllPairsParams params) : params_(std::move(params)) {
+  require(!params_.topologies.empty(), "mindestens eine Topologie nötig");
+  require(std::isfinite(params_.r_switch_nm) && std::isfinite(params_.r_cutoff_nm) &&
+              params_.r_switch_nm > 0.0f && params_.r_switch_nm < params_.r_cutoff_nm,
+          "0 < r_switch < r_cutoff erwartet");
+  for (const auto& t : params_.topologies) {
+    require(t.n_types >= 1 && t.n_types <= kMaxTypes, "n_types muss in [1, 64] liegen");
+    require(t.lj_table.size() == 2u * t.n_types * t.n_types, "lj_table muss (T, T, 2) sein");
+    require(t.masks.size() % 32 == 0, "masks muss (n, 32) sein");
+    for (std::size_t k = 0; k < t.lj_table.size(); ++k)
+      require(std::isfinite(t.lj_table[k]) && t.lj_table[k] >= 0.0f, "LJ-Parameter endlich, >= 0");
+    for (int k = 0; k < t.n_types; ++k)  // Typ 0 = Padding (AGENTS.md Regel 6)
+      require(t.lj_table[2 * k + 1] == 0.0f, "Typ 0 muss ε = 0 haben");
+  }
+}
+
+void TiledAllPairs::initialize(SimulationContext& ctx) {
+  ctx_ = &ctx;
+  const int n_rep = ctx.n_replicas();
+  require(params_.replica_topology.size() == static_cast<std::size_t>(n_rep) &&
+              params_.kappa_per_nm.size() == static_cast<std::size_t>(n_rep) &&
+              params_.eps_r.size() == static_cast<std::size_t>(n_rep),
+          "replica_topology, kappa, eps_r brauchen n_replicas Einträge");
+
+  const int n_tiles = ctx.n_pad() / 32;
+  std::vector<int2> tps;
+  for (int i = 0; i < n_tiles; ++i)
+    for (int j = i; j < n_tiles; ++j) tps.push_back(make_int2(i, j));
+  n_tile_pairs_ = static_cast<int>(tps.size());
+
+  std::vector<float2> lj;
+  std::vector<int> mask_index;
+  std::vector<std::uint32_t> masks;
+  std::vector<int4> topo_offsets;
+  for (const auto& t : params_.topologies) {
+    require(t.mask_index.size() == static_cast<std::size_t>(n_tile_pairs_),
+            "mask_index passt nicht zu n_pad (" + std::to_string(n_tile_pairs_) + " Tile-Paare)");
+    const int n_mask_tiles = static_cast<int>(t.masks.size() / 32);
+    for (int m : t.mask_index) require(m >= -1 && m < n_mask_tiles, "mask_index außerhalb");
+    topo_offsets.push_back(make_int4(static_cast<int>(lj.size()), t.n_types,
+                                     static_cast<int>(mask_index.size()),
+                                     static_cast<int>(masks.size())));
+    for (int k = 0; k < t.n_types * t.n_types; ++k)
+      lj.push_back(make_float2(t.lj_table[2 * k], t.lj_table[2 * k + 1]));
+    mask_index.insert(mask_index.end(), t.mask_index.begin(), t.mask_index.end());
+    masks.insert(masks.end(), t.masks.begin(), t.masks.end());
+    max_types_ = std::max(max_types_, t.n_types);
+  }
+  std::vector<int4> replica(n_rep);
+  std::vector<float2> screening(n_rep);
+  for (int r = 0; r < n_rep; ++r) {
+    const int t = params_.replica_topology[r];
+    require(t >= 0 && t < static_cast<int>(params_.topologies.size()), "Topologie-Index ungültig");
+    require(std::isfinite(params_.kappa_per_nm[r]) && params_.kappa_per_nm[r] >= 0.0f &&
+                std::isfinite(params_.eps_r[r]) && params_.eps_r[r] > 0.0f,
+            "kappa >= 0 und eps_r > 0 erwartet");
+    replica[r] = topo_offsets[t];
+    screening[r] = make_float2(params_.kappa_per_nm[r], params_.eps_r[r]);
+  }
+
+  const cudaStream_t st = ctx.stream();
+  d_tile_pairs_ = DeviceBuffer<int2>(tps.size());
+  d_lj_ = DeviceBuffer<float2>(lj.size());
+  d_mask_index_ = DeviceBuffer<int>(mask_index.size());
+  d_masks_ = DeviceBuffer<std::uint32_t>(std::max<std::size_t>(masks.size(), 1));
+  d_replica_ = DeviceBuffer<int4>(n_rep);
+  d_screening_ = DeviceBuffer<float2>(n_rep);
+  d_tile_pairs_.upload_async(tps.data(), st);
+  d_lj_.upload_async(lj.data(), st);
+  d_mask_index_.upload_async(mask_index.data(), st);
+  if (!masks.empty())
+    BOMD_CUDA_CHECK(cudaMemcpyAsync(d_masks_.data(), masks.data(),
+                                    masks.size() * sizeof(std::uint32_t), cudaMemcpyHostToDevice,
+                                    st));
+  d_replica_.upload_async(replica.data(), st);
+  d_screening_.upload_async(screening.data(), st);
+  ctx.synchronize();  // Host-Vektoren leben bis hier
+}
+
+void TiledAllPairs::compute(DeviceState& s, cudaStream_t stream) {
+  const float min_box = 2.0f * params_.r_cutoff_nm;
+  if (ctx_->host_box().empty()) throw std::logic_error("TiledAllPairs: Box nicht gesetzt");
+  for (const float2& b : ctx_->host_box())
+    if (b.x < min_box || b.y < min_box)
+      throw std::logic_error("TiledAllPairs: Box kleiner als 2 r_c (ADR 0003)");
+  const float r_s = params_.r_switch_nm, r_c = params_.r_cutoff_nm;
+  const SwitchParams sw{r_s, r_c, r_c * r_c, 1.0f / (r_c - r_s)};
+  const dim3 grid((n_tile_pairs_ + kWarpsPerBlock - 1) / kWarpsPerBlock, s.n_replicas);
+  const std::size_t shmem = static_cast<std::size_t>(max_types_) * max_types_ * sizeof(float2);
+  k_tiled_all_pairs<detail::DebyeHuckel><<<grid, kWarpsPerBlock * 32, shmem, stream>>>(
+      s, d_tile_pairs_.data(), n_tile_pairs_, d_lj_.data(), d_mask_index_.data(), d_masks_.data(),
+      d_replica_.data(), d_screening_.data(), sw);
+  BOMD_LAUNCH_CHECK();
+}
+
+}  // namespace bomd

@@ -26,6 +26,7 @@
 #include "forces/bonded.hpp"
 #include "forces/harmonic_restraint.hpp"
 #include "forces/planar_surface.hpp"
+#include "nonbonded/tiled_all_pairs.hpp"
 #include "observers/energy_tracker.hpp"
 
 namespace nb = nanobind;
@@ -175,6 +176,35 @@ bomd::BondedTopology topology_from_dict(const nb::dict& d) {
   return t;
 }
 
+/// Nonbonded-Topologie aus dict {lj_table (T,T,2), mask_index (n_tp,), masks (m,32)}.
+bomd::NonbondedTopology nonbonded_topology_from_dict(const nb::dict& d) {
+  static const std::set<std::string> known = {"lj_table", "mask_index", "masks"};
+  for (auto [key, value] : d) {
+    const std::string k = nb::cast<std::string>(key);
+    if (!known.count(k))
+      throw nb::value_error(("Nonbonded-Topologie: unbekannter Schlüssel '" + k + "'").c_str());
+    (void)value;
+  }
+  for (const char* k : {"lj_table", "mask_index", "masks"})
+    if (!d.contains(k))
+      throw nb::value_error((std::string("Nonbonded-Topologie: Schlüssel fehlt: ") + k).c_str());
+  nb::module_ np = nb::module_::import_("numpy");
+  nb::object table = np.attr("asarray")(d["lj_table"]);
+  const nb::tuple shape = nb::cast<nb::tuple>(table.attr("shape"));
+  if (nb::len(shape) != 3 || nb::cast<int>(shape[0]) != nb::cast<int>(shape[1]) ||
+      nb::cast<int>(shape[2]) != 2)
+    throw nb::value_error("lj_table: Shape (T, T, 2) erwartet");
+  bomd::NonbondedTopology t;
+  t.n_types = nb::cast<int>(shape[0]);
+  t.lj_table = to_vector(
+      nb::cast<HostInput<float>>(np.attr("ascontiguousarray")(table, "dtype"_a = "float32")));
+  t.mask_index = to_vector(nb::cast<HostInput<int32_t>>(
+      np.attr("ascontiguousarray")(d["mask_index"], "dtype"_a = "int32")));
+  nb::object masks = np.attr("ascontiguousarray")(d["masks"], "dtype"_a = "uint32");
+  t.masks = to_vector(nb::cast<HostInput<uint32_t>>(masks));
+  return t;
+}
+
 Shape atoms_shape(const SimulationContext& c, std::size_t last) {
   return {static_cast<std::size_t>(c.n_replicas()), static_cast<std::size_t>(c.n_pad()), last};
 }
@@ -213,6 +243,7 @@ NB_MODULE(_core, m) {
       static_cast<unsigned int>(bomd::kStatusFixedPointSaturated);
   m.attr("STATUS_NON_FINITE") = static_cast<unsigned int>(bomd::kStatusNonFinite);
   m.attr("STATUS_WRAP_RANGE") = static_cast<unsigned int>(bomd::kStatusWrapRange);
+  m.attr("STATUS_UNKNOWN_TYPE") = static_cast<unsigned int>(bomd::kStatusUnknownType);
 
   // Kompilierte Konstanten aus units.hpp (Test: test_units.py).
   auto units = m.def_submodule("units", "Konstanten aus include/biooptomd/units.hpp.");
@@ -536,6 +567,30 @@ NB_MODULE(_core, m) {
       "torsion_k [kJ/mol], torsion_n, torsion_phase [rad], pairs14 (n,2), pair_qq [e^2],\n"
       "pair_sigma [nm], pair_eps [kJ/mol] (lokale Atomindizes). replica_topology int32\n"
       "(n_replicas,), kappa [1/nm] und eps_r (n_replicas,) für die 1-4-Debye-Hückel-Abschirmung.");
+
+  nb::class_<bomd::TiledAllPairs>(m, "TiledAllPairs",
+                                  "LJ + Debye-Hückel über alle Tile-Paare, PHYSICS_MODEL.md §3.")
+      .def_prop_ro("n_tile_pairs", &bomd::TiledAllPairs::n_tile_pairs);
+  cls.def(
+      "set_nonbonded_tiled",
+      [](SimulationContext& c, nb::list topologies, HostInput<int32_t> replica_topology,
+         HostInput<float> kappa, HostInput<float> eps_r, float r_switch, float r_cutoff) {
+        bomd::TiledAllPairsParams p;
+        for (nb::handle h : topologies)
+          p.topologies.push_back(nonbonded_topology_from_dict(nb::cast<nb::dict>(h)));
+        p.replica_topology = to_vector(replica_topology);
+        p.kappa_per_nm = to_vector(kappa);
+        p.eps_r = to_vector(eps_r);
+        p.r_switch_nm = r_switch;
+        p.r_cutoff_nm = r_cutoff;
+        c.set_nonbonded(std::make_unique<bomd::TiledAllPairs>(std::move(p)));
+      },
+      "topologies"_a, "replica_topology"_a, "kappa"_a, "eps_r"_a, "r_switch"_a = 1.8f,
+      "r_cutoff"_a = 2.0f,
+      "Nonbonded (Tiled All-Pairs). topologies: Liste von dicts aus\n"
+      "biooptomd.nonbonded.nonbonded_topology(); replica_topology int32 (n_replicas,),\n"
+      "kappa [1/nm], eps_r (n_replicas,), r_switch/r_cutoff [nm]. LJ-Typen aus types[..., 0].\n"
+      "Ersetzt eine zuvor gesetzte Nonbonded-Strategie (daher kein zurückgegebenes Handle).");
 
   // --- Test-Hooks ---------------------------------------------------------------------------
   auto testing = m.def_submodule("testing", "Test-Hooks für pytest; keine Produktions-API.");
