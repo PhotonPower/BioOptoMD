@@ -112,6 +112,8 @@ Die Spalten von `d_energy_fp` sind das Enum `bomd::EnergyTerm` (`kNumEnergyTerms
   fremde Streams sind nicht automatisch geordnet (der Kontext-Stream ist blockierend, also mit dem Legacy-Default-Stream
   geordnet). Bei Bedarf `ctx.synchronize()`.
 
+Ein DLPack-Export markiert die Kräfte als veraltet (`invalidate_forces`), weil die Sicht beschreibbar ist.
+
 Setter (`set_positions`, `set_charges`, `set_masses`, …) nehmen nur echte Atome (`(n_replicas, n_atoms, …)`) und
 lassen Padding-Atome unverändert. Test-Hooks ohne Produktionsphysik liegen in `biooptomd._core.testing`.
 
@@ -158,3 +160,17 @@ x = sim.positions(dlpack=True)   # Zero-Copy nach CuPy/PyTorch
 - `ImageChargeForce` für leitfähige Oberflächen.
 - `ReplicaExchange` (Host-gesteuerter Austausch von Temperaturen, nicht von Koordinaten).
 - Coarse-Grained-Kraftfelder (MARTINI, ENM) – nutzen dieselben Bonded-Kernels.
+
+### 3.2 Integration, Energien und Plugins (Phase 2)
+
+- `set_integrator(dt, friction, seed)` + `step(n)`; Schrittfolge exakt wie in §1. Observer feuern nach dem
+  abschließenden B, wenn `step % stride == 0`. Die Simulationszeit wird fortlaufend aufsummiert
+  (`time`, `previous_time` für Protokoll-Arbeit).
+- Rauschen: Philox4x32-10 (`src/core/philox.cuh`), Zähler `(i_local, replica, step_lo, step_hi[23:0] | purpose<<24)`,
+  Schlüssel `(seed_lo, seed_hi)`; Box-Muller mit 23-Bit-Uniforms.
+- `energies()` → `(n_replicas, 1 + N_ENERGY_TERMS)`: Spalte 0 = E_kin (FP64-Reduktion), dann E_pot je Term
+  (`ENERGY_TERMS`). `EnergyTracker` (`add_energy_tracker`) speichert dieselben Frames im VRAM.
+- Plugins über Fabrikmethoden, die eine an den Kontext gebundene Referenz liefern:
+  `add_planar_surface`, `add_position_restraints`, `add_com_pulling`.
+- Energiebeiträge pro Atom werden warpweise in Fixed-Point summiert (`warp_add_energy`), dann ein Atomic pro Warp.
+
