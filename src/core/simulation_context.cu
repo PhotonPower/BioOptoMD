@@ -35,7 +35,8 @@ SimulationContext::SimulationContext(int n_replicas, int n_atoms, int device) : 
   const std::size_t n_total = static_cast<std::size_t>(n_replicas) * n_pad;
 
   pos_ = DeviceBuffer<float4>(n_total);
-  vel_ = DeviceBuffer<float4>(n_total);
+  pos_corr_ = DeviceBuffer<float4>(n_total);
+  vel_ = DeviceBuffer<Vec4d>(n_total);
   force_fp_ = DeviceBuffer<long long>(3 * n_total);
   force_ = DeviceBuffer<float4>(n_total);
   energy_fp_ = DeviceBuffer<long long>(static_cast<std::size_t>(n_replicas) * kNumEnergyTerms);
@@ -51,6 +52,7 @@ SimulationContext::SimulationContext(int n_replicas, int n_atoms, int device) : 
 
   // Alles 0: insbesondere Padding-Atome mit q = 0, inv_mass = 0, LJ-Typ 0 (AGENTS.md Regel 6).
   pos_.zero_async(stream_.get());
+  pos_corr_.zero_async(stream_.get());
   vel_.zero_async(stream_.get());
   force_fp_.zero_async(stream_.get());
   force_.zero_async(stream_.get());
@@ -65,6 +67,7 @@ SimulationContext::SimulationContext(int n_replicas, int n_atoms, int device) : 
   state_.n_atoms = n_atoms;
   state_.n_pad = n_pad;
   state_.d_pos = pos_.data();
+  state_.d_pos_corr = pos_corr_.data();
   state_.d_vel = vel_.data();
   state_.d_force_fp = force_fp_.data();
   state_.d_force = force_.data();
@@ -148,13 +151,32 @@ void SimulationContext::set_positions(const float* xyz_nm) {
   for (std::size_t k = 0; k < n; ++k) require(std::isfinite(xyz_nm[k]), "Wert nicht endlich");
   check_wrap_range(xyz_nm, n_atoms(), 3);
   scatter_xyz(pos_.data(), xyz_nm);
+  pos_corr_.zero_async(stream_.get());  // Eingabe ist FP32 ⇒ Korrektur 0
   forces_valid_ = false;
   image_.zero_async(stream_.get());  // neue Positionen = neuer ungewrappter Ursprung
   synchronize();
 }
 
-void SimulationContext::set_velocities(const float* v_nm_ps) {
-  scatter_xyz(vel_.data(), v_nm_ps);
+void SimulationContext::scatter_vel_xyz(const double* src) {
+  activate();
+  const std::size_t n = static_cast<std::size_t>(n_replicas()) * n_atoms() * 3;
+  for (std::size_t k = 0; k < n; ++k) require(std::isfinite(src[k]), "Wert nicht endlich");
+  DeviceBuffer<double> staging(n);
+  staging.upload_async(src, stream_.get());
+  detail::launch_scatter_xyz(state_, vel_.data(), staging.data(), stream_.get());
+  synchronize();
+}
+
+void SimulationContext::scatter_vel_w(const double* src) {
+  activate();
+  DeviceBuffer<double> staging(static_cast<std::size_t>(n_replicas()) * n_atoms());
+  staging.upload_async(src, stream_.get());
+  detail::launch_scatter_w(state_, vel_.data(), staging.data(), stream_.get());
+  synchronize();
+}
+
+void SimulationContext::set_velocities(const double* v_nm_ps) {
+  scatter_vel_xyz(v_nm_ps);
 }
 
 void SimulationContext::set_charges(const float* q_e) {
@@ -166,14 +188,14 @@ void SimulationContext::set_charges(const float* q_e) {
 
 void SimulationContext::set_masses(const float* m_amu) {
   const std::size_t n = static_cast<std::size_t>(n_replicas()) * n_atoms();
-  std::vector<float> inv_mass(n);
+  std::vector<double> inv_mass(n);
   for (std::size_t k = 0; k < n; ++k) {
     require(std::isfinite(m_amu[k]) && m_amu[k] > 0.0f, "Massen müssen endlich und > 0 sein");
-    inv_mass[k] = static_cast<float>(1.0 / static_cast<double>(m_amu[k]));
+    inv_mass[k] = 1.0 / static_cast<double>(m_amu[k]);
   }
   forces_valid_ = false;  // massengewichtete Kräfte (z. B. Pulling) hängen von m ab
   ++masses_version_;
-  scatter_w(vel_.data(), inv_mass.data());
+  scatter_vel_w(inv_mass.data());
 }
 
 void SimulationContext::set_types(const int* types) {
@@ -290,14 +312,29 @@ std::vector<double> SimulationContext::energy_frame() {
 
 std::vector<int> SimulationContext::degrees_of_freedom() {
   activate();
-  std::vector<float4> vel(vel_.size());
+  std::vector<Vec4d> vel(vel_.size());
   vel_.download_async(vel.data(), stream_.get());
   synchronize();
   std::vector<int> n_dof(n_replicas(), 0);
   for (int r = 0; r < n_replicas(); ++r)
     for (int i = 0; i < n_atoms(); ++i)
-      if (vel[static_cast<std::size_t>(r) * n_pad() + i].w > 0.0f) n_dof[r] += 3;
+      if (vel[static_cast<std::size_t>(r) * n_pad() + i].w > 0.0) n_dof[r] += 3;
   return n_dof;
+}
+
+std::vector<double> SimulationContext::positions_precise() {
+  activate();
+  std::vector<float4> pos(pos_.size()), corr(pos_corr_.size());
+  pos_.download_async(pos.data(), stream_.get());
+  pos_corr_.download_async(corr.data(), stream_.get());
+  synchronize();
+  std::vector<double> out(3 * pos.size());
+  for (std::size_t i = 0; i < pos.size(); ++i) {
+    out[3 * i] = static_cast<double>(pos[i].x) + corr[i].x;
+    out[3 * i + 1] = static_cast<double>(pos[i].y) + corr[i].y;
+    out[3 * i + 2] = static_cast<double>(pos[i].z) + corr[i].z;
+  }
+  return out;
 }
 
 // --- Plugins ----------------------------------------------------------------------------

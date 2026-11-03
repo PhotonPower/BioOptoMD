@@ -21,7 +21,7 @@ void launch_clear_forces(const DeviceState& s, cudaStream_t stream);
 /// d_force[i] = (from_fp(fx[i]), from_fp(fy[i]), from_fp(fz[i]), 0) für alle Atomplätze.
 void launch_fixed_point_to_float(const DeviceState& s, cudaStream_t stream);
 
-/// x/y echter Atome nach [0, L) wrappen; d_image fortschreiben. Box muss > 0 sein.
+/// x/y echter Atome nach [0, L) wrappen (in FP64, ADR 0007); d_image fortschreiben. Box > 0.
 void launch_wrap_xy(const DeviceState& s, cudaStream_t stream);
 
 /// dst[r·n_pad + i].xyz = src[(r·n_atoms + i)·3 + 0..2] für i < n_atoms; w unverändert.
@@ -29,6 +29,10 @@ void launch_scatter_xyz(const DeviceState& s, float4* dst, const float* src, cud
 
 /// dst[r·n_pad + i].w = src[r·n_atoms + i] für i < n_atoms; xyz unverändert.
 void launch_scatter_w(const DeviceState& s, float4* dst, const float* src, cudaStream_t stream);
+
+/// FP64-Varianten für d_vel (ADR 0007).
+void launch_scatter_xyz(const DeviceState& s, Vec4d* dst, const double* src, cudaStream_t stream);
+void launch_scatter_w(const DeviceState& s, Vec4d* dst, const double* src, cudaStream_t stream);
 
 /// Spalten eines Energie-Frames: [E_kin, E_pot(Term 0), …, E_pot(Term N_TERMS−1)] in kJ/mol.
 inline constexpr int kEnergyFrameColumns = 1 + kNumEnergyTerms;

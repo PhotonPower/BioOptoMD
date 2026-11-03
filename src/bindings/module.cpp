@@ -4,12 +4,15 @@
 #include <nanobind/nanobind.h>
 #include <nanobind/ndarray.h>
 #include <nanobind/stl/array.h>
+#include <nanobind/stl/string.h>
 
 #include <algorithm>
 #include <array>
+#include <climits>
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <type_traits>
@@ -106,29 +109,66 @@ std::vector<T> to_vector(const HostInput<T>& a) {
   return std::vector<T>(a.data(), a.data() + a.size());
 }
 
-/// dict[key] → std::vector<T> (mit impliziter dtype-Konvertierung; fehlender Schlüssel ⇒ leer).
+/// dict[key] → std::vector<T>; fehlender Schlüssel ⇒ leer. Ganzzahlfelder müssen einen
+/// Integer-dtype haben und in int32 passen (kein stilles Abschneiden/Überlaufen); Indexfelder
+/// (arity > 0) müssen die Shape (n, arity) haben, Parameterfelder (n,).
 template <typename T>
-std::vector<T> dict_vector(const nb::dict& d, const char* key) {
+std::vector<T> dict_vector(const nb::dict& d, const char* key, int arity = 0) {
   if (!d.contains(key)) return {};
-  constexpr const char* dtype = std::is_floating_point_v<T> ? "float32" : "int32";
-  nb::object arr =
-      nb::module_::import_("numpy").attr("ascontiguousarray")(d[key], "dtype"_a = dtype);
+  nb::module_ np = nb::module_::import_("numpy");
+  nb::object arr = np.attr("asarray")(d[key]);
+  const std::string kind = nb::cast<std::string>(arr.attr("dtype").attr("kind"));
+  const std::size_t size = nb::cast<std::size_t>(arr.attr("size"));
+  const int ndim = nb::cast<int>(arr.attr("ndim"));
+  const std::string where = std::string("Topologie '") + key + "': ";
+  if (size > 0) {
+    if (arity > 0) {
+      if (ndim != 2 || nb::cast<int>(arr.attr("shape")[1]) != arity)
+        throw nb::value_error(
+            (where + "Shape (n, " + std::to_string(arity) + ") erwartet").c_str());
+    } else if (ndim != 1) {
+      throw nb::value_error((where + "1D-Array erwartet").c_str());
+    }
+  }
+  if constexpr (std::is_floating_point_v<T>) {
+    if (size > 0 && kind != "f" && kind != "i" && kind != "u")
+      throw nb::value_error((where + "numerischer dtype erwartet").c_str());
+    arr = np.attr("ascontiguousarray")(arr, "dtype"_a = "float32");
+  } else {
+    if (size > 0 && kind != "i" && kind != "u")
+      throw nb::value_error((where + "Integer-dtype erwartet").c_str());
+    if (size > 0 && (nb::cast<long long>(nb::int_(arr.attr("min")())) < INT32_MIN ||
+                     nb::cast<long long>(nb::int_(arr.attr("max")())) > INT32_MAX))
+      throw nb::value_error((where + "Werte außerhalb des int32-Bereichs").c_str());
+    arr = np.attr("ascontiguousarray")(arr, "dtype"_a = "int32");
+  }
   return to_vector(nb::cast<HostInput<T>>(arr));
 }
 
+/// Erlaubte Schlüssel eines Topologie-dicts; "charges" und "masses" (aus extract_topology)
+/// werden akzeptiert und ignoriert. Unbekannte Schlüssel (Tippfehler) ⇒ ValueError.
 bomd::BondedTopology topology_from_dict(const nb::dict& d) {
+  static const std::set<std::string> known = {
+      "bonds",      "bond_k",    "bond_r0",   "angles",        "angle_k", "angle_theta0",
+      "torsions",   "torsion_k", "torsion_n", "torsion_phase", "pairs14", "pair_qq",
+      "pair_sigma", "pair_eps",  "charges",   "masses"};
+  for (auto [key, value] : d) {
+    const std::string k = nb::cast<std::string>(key);
+    if (!known.count(k))
+      throw nb::value_error(("Topologie: unbekannter Schlüssel '" + k + "'").c_str());
+  }
   bomd::BondedTopology t;
-  t.bonds = dict_vector<int32_t>(d, "bonds");
+  t.bonds = dict_vector<int32_t>(d, "bonds", 2);
   t.bond_k = dict_vector<float>(d, "bond_k");
   t.bond_r0 = dict_vector<float>(d, "bond_r0");
-  t.angles = dict_vector<int32_t>(d, "angles");
+  t.angles = dict_vector<int32_t>(d, "angles", 3);
   t.angle_k = dict_vector<float>(d, "angle_k");
   t.angle_theta0 = dict_vector<float>(d, "angle_theta0");
-  t.torsions = dict_vector<int32_t>(d, "torsions");
+  t.torsions = dict_vector<int32_t>(d, "torsions", 4);
   t.torsion_k = dict_vector<float>(d, "torsion_k");
   t.torsion_n = dict_vector<int32_t>(d, "torsion_n");
   t.torsion_phase = dict_vector<float>(d, "torsion_phase");
-  t.pairs14 = dict_vector<int32_t>(d, "pairs14");
+  t.pairs14 = dict_vector<int32_t>(d, "pairs14", 2);
   t.pair_qq = dict_vector<float>(d, "pair_qq");
   t.pair_sigma = dict_vector<float>(d, "pair_sigma");
   t.pair_eps = dict_vector<float>(d, "pair_eps");
@@ -214,11 +254,11 @@ NB_MODULE(_core, m) {
          "Positionen [nm], float32 (n_replicas, n_atoms, 3). Setzt die Imagezähler auf 0.")
       .def(
           "set_velocities",
-          [](SimulationContext& c, HostInput<float> a) {
+          [](SimulationContext& c, HostInput<double> a) {
             check_shape(a, real_atoms_shape(c, 3), "velocities");
             c.set_velocities(a.data());
           },
-          "velocities"_a, "Geschwindigkeiten [nm/ps], float32 (n_replicas, n_atoms, 3).")
+          "velocities"_a, "Geschwindigkeiten [nm/ps], float64 (n_replicas, n_atoms, 3).")
       .def(
           "set_charges",
           [](SimulationContext& c, HostInput<float> a) {
@@ -277,9 +317,12 @@ NB_MODULE(_core, m) {
   def_export<float>(
       cls, "positions", [](const DeviceState& s) { return &s.d_pos->x; }, atoms4,
       "float32 (n_replicas, n_pad, 4): x, y, z [nm], q [e].");
-  def_export<float>(
+  def_export<double>(
       cls, "velocities", [](const DeviceState& s) { return &s.d_vel->x; }, atoms4,
-      "float32 (n_replicas, n_pad, 4): vx, vy, vz [nm/ps], 1/m [1/amu].");
+      "float64 (n_replicas, n_pad, 4): vx, vy, vz [nm/ps], 1/m [1/amu] (ADR 0007).");
+  def_export<float>(
+      cls, "position_corrections", [](const DeviceState& s) { return &s.d_pos_corr->x; }, atoms4,
+      "float32 (n_replicas, n_pad, 4): Korrektur zu positions() (ADR 0007), w = 0.");
   def_export<float>(
       cls, "forces", [](const DeviceState& s) { return &s.d_force->x; }, atoms4,
       "float32 (n_replicas, n_pad, 4): Fx, Fy, Fz [kJ/mol/nm], w = 0.");
@@ -343,6 +386,13 @@ NB_MODULE(_core, m) {
           },
           "float64 (n_replicas, 1 + N_ENERGY_TERMS) [kJ/mol]: Spalte 0 = E_kin, dann E_pot je\n"
           "Term in der Reihenfolge ENERGY_TERMS (aus dem letzten compute_forces/step).")
+      .def(
+          "positions_precise",
+          [](SimulationContext& c) {
+            return vector_to_numpy(c.positions_precise(), {static_cast<std::size_t>(c.n_replicas()),
+                                                           static_cast<std::size_t>(c.n_pad()), 3});
+          },
+          "float64 (n_replicas, n_pad, 3) [nm]: positions + position_corrections (ADR 0007).")
       .def(
           "degrees_of_freedom",
           [](SimulationContext& c) {

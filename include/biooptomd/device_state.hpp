@@ -19,6 +19,13 @@ constexpr int padded_atom_count(int n_atoms) {
 
 /// Terme der potentiellen Energie; Spalten von d_energy_fp (pro Replica N_TERMS Einträge).
 /// Interface-Stub: die zugehörigen Kraftterme entstehen in Phase 2–6.
+/// Vier FP64-Werte mit 32-Byte-Alignment (eine Ladeoperation pro Zugriff). Ersetzt CUDAs
+/// `double4`, das ab CUDA 13 als deprecated markiert ist (ADR 0007).
+struct alignas(32) Vec4d {
+  double x, y, z, w;
+};
+static_assert(sizeof(Vec4d) == 32, "Vec4d muss 32 Byte groß sein");
+
 /// Bits des Geräte-Statusworts DeviceState::d_status (ADR 0006), per atomicOr gesetzt.
 enum StatusBit : unsigned int {
   kStatusFixedPointSaturated = 1u,  ///< ein Kraft-/Energiebeitrag wurde auf ±2^30 gesättigt
@@ -49,7 +56,9 @@ struct DeviceState {
   int n_pad = 0;       ///< gepaddete Atome pro Replica (Vielfaches von kTileSize)
 
   float4* d_pos = nullptr;  ///< (x, y, z) [nm], q [e];                      n_replicas·n_pad
-  float4* d_vel = nullptr;  ///< (vx, vy, vz) [nm/ps], 1/m [1/amu];          n_replicas·n_pad
+  /// Positionskorrektur (ADR 0007): x = d_pos.xyz + d_pos_corr.xyz [nm], w = 0; n_replicas·n_pad
+  float4* d_pos_corr = nullptr;
+  Vec4d* d_vel = nullptr;  ///< (vx, vy, vz) [nm/ps], 1/m [1/amu] in FP64 (ADR 0007)
   /// Fixed-Point-Kraft (Skala 2^32, kJ/mol/nm), SoA: [fx(alle) | fy(alle) | fz(alle)],
   /// je n_replicas·n_pad Einträge (ADR 0002).
   long long* d_force_fp = nullptr;

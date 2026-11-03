@@ -3,6 +3,7 @@
 #include "biooptomd/units.hpp"
 #include "core/core_kernels.cuh"
 #include "core/fixed_point.cuh"
+#include "core/mixed.cuh"
 
 namespace bomd::detail {
 namespace {
@@ -26,27 +27,25 @@ __global__ void k_fixed_point_to_float(DeviceState s) {
                   from_fixed_point(s.d_force_fp_z()[i]), 0.0f);
 }
 
-/// Wrappt eine Koordinate x nach [0, L) und gibt die Anzahl der abgezogenen Boxlängen zurück,
-/// sodass x_alt ≈ x_neu + n·L (UNITS_AND_CONVENTIONS.md, ADR 0003).
+/// Wrappt eine Koordinate x (FP64, ADR 0007) nach [0, L) und gibt die Anzahl der abgezogenen
+/// Boxlängen n zurück, sodass x_alt = x_neu + n·L exakt gilt (UNITS_AND_CONVENTIONS.md, ADR 0003).
 ///
-/// r = fmaf(-n, L, x) rundet nur einmal; ist |x| >= L (gleicher oder größerer Exponent), ist
-/// x − n·L in float exakt darstellbar und damit die Rekonstruktion exakt. Für x ∈ (−L, 0) wird
-/// x + L einmal gerundet (Fehler ≤ ½ ulp(L)). Die beiden Korrekturen fangen die Rundung von
-/// x/L und von x + L ab, damit r garantiert in [0, L) liegt – gültig für |x/L| < 2^20
-/// (SimulationContext::kMaxBoxImages); weit darüber ist floorf(x/L) um mehr als 1 falsch.
-__device__ __forceinline__ int wrap_coordinate(float& x, float box_length) {
-  float n = floorf(x / box_length);
-  float r = fmaf(-n, box_length, x);
-  if (r < 0.0f) {
+/// x hat ≈ 48 signifikante Bit, n·L höchstens 24 + 21 Bit (|x/L| < 2^20): x − n·L ist in FP64
+/// exakt darstellbar, fma(−n, L, x) also exakt. Die beiden Korrekturen fangen die Rundung von
+/// x/L ab, damit das Ergebnis in [0, L) liegt.
+__device__ __forceinline__ int wrap_coordinate(double& x, double box_length) {
+  double n = floor(x / box_length);
+  double r = fma(-n, box_length, x);
+  if (r < 0.0) {
     r += box_length;
-    n -= 1.0f;
+    n -= 1.0;
   }
   if (r >= box_length) {
     r -= box_length;
-    n += 1.0f;
+    n += 1.0;
   }
   x = r;
-  return __float2int_rz(n);  // sättigend statt UB bei |n| > INT_MAX
+  return __double2int_rz(n);  // sättigend statt UB bei |n| > INT_MAX
 }
 
 __global__ void k_wrap_xy(DeviceState s) {
@@ -55,29 +54,31 @@ __global__ void k_wrap_xy(DeviceState s) {
   if (i_local >= s.n_atoms) return;  // Padding-Atome bleiben unverändert.
   const int i = r * s.n_pad + i_local;
   const float2 box = s.d_box[r];
-  float4 p = s.d_pos[i];
+  double3 x = load_position(s, i);
   int2 img = s.d_image[i];
-  // ADR 0006: außerhalb |x/L| < 2^20 ist der FP32-Wrap nicht mehr exakt genug.
-  if (!(fabsf(p.x) < 1048576.0f * box.x && fabsf(p.y) < 1048576.0f * box.y))
+  // ADR 0006: außerhalb |x/L| < 2^20 ist der Wrap nicht mehr exakt.
+  if (!(fabs(x.x) < 1048576.0 * box.x && fabs(x.y) < 1048576.0 * box.y))
     atomicOr(s.d_status, kStatusWrapRange);
-  img.x += wrap_coordinate(p.x, box.x);
-  img.y += wrap_coordinate(p.y, box.y);
-  s.d_pos[i] = p;  // z und q unverändert.
+  img.x += wrap_coordinate(x.x, box.x);
+  img.y += wrap_coordinate(x.y, box.y);
+  store_position(s, i, x);  // z und q unverändert
   s.d_image[i] = img;
 }
 
-__global__ void k_scatter_xyz(DeviceState s, float4* dst, const float* src) {
+template <typename V, typename T>
+__global__ void k_scatter_xyz(DeviceState s, V* dst, const T* src) {
   const int i_local = blockIdx.x * blockDim.x + threadIdx.x;
   const int r = blockIdx.y;
   if (i_local >= s.n_atoms) return;
   const long long j = (static_cast<long long>(r) * s.n_atoms + i_local) * 3;
-  float4& d = dst[r * s.n_pad + i_local];
+  V& d = dst[r * s.n_pad + i_local];
   d.x = src[j];
   d.y = src[j + 1];
   d.z = src[j + 2];
 }
 
-__global__ void k_scatter_w(DeviceState s, float4* dst, const float* src) {
+template <typename V, typename T>
+__global__ void k_scatter_w(DeviceState s, V* dst, const T* src) {
   const int i_local = blockIdx.x * blockDim.x + threadIdx.x;
   const int r = blockIdx.y;
   if (i_local >= s.n_atoms) return;
@@ -92,12 +93,8 @@ __global__ void k_energy_frame(DeviceState s, double* frame) {
   const int r = blockIdx.x;
   double sum = 0.0;
   for (int i_local = threadIdx.x; i_local < s.n_atoms; i_local += blockDim.x) {
-    const float4 v = s.d_vel[r * s.n_pad + i_local];
-    if (v.w > 0.0f) {
-      const double v2 = static_cast<double>(v.x) * v.x + static_cast<double>(v.y) * v.y +
-                        static_cast<double>(v.z) * v.z;
-      sum += v2 / static_cast<double>(v.w);
-    }
+    const Vec4d v = s.d_vel[r * s.n_pad + i_local];
+    if (v.w > 0.0) sum += (v.x * v.x + v.y * v.y + v.z * v.z) / v.w;
   }
   partial[threadIdx.x] = sum;
   __syncthreads();
@@ -152,6 +149,18 @@ void launch_scatter_xyz(const DeviceState& s, float4* dst, const float* src, cud
 }
 
 void launch_scatter_w(const DeviceState& s, float4* dst, const float* src, cudaStream_t stream) {
+  if (s.n_total() == 0) return;
+  k_scatter_w<<<per_replica_grid(s), kElementwiseBlock, 0, stream>>>(s, dst, src);
+  BOMD_LAUNCH_CHECK();
+}
+
+void launch_scatter_xyz(const DeviceState& s, Vec4d* dst, const double* src, cudaStream_t stream) {
+  if (s.n_total() == 0) return;
+  k_scatter_xyz<<<per_replica_grid(s), kElementwiseBlock, 0, stream>>>(s, dst, src);
+  BOMD_LAUNCH_CHECK();
+}
+
+void launch_scatter_w(const DeviceState& s, Vec4d* dst, const double* src, cudaStream_t stream) {
   if (s.n_total() == 0) return;
   k_scatter_w<<<per_replica_grid(s), kElementwiseBlock, 0, stream>>>(s, dst, src);
   BOMD_LAUNCH_CHECK();
