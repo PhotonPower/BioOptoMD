@@ -31,7 +31,8 @@ Commits `146346f` (core), `3dc7cb6` (forces), `bde78ab` (bindings), `6c810ad` (t
 - `pytest`: 30/30 grün (Phase 1: 10, Phase 2: 20 inkl. aller 7 Abnahmetests und 5-Seed-`slow`-Test).
 - `compute-sanitizer --tool memcheck`: 0 Fehler (Phase 1 komplett, Phase 2 ohne die langen Statistiktests,
   die unter memcheck > 10 min dauern; alle Kernels sind abgedeckt).
-- `compute-sanitizer --tool racecheck` (Shared-Memory-Kernels `k_energy_frame`, `k_com_pulling`): siehe unten.
+- `compute-sanitizer --tool racecheck` (Shared-Memory-Kernels `k_energy_frame`, `k_com_pulling`, minimales
+  Skript mit Pulling + Wand + EnergyTracker, 3 Schritte): 0 Hazards. Über pytest ist racecheck zu langsam (> 30 min).
 - Build Release ohne Warnungen; ruff und clang-format sauber.
 - Ein unabhängiger Review-Agent hat BAOAB, Philox-Zähler, Formeln, Minimum Image, Arbeit und Warp-Shuffle
   geprüft; gefundene Punkte (dt-Wechsel, veraltete Kräfte nach DLPack-Schreibzugriff/`set_masses`,
