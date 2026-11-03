@@ -91,8 +91,36 @@ def extract_topology(system):
     }  # fmt: skip
 
 
-def reference_system(system, kappa, eps_r):
-    """Neues System: Bonds/Angles/Torsionen (Gruppen 0–2) + 1-4 als CustomBondForce (Gruppe 3)."""
+def _f32(x):
+    return float(np.float32(x))
+
+
+def _round_parameters_f32(force):
+    """Setzt alle Parameter einer Bond/Angle/Torsion-Kraft auf ihre FP32-Rundung (wie auf der GPU)."""
+    if isinstance(force, openmm.HarmonicBondForce):
+        for b in range(force.getNumBonds()):
+            i, j, r0, k = force.getBondParameters(b)
+            force.setBondParameters(b, i, j, _f32(r0.value_in_unit(unit.nanometer)), _f32(k._value))
+    elif isinstance(force, openmm.HarmonicAngleForce):
+        for a in range(force.getNumAngles()):
+            i, j, k_, t0, k = force.getAngleParameters(a)
+            force.setAngleParameters(
+                a, i, j, k_, _f32(t0.value_in_unit(unit.radian)), _f32(k._value)
+            )
+    elif isinstance(force, openmm.PeriodicTorsionForce):
+        for t in range(force.getNumTorsions()):
+            i, j, k_, l_, n, ph, k = force.getTorsionParameters(t)
+            force.setTorsionParameters(
+                t, i, j, k_, l_, n, _f32(ph.value_in_unit(unit.radian)), _f32(k._value)
+            )
+
+
+def reference_system(system, kappa, eps_r, float32_params=False):
+    """Neues System: Bonds/Angles/Torsionen (Gruppen 0–2) + 1-4 als CustomBondForce (Gruppe 3).
+
+    float32_params: alle Parameter auf FP32 runden (wie BioOptoMD sie speichert), damit ein Vergleich
+    nur die Arithmetik prüft und nicht die Parameterrundung.
+    """
     ref = openmm.System()
     for i in range(system.getNumParticles()):
         ref.addParticle(system.getParticleMass(i))
@@ -100,6 +128,8 @@ def reference_system(system, kappa, eps_r):
         name = type(f).__name__
         if name in ("HarmonicBondForce", "HarmonicAngleForce", "PeriodicTorsionForce"):
             g = openmm.XmlSerializer.clone(f)
+            if float32_params:
+                _round_parameters_f32(g)
             g.setForceGroup(
                 {"HarmonicBondForce": 0, "HarmonicAngleForce": 1, "PeriodicTorsionForce": 2}[name]
             )
@@ -114,7 +144,7 @@ def reference_system(system, kappa, eps_r):
     for (i, j), q, s, e in zip(
         topo["pairs14"], topo["pair_qq"], topo["pair_sigma"], topo["pair_eps"], strict=True
     ):
-        pair.addBond(int(i), int(j), [q, s, e])
+        pair.addBond(int(i), int(j), [_f32(q), _f32(s), _f32(e)] if float32_params else [q, s, e])
     pair.setForceGroup(3)
     ref.addForce(pair)
     return ref
