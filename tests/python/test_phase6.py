@@ -196,8 +196,22 @@ def test_refractive_index_uniform_layer():
         dz, 40, np.array([alpha]), np.array([vol]), smear_sigma=0.05
     )
     ctx2.observe_now()
-    s = sm.result()["s_alpha_mean"][0]
+    res2 = sm.result()
+    s = res2["s_alpha_mean"][0]
     assert s.sum() == pytest.approx(n * float(alpha), rel=1e-5)
+    ref_a, ref_v = oref.layer_histograms_smeared(
+        pos[:, 2],
+        np.full(n, float(alpha)),
+        np.full(n, float(vol)),
+        0.0,
+        dz,
+        40,
+        float(np.float32(0.05)),
+    )
+    # Fixed-Point hat eine absolute Auflösung von 2^-32 je Beitrag; in den äußersten Tail-Schichten
+    # (Beiträge ~1e-7 nm³) dominiert sie den relativen Fehler ⇒ absolute Toleranz relativ zur Schicht.
+    np.testing.assert_allclose(s, ref_a, rtol=1e-5, atol=1e-6 * ref_a.max())
+    np.testing.assert_allclose(res2["s_volume_mean"][0], ref_v, rtol=1e-5, atol=1e-6 * ref_v.max())
     assert s[9] > 0 and s[20] > 0  # Beiträge in die Nachbarschichten
 
 
@@ -299,11 +313,12 @@ def test_voxel_linear_field():
 def test_voxel_vs_numpy_interpolation():
     """Zufallsfeld (auch periodisch in x/y): Kraft und Energie = NumPy-Trilinear-Referenz."""
     rng = np.random.default_rng(63)
-    shape, spacing = (6, 8, 8), (0.5, 0.5, 0.4)
-    values = rng.normal(size=shape + (4,)).astype(np.float32)
     n = 300
-    for periodic in (False, True):
-        origin = (0.0, 0.0, 0.2) if periodic else (0.3, 0.3, 0.2)
+    # Anisotrop (nx ≠ ny ≠ nz, Δx ≠ Δy), damit vertauschte Achsen auffallen.
+    cases = {False: ((5, 7, 9), (0.45, 0.6, 0.5)), True: ((6, 10, 8), (0.5, 0.4, 0.35))}
+    for periodic, (shape, spacing) in cases.items():
+        values = rng.normal(size=shape + (4,)).astype(np.float32)
+        origin = (0.0, 0.0, 0.2) if periodic else (0.3, 0.1, 0.2)
         ctx = _ctx(1, n, box=4.0)
         pos = rng.uniform(0.0, 4.0, (1, n, 3)).astype(np.float32)
         pos[..., 2] = rng.uniform(0.2, 2.2, n)
@@ -324,3 +339,95 @@ def test_voxel_vs_numpy_interpolation():
             np.testing.assert_allclose(f[i], -ref[1:], rtol=1e-5, atol=1e-5)
             e += ref[0]
         assert ctx.energies()[0, 8] == pytest.approx(e, rel=1e-5, abs=1e-4)
+
+
+def test_fret_minimum_image():
+    """Donor und Akzeptor beiderseits der Boxgrenze: R_DA mit Minimum Image (1 nm statt L − 1)."""
+    ctx = _ctx(1, 4, box=10.0)
+    pos = np.array([[[0.4, 5, 5], [0.6, 5, 5], [9.4, 5, 5], [9.6, 5, 5]]], np.float32)
+    ctx.set_positions(pos)
+    off, d_atoms = _csr([np.array([0, 1])])
+    _, a_atoms = _csr([np.array([2, 3])])
+    one = np.ones(1, np.int32)
+    tr = ctx.add_fret_tracker(off, d_atoms, 0 * one, one, off, a_atoms, 2 * one, 3 * one)
+    ctx.observe_now()
+    res = tr.result()
+    assert res["r_da"][0, 0] == pytest.approx(1.0, abs=1e-6)
+    assert res["kappa2"][0, 0] == pytest.approx(4.0, abs=1e-9)  # kollinear: (1 − 3)² = 4
+
+
+def _voxel_mismatch(h, n_rep=256, seed=64):
+    """RMS-Abweichung zwischen GPU-Kraft (interpolierter Gradient) und −∇ der GPU-Energie
+    (finite Differenzen) für V = 3 sin(2x) cos(1.5y) + 2 (z − 1)² auf einem Gitter mit Abstand h."""
+    n_pts = round(2.0 / h) + 1
+    z, y, x = np.meshgrid(*(np.arange(n_pts) * h for _ in range(3)), indexing="ij")
+    pot = 3.0 * np.sin(2.0 * x) * np.cos(1.5 * y) + 2.0 * (z - 1.0) ** 2
+    exact = np.stack(
+        [
+            pot,
+            6.0 * np.cos(2 * x) * np.cos(1.5 * y),
+            -4.5 * np.sin(2 * x) * np.sin(1.5 * y),
+            4.0 * (z - 1.0),
+        ],
+        -1,
+    ).astype(np.float32)  # analytischer Gradient an den Gitterpunkten
+    rng = np.random.default_rng(seed)
+    p0 = rng.uniform(0.2, 1.8, (n_rep, 1, 3))
+    ctx = _ctx(n_rep, 1)
+    ctx.add_voxel_grid(exact, (0.0, 0.0, 0.0), (h, h, h), np.array([1.0], np.float32))
+
+    def eval_at(p):
+        ctx.set_positions(p.astype(np.float32))
+        ctx.compute_forces()
+        return ctx.energies()[:, 8].copy(), ctx.forces()[:, 0, :3].astype(np.float64)
+
+    _, f = eval_at(p0)
+    f_fd = np.zeros_like(f)
+    step = 1e-3 * h
+    for d in range(3):
+        dp = np.zeros(3)
+        dp[d] = step
+        e_plus, _ = eval_at(p0 + dp)
+        e_minus, _ = eval_at(p0 - dp)
+        f_fd[:, d] = -(e_plus - e_minus) / (2 * step)
+    return np.sqrt(((f - f_fd) ** 2).sum() / (f_fd**2).sum())
+
+
+def test_voxel_energy_force_consistency():
+    """Quantifiziert die Energienicht-Erhaltung (PHYSICS_MODEL §4.3): Der interpolierte Gradient weicht
+    vom Gradienten des (zellweise linearen) interpolierten Potentials in O(Δ) ab. Gemessen für ein
+    glattes Feld (Wellenzahl 2/nm): ≈ 5 % RMS bei Δ = 0.1 nm, Halbierung bei Δ = 0.05 nm."""
+    m1 = _voxel_mismatch(0.1)
+    m2 = _voxel_mismatch(0.05)
+    assert 0.02 < m1 < 0.1, m1
+    assert 1.6 < m1 / m2 < 2.4, (m1, m2)  # erste Ordnung in Δ
+
+
+def test_observer_and_voxel_guards():
+    """Schwerpunkt ohne Massen → STATUS_NON_FINITE; Boxänderung nach dem Hinzufügen wird bei
+    periodischem Voxelgitter und beim Profiler (ohne reset) erkannt."""
+    ctx = _core.SimulationContext(1, 4)
+    ctx.set_box(np.full((1, 2), 4.0, np.float32))
+    ctx.set_positions(np.full((1, 4, 3), 1.0, np.float32) + np.arange(4)[None, :, None])
+    off, atoms = _csr([np.array([0, 1])])
+    ctx.add_dipole_tracker(off, atoms, np.zeros(1, np.int32), np.ones(1, np.int32))
+    ctx.observe_now()
+    assert ctx.status() & _core.STATUS_NON_FINITE
+
+    ctx = _ctx(1, 4, box=4.0)
+    ctx.set_positions(np.full((1, 4, 3), 1.0, np.float32))
+    grid = np.zeros((4, 8, 8, 4), np.float32)
+    ctx.add_voxel_grid(
+        grid, (0.0, 0.0, 0.0), (0.5, 0.5, 0.5), np.array([1.0], np.float32), periodic_xy=True
+    )
+    prof = ctx.add_refractive_index_profiler(
+        0.1, 10, np.array([1e-3], np.float32), np.array([0.0], np.float32)
+    )
+    ctx.compute_forces()
+    ctx.observe_now()
+    ctx.set_box(np.full((1, 2), 5.0, np.float32))
+    with pytest.raises(ValueError):
+        ctx.compute_forces()  # Gitter deckt die neue Box nicht mehr ab
+    with pytest.raises(RuntimeError):
+        ctx.observe_now()  # Profiler: Box seit reset() geändert
+    prof.reset()

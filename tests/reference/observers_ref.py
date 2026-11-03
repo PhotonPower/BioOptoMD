@@ -83,3 +83,25 @@ def trilinear(values, origin, spacing, point, periodic_xy=False):
             for cx, wx in ((0, 1 - f[0]), (1, f[0])):
                 out += wx * wy * wz * values[idx[2][cz], idx[1][cy], idx[0][cx]]
     return out
+
+
+def layer_histograms_smeared(z, alpha, volume, z_min, dz, n_bins, sigma):
+    """S_α(k), S_V(k) mit Gauß-Verschmierung: Gewicht ∝ Φ((z_hi − z)/σ) − Φ((z_lo − z)/σ) über alle
+    Schichten mit |z − z_k| ≤ 4σ, normiert auf dieses Fenster (wie der Kernel)."""
+    from scipy.special import erf
+
+    s_a = np.zeros(n_bins)
+    s_v = np.zeros(n_bins)
+    inv = 1.0 / (sigma * np.sqrt(2.0))
+    for zi, a, v in zip(np.asarray(z, np.float64), alpha, volume, strict=True):
+        lo_k = int(np.floor((zi - 4 * sigma - z_min) / dz))
+        hi_k = int(np.floor((zi + 4 * sigma - z_min) / dz))
+        norm = 0.5 * (
+            erf((z_min + (hi_k + 1) * dz - zi) * inv) - erf((z_min + lo_k * dz - zi) * inv)
+        )
+        for k in range(max(0, lo_k), min(n_bins - 1, hi_k) + 1):
+            lo = z_min + k * dz
+            w = 0.5 * (erf((lo + dz - zi) * inv) - erf((lo - zi) * inv)) / norm
+            s_a[k] += w * a
+            s_v[k] += w * v
+    return s_a, s_v
