@@ -15,5 +15,6 @@ inline constexpr float EPS_R2 = 1.0e-8f;                   // nm^2
 
 inline constexpr float ONE_4PI_EPS0_F = static_cast<float>(ONE_4PI_EPS0);
 inline constexpr float KB_F = static_cast<float>(KB);
+inline constexpr float FIXED_POINT_SCALE_F = static_cast<float>(FIXED_POINT_SCALE);  // exakt
 
 }  // namespace bomd::units
