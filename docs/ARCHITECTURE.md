@@ -49,6 +49,7 @@ Alles läuft auf **einem** `cudaStream_t`; die Reihenfolge der Kernel-Launches i
 | `d_box` | `float2` | (Lx, Ly) [nm] pro Replica | `N_replicas` |
 | `d_temperature` | `float` | T_r [K] | `N_replicas` |
 | `d_image` | `int2` | Box-Imagezähler x/y (für ungewrapte Koordinaten) | `N_replicas·N_pad` |
+| `d_status` | `unsigned int` | Statusbits (Sättigung, NaN, Wrap-Bereich), ADR 0006 | 1 |
 
 **Entscheidung:** Parameter- und Topologie-Arrays (Bindungslisten, LJ-Tabellen, Exclusions) sind **pro Replica** gespeichert (ADR 0005). Gemeinsame Topologie ist der Spezialfall, in dem alle Replicas auf denselben Puffer zeigen (Offset-Array `d_topo_offset[r]`).
 

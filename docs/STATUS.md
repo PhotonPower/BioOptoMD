@@ -28,7 +28,7 @@ Commits `146346f` (core), `3dc7cb6` (forces), `bde78ab` (bindings), `6c810ad` (t
 - NumPy-Referenzen: `tests/reference/{philox_ref,surface_ref,restraint_ref}.py`.
 
 ## Getestet (RTX 3090, Windows 11, MSVC 17.14, CUDA 12.9, Python 3.11, nanobind 3.1)
-- `pytest`: 28/28 grün (Phase 1: 10, Phase 2: 18 inkl. aller 7 Abnahmetests und 5-Seed-`slow`-Test).
+- `pytest`: 30/30 grün (Phase 1: 10, Phase 2: 20 inkl. aller 7 Abnahmetests und 5-Seed-`slow`-Test).
 - `compute-sanitizer --tool memcheck`: 0 Fehler (Phase 1 komplett, Phase 2 ohne die langen Statistiktests,
   die unter memcheck > 10 min dauern; alle Kernels sind abgedeckt).
 - `compute-sanitizer --tool racecheck` (Shared-Memory-Kernels `k_energy_frame`, `k_com_pulling`): siehe unten.
@@ -41,12 +41,15 @@ Commits `146346f` (core), `3dc7cb6` (forces), `bde78ab` (bindings), `6c810ad` (t
 – keine.
 
 ## Offene Punkte / Hinweise für den nächsten Agenten
-- **OQ-10 (Projektinhaber):** Clamp-Default 0.1 σ (PHYSICS_MODEL §4.1) erzeugt Kräfte ≫ 2³¹ (ADR 0002);
-  Fixed-Point-Summen können überlaufen und das Vorzeichen kippen (im Test nachgewiesen). Vorschlag:
-  Kraftschranke für ζ_c **und** Sättigung pro Beitrag + Geräte-Fehlerflag, per ADR. Bis zur Entscheidung
-  unverändert; `test_surface_vs_numpy` prüft Kräfte nur im darstellbaren Bereich.
+- **OQ-10 gelöst** (Entscheidung Projektinhaber, ADR 0006, Status `Proposed` bis zur formalen Annahme):
+  Wand-Clamp ζ_c = max(0.1 σ, ζ_F) mit |F(ζ_F)| = 10⁶ kJ/mol/nm; Fixed-Point-Sättigung pro Beitrag auf ±2³⁰
+  (±2²⁶ pro Lane in `warp_add_energy`); Statuswort `d_status` mit Bits Sättigung / NaN / Wrap-Bereich,
+  lesbar über `ctx.status()`. Tests: `test_surface_vs_numpy` (jetzt alle Kräfte), `test_fixed_point_saturation_and_status`,
+  `test_wrap_range_status`.
 - OQ-08 (Wrap-„exakt“) und OQ-09 (Gouy-Chapman für ζ < 0) bitte bestätigen.
-- Explodierende Trajektorien (NaN, |x/L| ≥ 2²⁰, Fixed-Point-Überlauf) werden noch nicht erkannt → gehört zu OQ-10.
+- Explodierende Trajektorien setzen jetzt Statusbits; `step()` prüft sie nicht selbst (kein Sync im Hot-Path) –
+  Aufrufer sollten `ctx.status()` periodisch abfragen. Zwei gesättigte gleichgerichtete Beiträge können die
+  int64-Summe weiterhin überlaufen lassen (dann ist das Flag gesetzt).
 - **Beobachtung (ungeklärt):** Unter `compute-sanitizer --tool memcheck` meldet nanobind beim Beenden von pytest
   „leaked 15 instances“ (SimulationContext, Plugin-Handles), wenn mehrere Phase-2-Tests in einem Prozess laufen
   (`-k "philox or surface_vs or restraint_vs or nve or integrator_api or pulling_follows or gouy or determinism"`).
@@ -57,7 +60,7 @@ Commits `146346f` (core), `3dc7cb6` (forces), `bde78ab` (bindings), `6c810ad` (t
   (innerhalb 4σ; über 40 Seeds unauffällig, mittleres z ≈ 0).
 
 ## Nächster konkreter Schritt
-1. Projektinhaber: OQ-10 entscheiden, Phase 2 abnehmen, PRs #1 und Phase 2 mergen.
+1. Projektinhaber: ADR 0006 auf `Accepted` setzen, Phase 2 abnehmen, PRs #1 und #2 mergen.
 2. Danach Phase 3, Aufgabe 1: NumPy-Referenz `tests/reference/bonded_ref.py` (Bonds, Angles über atan2,
    Torsionen, 1-4) mit Finite-Differenzen-Test.
 3. Nachholen: Kontrolllauf auf der RTX 6000 Ada (`pytest`, `compute-sanitizer`), CUDA-Version eintragen.
@@ -67,4 +70,4 @@ Commits `146346f` (core), `3dc7cb6` (forces), `bde78ab` (bindings), `6c810ad` (t
 |---|---|---|
 | 2026-11-03 | Claude (Setup) | Phase 0 angelegt. Build-Dateien sind ungetestete Entwürfe. |
 | 2026-11-03 | Claude Opus 5.5 | Phase 1 implementiert und auf RTX 3090/Windows getestet (PR #1). Projektinhaber hat Phase 1 auf RTX 3090 abgenommen. |
-| 2026-11-03 | Claude Opus 5.5 | Phase 2 implementiert, 28/28 Tests grün; OQ-09/OQ-10 eröffnet. |
+| 2026-11-03 | Claude Opus 5.5 | Phase 2 implementiert (PR #2); OQ-10 nach Entscheidung des Projektinhabers per ADR 0006 umgesetzt, 30/30 Tests grün. |
