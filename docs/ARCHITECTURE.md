@@ -196,3 +196,16 @@ x = sim.positions(dlpack=True)   # Zero-Copy nach CuPy/PyTorch
   Constraints bleibt der fusionierte Kernel (bitidentisch zu Phase 2).
 - Python-Builder `biooptomd.constraints`: `repartition_hydrogen_mass` (HMR), `constraint_topology`
   (Cluster + kovalente Topologie ohne constrainte Bindungen).
+
+### 3.5 Optik-Observer und Voxel-Potential (Phase 6)
+
+- Observer (`src/observers/optics.*`) mit Ringpuffer im VRAM (`DeviceRingBuffer`: älteste Frames werden
+  überschrieben, `overwritten` zählt sie; Download chronologisch, nur auf Anfrage):
+  `add_dipole_tracker` (R_F, μ̂, d), `add_fret_tracker` (R_DA, κ², optional E), `add_refractive_index_profiler`
+  (S_α, S_V je Schicht, Mittel und Varianz über Frames; n(z) nach Lorentz-Lorenz beim Download).
+- `ctx.observe_now()` führt alle Observer am aktuellen Zustand aus (statische Auswertungen, Tests).
+- Gruppen/Achsen der Sonden pro Replica als CSR (ADR 0005); Schwerpunkte in FP64 aus der Mixed-Precision-
+  Position und den Imagezählern (ungewrappt).
+- `VoxelGridForce3D` (`src/forces/voxel_grid.*`, `ctx.add_voxel_grid`): 3D-Textur (float4: V, ∇V) mit
+  Point-Sampling und FP32-Trilinearinterpolation im Kernel (ASSUMPTION: Hardware-Filterung hat nur 9-Bit-
+  Gewichte), Skalierung je Optik-Typ, optional periodisch in x/y. Builder-Hilfe `biooptomd.voxel`.

@@ -77,7 +77,7 @@ V_i(z) = q_i Φ₀ exp(−κ z),     F_z,i = q_i Φ₀ κ exp(−κ z)
 - Umbrella-Modus = Pulling mit v = 0 und verschiedenen R₀ pro Replica.
 
 ### 4.3 `VoxelGridForce3D` (Phase 6)
-3D-Textur (`cudaTextureObject_t`, float4) mit (V, ∂V/∂x, ∂V/∂y, ∂V/∂z) pro Voxel, trilinear interpoliert, skaliert pro Atomtyp (`d_types.y`). Anwendungen: Potential gekrümmter Nanokavitäten, optische Gradientenkraft `F = ¼ Re(α) ∇|E₀|²` (α = 4πε₀ α′, E₀ komplexe Feldamplitude) aus FEM-Feldern. Hinweis: interpolierter Gradient ≠ Gradient des interpolierten Potentials → leichte Energienicht-Erhaltung; Größe in Tests quantifizieren. Die Kopplungsnormierung für optische Kräfte ist OQ-04.
+3D-Textur (`cudaTextureObject_t`, float4) mit (V, ∂V/∂x, ∂V/∂y, ∂V/∂z) pro Voxel, trilinear interpoliert, skaliert pro Atomtyp (`d_types.y`). Anwendungen: Potential gekrümmter Nanokavitäten, optische Gradientenkraft `F = ¼ Re(α) ∇|E₀|²` (α = 4πε₀ α′, E₀ komplexe Feldamplitude) aus FEM-Feldern. Hinweis: interpolierter Gradient ≠ Gradient des interpolierten Potentials → leichte Energienicht-Erhaltung. Gemessen (`test_voxel_energy_force_consistency`, glattes Feld mit Wellenzahl 2/nm): RMS-Abweichung 5.3 % bei Δ = 0.1 nm, 2.5 % bei Δ = 0.05 nm – erste Ordnung in Δ (die Ableitung des trilinearen Interpolanten ist zellweise konstant). Für NVE-Läufe mit Voxelfeldern daher feine Gitter wählen. Die Kopplungsnormierung für optische Kräfte ist OQ-04.
 
 ## 5. Constraints & HMR (Phase 5)
 
