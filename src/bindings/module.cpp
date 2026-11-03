@@ -3,9 +3,13 @@
 #include <cuda_runtime.h>
 #include <nanobind/nanobind.h>
 #include <nanobind/ndarray.h>
+#include <nanobind/stl/array.h>
 
+#include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -15,6 +19,9 @@
 #include "biooptomd/simulation_context.hpp"
 #include "biooptomd/units.hpp"
 #include "core/testing.hpp"
+#include "forces/harmonic_restraint.hpp"
+#include "forces/planar_surface.hpp"
+#include "observers/energy_tracker.hpp"
 
 namespace nb = nanobind;
 using namespace nb::literals;
@@ -58,6 +65,7 @@ nb::object export_array(SimulationContext& ctx, nb::handle owner, const T* d_ptr
                         bool dlpack) {
   ctx.synchronize();
   if (dlpack) {
+    ctx.invalidate_forces();  // Sicht ist beschreibbar ⇒ Kräfte vor dem nächsten step neu
     return nb::cast(nb::ndarray<nb::array_api, T>(const_cast<T*>(d_ptr), shape.size(), shape.data(),
                                                   owner, nullptr, nb::dtype<T>(),
                                                   nb::device::cuda::value, ctx.device()));
@@ -79,6 +87,21 @@ void def_export(nb::class_<SimulationContext>& cls, const char* name, Getter get
         return export_array<T>(ctx, nb::find(ctx), get_ptr(ctx.state()), shape_fn(ctx), dlpack);
       },
       "dlpack"_a = false, doc);
+}
+
+/// Host-Vektor → NumPy-Array (Kopie) mit Shape `shape`.
+template <typename T>
+nb::object vector_to_numpy(const std::vector<T>& v, Shape shape) {
+  if (product(shape) != v.size()) throw std::logic_error("vector_to_numpy: Shape passt nicht");
+  T* host = new T[v.size() > 0 ? v.size() : 1];
+  nb::capsule deleter(host, [](void* p) noexcept { delete[] static_cast<T*>(p); });
+  std::copy(v.begin(), v.end(), host);
+  return nb::cast(nb::ndarray<nb::numpy, T>(host, shape.size(), shape.data(), deleter));
+}
+
+template <typename T>
+std::vector<T> to_vector(const HostInput<T>& a) {
+  return std::vector<T>(a.data(), a.data() + a.size());
 }
 
 Shape atoms_shape(const SimulationContext& c, std::size_t last) {
@@ -252,6 +275,146 @@ NB_MODULE(_core, m) {
       cls, "images", [](const DeviceState& s) { return &s.d_image->x; }, atoms2,
       "int32 (n_replicas, n_pad, 2): Box-Imagezähler (nx, ny).");
 
+  // --- Integration und Energien ------------------------------------------------------------
+  nb::list term_names;
+  for (const char* name :
+       {"bond", "angle", "torsion", "pair14", "nonbonded", "surface", "restraint", "external"})
+    term_names.append(name);
+  m.attr("ENERGY_TERMS") = nb::tuple(term_names);
+
+  cls.def(
+         "set_integrator",
+         [](SimulationContext& c, double dt, double friction, std::uint64_t seed) {
+           c.set_integrator(bomd::LangevinParams{dt, friction, seed});
+         },
+         "dt"_a, "friction"_a, "seed"_a,
+         "Langevin-BAOAB: dt [ps] > 0, friction gamma [1/ps] >= 0 (0 = NVE), seed (uint64).")
+      .def_prop_ro("has_integrator", &SimulationContext::has_integrator)
+      .def_prop_ro("dt", &SimulationContext::dt_ps, "Zeitschritt [ps] (0 ohne Integrator).")
+      .def_prop_ro("current_step", &SimulationContext::current_step)
+      .def_prop_ro("time", &SimulationContext::time_ps, "Simulationszeit [ps].")
+      .def("step", &SimulationContext::step, "n"_a,
+           "n BAOAB-Schritte (asynchron). Benötigt Integrator und Box.")
+      .def(
+          "energies",
+          [](SimulationContext& c) {
+            return vector_to_numpy(c.energy_frame(),
+                                   {static_cast<std::size_t>(c.n_replicas()),
+                                    static_cast<std::size_t>(1 + bomd::kNumEnergyTerms)});
+          },
+          "float64 (n_replicas, 1 + N_ENERGY_TERMS) [kJ/mol]: Spalte 0 = E_kin, dann E_pot je\n"
+          "Term in der Reihenfolge ENERGY_TERMS (aus dem letzten compute_forces/step).")
+      .def(
+          "degrees_of_freedom",
+          [](SimulationContext& c) {
+            return vector_to_numpy(c.degrees_of_freedom(),
+                                   {static_cast<std::size_t>(c.n_replicas())});
+          },
+          "int32 (n_replicas,): N_dof = 3 * (Anzahl Atome mit inv_mass > 0).");
+
+  // --- Observer ------------------------------------------------------------------------------
+  nb::class_<bomd::EnergyTracker>(m, "EnergyTracker", "Energie-Zeitreihe im VRAM.")
+      .def_prop_ro("stride", &bomd::EnergyTracker::stride)
+      .def_prop_ro("n_frames", &bomd::EnergyTracker::n_frames)
+      .def_prop_ro("dropped_frames", &bomd::EnergyTracker::dropped_frames)
+      .def("reset", &bomd::EnergyTracker::reset)
+      .def(
+          "result",
+          [](const bomd::EnergyTracker& t) {
+            const bomd::ObserverResult res = t.download();
+            const auto& e = res.arrays[0];
+            std::vector<std::int64_t> steps;
+            for (double st : res.arrays[1].data) steps.push_back(static_cast<std::int64_t>(st));
+            nb::dict d;
+            d["energies"] = vector_to_numpy(
+                e.data, {static_cast<std::size_t>(e.shape[0]), static_cast<std::size_t>(e.shape[1]),
+                         static_cast<std::size_t>(e.shape[2])});
+            d["steps"] = vector_to_numpy(steps, {steps.size()});
+            return d;
+          },
+          "dict: energies float64 (n_replicas, n_frames, 1 + N_ENERGY_TERMS) [kJ/mol],\n"
+          "steps int64 (n_frames,).");
+  cls.def(
+      "add_energy_tracker",
+      [](SimulationContext& c, int stride, int capacity) -> bomd::EnergyTracker& {
+        return static_cast<bomd::EnergyTracker&>(
+            c.add_observer(std::make_unique<bomd::EnergyTracker>(stride, capacity)));
+      },
+      "stride"_a, "capacity"_a, nb::rv_policy::reference_internal,
+      "Registriert einen EnergyTracker (alle `stride` Schritte, höchstens `capacity` Frames).");
+
+  // --- Kraft-Plugins -------------------------------------------------------------------------
+  nb::class_<bomd::PlanarSurfaceForce>(m, "PlanarSurfaceForce",
+                                       "9-3-Wand + Gouy-Chapman, PHYSICS_MODEL.md §4.1.")
+      .def("clamp_count", &bomd::PlanarSurfaceForce::clamp_count,
+           "Anzahl Auswertungen mit geclamptem Wandabstand.")
+      .def("unknown_type_count", &bomd::PlanarSurfaceForce::unknown_type_count,
+           "Anzahl Auswertungen mit Oberflächen-Typ außerhalb der Parametertabelle.")
+      .def("reset_counters", &bomd::PlanarSurfaceForce::reset_counters);
+  cls.def(
+      "add_planar_surface",
+      [](SimulationContext& c, HostInput<float> epsilon, HostInput<float> sigma, float z0,
+         float clamp_factor, float phi0, float kappa) -> bomd::PlanarSurfaceForce& {
+        if (epsilon.ndim() != 1 || sigma.ndim() != 1)
+          throw nb::value_error("epsilon und sigma: 1D-Arrays (n_surface_types,)");
+        bomd::PlanarSurfaceParams p{
+            to_vector(epsilon), to_vector(sigma), z0, clamp_factor, phi0, kappa};
+        return static_cast<bomd::PlanarSurfaceForce&>(
+            c.add_force(std::make_unique<bomd::PlanarSurfaceForce>(std::move(p))));
+      },
+      "epsilon"_a, "sigma"_a, "z0"_a = 0.0f, "clamp_factor"_a = 0.1f, "phi0"_a = 0.0f,
+      "kappa"_a = 0.0f, nb::rv_policy::reference_internal,
+      "9-3-Wand bei z0 [nm]: epsilon [kJ/mol], sigma [nm] pro Oberflächen-Typ (types[..., 1]);\n"
+      "optional Gouy-Chapman mit phi0 [kJ/(mol e)] und kappa [1/nm].");
+
+  nb::class_<bomd::HarmonicRestraintPullingForce>(
+      m, "HarmonicRestraintPullingForce", "Positions-Restraints / Schwerpunkt-Pulling, §4.2.")
+      .def_prop_ro("is_pulling", &bomd::HarmonicRestraintPullingForce::is_pulling)
+      .def(
+          "work",
+          [](const bomd::HarmonicRestraintPullingForce& f) {
+            auto w = f.work();
+            return vector_to_numpy(w, {w.size()});
+          },
+          "float64 (n_replicas,): akkumulierte Arbeit W [kJ/mol] (Pulling).")
+      .def(
+          "extension",
+          [](const bomd::HarmonicRestraintPullingForce& f) {
+            auto u = f.extension();
+            return vector_to_numpy(u, {u.size()});
+          },
+          "float64 (n_replicas,): u = e.(R_G - R0) - v t [nm] aus dem letzten compute.")
+      .def("reset_work", &bomd::HarmonicRestraintPullingForce::reset_work);
+  cls.def(
+      "add_position_restraints",
+      [](SimulationContext& c, HostInput<int32_t> replica, HostInput<int32_t> atom,
+         HostInput<float> reference, HostInput<float> k,
+         std::array<bool, 3> dims) -> bomd::HarmonicRestraintPullingForce& {
+        bomd::PositionRestraintParams p{to_vector(replica), to_vector(atom), to_vector(reference),
+                                        to_vector(k), dims};
+        return static_cast<bomd::HarmonicRestraintPullingForce&>(
+            c.add_force(std::make_unique<bomd::HarmonicRestraintPullingForce>(std::move(p))));
+      },
+      "replica"_a, "atom"_a, "reference"_a, "k"_a, "dims"_a = std::array<bool, 3>{true, true, true},
+      nb::rv_policy::reference_internal,
+      "Harmonische Positions-Restraints: replica, atom (lokal) int32 (m,), reference [nm]\n"
+      "float32 (m, 3), k [kJ/mol/nm^2] float32 (m,), dims = wirksame Achsen (x, y, z).");
+  cls.def(
+      "add_com_pulling",
+      [](SimulationContext& c, HostInput<int32_t> offsets, HostInput<int32_t> atoms,
+         HostInput<float> r0, HostInput<float> direction, HostInput<float> velocity,
+         HostInput<float> k) -> bomd::HarmonicRestraintPullingForce& {
+        bomd::ComPullingParams p{to_vector(offsets),   to_vector(atoms),    to_vector(r0),
+                                 to_vector(direction), to_vector(velocity), to_vector(k)};
+        return static_cast<bomd::HarmonicRestraintPullingForce&>(
+            c.add_force(std::make_unique<bomd::HarmonicRestraintPullingForce>(std::move(p))));
+      },
+      "group_offsets"_a, "group_atoms"_a, "r0"_a, "direction"_a, "velocity"_a, "k"_a,
+      nb::rv_policy::reference_internal,
+      "Schwerpunkt-Pulling pro Replica: Gruppen als CSR (group_offsets (n_replicas+1,),\n"
+      "group_atoms lokal), r0 [nm] und direction (n_replicas, 3), velocity [nm/ps] und\n"
+      "k [kJ/mol/nm^2] (n_replicas,). Massen müssen vorher gesetzt sein.");
+
   // --- Test-Hooks ---------------------------------------------------------------------------
   auto testing = m.def_submodule("testing", "Test-Hooks für pytest; keine Produktions-API.");
   testing.def("shift_x", &bomd::testing::shift_x, "ctx"_a, "dx"_a,
@@ -266,6 +429,18 @@ NB_MODULE(_core, m) {
       "ctx"_a, "atom_index"_a, "forces"_a,
       "Addiert Kräfte [kJ/mol/nm], float32 (m, 3), per Fixed-Point-Atomics auf die globalen\n"
       "Atomindizes atom_index = r·n_pad + i (int32, (m,)). Löscht vorher nicht.");
+  testing.def(
+      "philox",
+      [](HostInput<uint32_t> counters, uint32_t key_lo, uint32_t key_hi) {
+        if (counters.ndim() != 2 || counters.shape(1) != 4)
+          throw nb::value_error("counters: erwartete Shape (n, 4)");
+        const std::size_t n = counters.shape(0);
+        std::vector<uint32_t> out(4 * n);
+        bomd::testing::philox(counters.data(), static_cast<int>(n), key_lo, key_hi, out.data());
+        return vector_to_numpy(out, {n, 4});
+      },
+      "counters"_a, "key_lo"_a, "key_hi"_a,
+      "Philox4x32-10 auf dem Gerät: uint32 (n, 4) -> uint32 (n, 4).");
   testing.def(
       "add_uniform_force",
       [](SimulationContext& c, float fx, float fy, float fz) {
