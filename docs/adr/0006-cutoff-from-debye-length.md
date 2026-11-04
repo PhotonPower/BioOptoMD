@@ -1,6 +1,6 @@
 # ADR 0006: Non-Bonded-Cutoff aus der Debye-Länge, Box aus der Bedeckung
 
-- **Status:** Proposed (Rev. 2)
+- **Status:** Accepted (Rev. 2, 2026-11-04)
 - **Datum:** 2026-11-04
 - **Bezug:** OQ-09, OQ-10; ändert ADR 0003 (Minimum Image) für Non-Bonded-Paare
 
@@ -18,7 +18,7 @@ Der Tiled-All-Pairs-Kernel (Phase 4) berechnet ohnehin alle Paare; der Rechenauf
 
 **Rev. 2:** Rev. 1 löste das Problem über die Box-Bedingung L ≥ 2 r_c. Bei einem Rezeptor pro Box legt L aber die Oberflächenbelegung Γ = 1/L² fest (OQ-09). Bei 10 mM erzwang Rev. 1 L ≥ 30 nm (Γ ≈ 1·10¹¹ cm⁻²), während reale Sensoren oft bei 10¹²–10¹³ cm⁻² liegen. Die Box ist eine physikalische Eingabe und darf nicht aus numerischen Gründen wachsen.
 
-## Entscheidung (Vorschlag)
+## Entscheidung
 
 **1. Cutoff aus der Debye-Länge, pro Replica-Satz einheitlich**
 
@@ -51,7 +51,7 @@ Kosten: Faktor ≈ (2 n_max + 1)² Bildverschiebungen pro Tile, z. B. 49 bei 10 
 - **2D-Ewald mit Abschirmung:** unnötig, da die abgeschirmte Gittersumme exponentiell konvergiert.
 
 ## Konsequenzen
-- ADR 0003 muss für Non-Bonded-Paare angepasst werden (Entscheidung des Projektinhabers, AGENTS.md: ADRs > ARCHITECTURE).
+- ADR 0003 ist für Non-Bonded-Paare angepasst (Nachtrag dort, 2026-11-04).
 - PHYSICS_MODEL §3 wird korrigiert.
 - Bei Cell-List-Strategien (Phase 9+) wird der Aufwand cutoffabhängig – dann neu bewerten.
 - Abnahmetests Phase 4 (ersetzen den Test aus Rev. 1):

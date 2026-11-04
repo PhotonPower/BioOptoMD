@@ -1,28 +1,30 @@
 # Offene Fragen
 
-Format: `OQ-NN` · Status (`open` / `assumption` / `resolved`) · Frage · aktuelle Annahme · Vorschlag · Entscheider.
+Format: `OQ-NN` · Status (`open` / `assumption` / `resolved`) · Frage · frühere Annahme · Entscheidung · Entscheider.
+
+Status-Bedeutung: `resolved` = Vorgehen entschieden und vollständig spezifiziert. `assumption` = Vorgehen entschieden, aber Parameterwerte müssen noch kalibriert oder verifiziert werden. Code dazu wird mit `// ASSUMPTION(OQ-NN): …` markiert.
 Im Code referenziert als `// ASSUMPTION(OQ-NN): …`.
 
-Vorschläge aus dem Review vom 2026-11-04 sind unten ausführlich begründet. Sie ändern den Status **nicht**: Erst der Projektinhaber setzt eine Frage auf `assumption` oder `resolved` (AGENTS.md §4).
+Die Vorschläge aus den Reviews vom 2026-11-04 (inklusive der Nachträge aus Review 2) wurden am 2026-11-04 vom Projektinhaber **angenommen**. Die Begründungen stehen unten. Was bei `assumption`-Fragen noch zu kalibrieren ist, steht in der Checkliste am Ende und in den Abnahmetests der ROADMAP.
 
-| ID | Status | Frage | Aktuelle Annahme | Vorschlag (Review 2026-11-04) | Entscheider |
+| ID | Status | Frage | Frühere Annahme | Entscheidung (Review 2026-11-04, inkl. Nachträge) | Entscheider |
 |---|---|---|---|---|---|
-| OQ-01 | open | Quelle für atomare Polarisierbarkeiten α′(λ) für Nukleinsäuren/Proteine/Fluorophore? (Miller 1990, Thole-Modell, AMOEBA-Parameter, QM-Fit?) Statische vs. optische Frequenz? | Platzhalter: elementbasierte Tabelle (Miller), λ-unabhängig | Typtabelle (Miller) + globaler Skalierungsfaktor, kalibriert gemeinsam mit OQ-02 an dn/dc; Cauchy-Dispersion; Fluorophore separat (§OQ-01) | Projektinhaber |
-| OQ-02 | open | Atomvolumina für Volumenausschluss im n(z)-Profil: Bondi-vdW-Volumen oder Voronoi-basierte Volumina aus Proteindichte? | Bondi-Radien, Überlappung ignoriert | Voronoi-Volumina (ProtOr/NucProt), Summe = v̄ nur bei Proteinen; Kugelschnitt-Verschmierung als Default (§OQ-02, Nachtrag) | Projektinhaber |
-| OQ-03 | open | Kraftfeld für Aptamere: AMBER OL15 / bsc1 / OL21? Parameterquelle für Fluorophore (GAFF2 + RESP)? | OL15 + GAFF2 | DNA: OL21 (tleap ab AmberTools23), OL24 als Option; RNA: OL3; Farbstoffe: AMBER-DYES, Linker zur Nukleinsäure selbst parametrisieren (§OQ-03, Nachtrag) | Projektinhaber |
-| OQ-04 | open | Normierung der optischen Gradientenkraft im `VoxelGridForce3D` (Feldstärke in V/nm, Leistungsdichte, Mittelung über Periode)? | Eingabe bereits als Potential in kJ/mol pro α′-Einheit | Gitter speichert \|E₀\|² (Spitzenamplitude, V/nm); U_i = −α′_eff,i \|E₀\|² FARADAY² / (4·ONE_4PI_EPS0) mit α′_eff = Überschuss gegenüber verdrängtem Wasser; Im α nicht abgebildet (§OQ-04, Nachtrag) | Projektinhaber |
-| OQ-05 | open | Wie wird die 9-3-Wand für Graphen vs. Gold parametrisiert (ε_w, σ_w pro Atomtyp)? Literatur (z. B. Steele-Potential) oder eigener Fit an All-Atom-Graphen? | Steele-artige Werte für Graphen, Platzhalter für Gold | Wandform wählbar (9-3 Gold, 10-4 Graphen, 10-4-3 Graphit), Parameter aus Mischungsregeln, Lösungsmittelkorrektur per Skalierung an Explizit-Wasser-PMFs; siehe ADR 0007 | Projektinhaber |
-| OQ-06 | open | Ist linearisiertes Gouy-Chapman bei relevanten Elektrodenpotentialen (> 25 mV) ausreichend, oder nichtlineare Lösung als Tabelle? | linearisiert | Nichtlineare geschlossene Lösung (keine Tabelle); linear nur als Testgrenzfall (§OQ-06) | Projektinhaber |
-| OQ-07 | open | Thiol-Gold-Anker: harter Positions-Restraint oder lateral beweglicher Anker (nur z-Restraint)? | nur z-Restraint + schwacher xy-Restraint | z-Restraint auf Chemisorptionshöhe, Ankeratom von Wand ausgenommen; xy nur bei mehreren Rezeptoren pro Box; optionale SAM/MCH-Wand (§OQ-07) | Projektinhaber |
-| OQ-08 | open | Wie werden explizite Mg²⁺-Ionen im impliziten Wasser behandelt, ohne dass sie mangels Hydrathülle in direkten Phosphatkontakt kollabieren? | (neu) keine | Effektives „hydratisiertes Mg“ (vergrößertes σ) oder Flat-Bottom-Abstandsterm Mg–O(P); Kalibrierung an Explizit-Wasser-Daten mit microMg/nanoMg (§OQ-08, Nachtrag) | Projektinhaber |
-| OQ-09 | open | Boxgröße L legt bei einem Rezeptor pro Box die Bedeckung 1/L² fest. Wie wird das mit r_c aus der Debye-Länge (ADR 0006) vereinbart, wenn L < 2 r_c? | (neu) L ≥ 2 r_c, Bedeckung folgt daraus | L aus gewünschter Bedeckung; bei L < 2 r_c explizite Summation über periodische Bilder in x/y (ADR 0006 Rev. 2, ändert ADR 0003) (§OQ-09) | Projektinhaber |
-| OQ-10 | open | Temperaturabhängigkeit von κ und ε_r im Replica Exchange? | (neu) κ, ε_r für alle Replicas gleich | κ_r und ε_r(T_r) pro Replica, r_c = Maximum über Replicas (§OQ-10) | Projektinhaber |
+| OQ-01 | assumption | Quelle für atomare Polarisierbarkeiten α′(λ) für Nukleinsäuren/Proteine/Fluorophore? (Miller 1990, Thole-Modell, AMOEBA-Parameter, QM-Fit?) Statische vs. optische Frequenz? | Platzhalter: elementbasierte Tabelle (Miller), λ-unabhängig | Typtabelle (Miller) + globaler Skalierungsfaktor, kalibriert gemeinsam mit OQ-02 an dn/dc; Cauchy-Dispersion; Fluorophore separat (§OQ-01) | Projektinhaber (2026-11-04) |
+| OQ-02 | assumption | Atomvolumina für Volumenausschluss im n(z)-Profil: Bondi-vdW-Volumen oder Voronoi-basierte Volumina aus Proteindichte? | Bondi-Radien, Überlappung ignoriert | Voronoi-Volumina (ProtOr/NucProt), Summe = v̄ nur bei Proteinen; Kugelschnitt-Verschmierung als Default (§OQ-02, Nachtrag) | Projektinhaber (2026-11-04) |
+| OQ-03 | resolved | Kraftfeld für Aptamere: AMBER OL15 / bsc1 / OL21? Parameterquelle für Fluorophore (GAFF2 + RESP)? | OL15 + GAFF2 | DNA: OL21 (tleap ab AmberTools23), OL24 als Option; RNA: OL3; Farbstoffe: AMBER-DYES, Linker zur Nukleinsäure selbst parametrisieren (§OQ-03, Nachtrag) | Projektinhaber (2026-11-04) |
+| OQ-04 | resolved | Normierung der optischen Gradientenkraft im `VoxelGridForce3D` (Feldstärke in V/nm, Leistungsdichte, Mittelung über Periode)? | Eingabe bereits als Potential in kJ/mol pro α′-Einheit | Gitter speichert \|E₀\|² (Spitzenamplitude, V/nm); U_i = −α′_eff,i \|E₀\|² FARADAY² / (4·ONE_4PI_EPS0) mit α′_eff = Überschuss gegenüber verdrängtem Wasser; Im α nicht abgebildet (§OQ-04, Nachtrag) | Projektinhaber (2026-11-04) |
+| OQ-05 | resolved | Wie wird die 9-3-Wand für Graphen vs. Gold parametrisiert (ε_w, σ_w pro Atomtyp)? Literatur (z. B. Steele-Potential) oder eigener Fit an All-Atom-Graphen? | Steele-artige Werte für Graphen, Platzhalter für Gold | Wandform wählbar (9-3 Gold, 10-4 Graphen, 10-4-3 Graphit), Parameter aus Mischungsregeln, Lösungsmittelkorrektur per Skalierung an Explizit-Wasser-PMFs; siehe ADR 0007 | Projektinhaber (2026-11-04) |
+| OQ-06 | resolved | Ist linearisiertes Gouy-Chapman bei relevanten Elektrodenpotentialen (> 25 mV) ausreichend, oder nichtlineare Lösung als Tabelle? | linearisiert | Nichtlineare geschlossene Lösung (keine Tabelle); linear nur als Testgrenzfall (§OQ-06) | Projektinhaber (2026-11-04) |
+| OQ-07 | assumption | Thiol-Gold-Anker: harter Positions-Restraint oder lateral beweglicher Anker (nur z-Restraint)? | nur z-Restraint + schwacher xy-Restraint | z-Restraint auf Chemisorptionshöhe, Ankeratom von Wand ausgenommen; xy nur bei mehreren Rezeptoren pro Box; optionale SAM/MCH-Wand (§OQ-07) | Projektinhaber (2026-11-04) |
+| OQ-08 | assumption | Wie werden explizite Mg²⁺-Ionen im impliziten Wasser behandelt, ohne dass sie mangels Hydrathülle in direkten Phosphatkontakt kollabieren? | (neu) keine | Effektives „hydratisiertes Mg“ (vergrößertes σ) oder Flat-Bottom-Abstandsterm Mg–O(P); Kalibrierung an Explizit-Wasser-Daten mit microMg/nanoMg (§OQ-08, Nachtrag) | Projektinhaber (2026-11-04) |
+| OQ-09 | resolved | Boxgröße L legt bei einem Rezeptor pro Box die Bedeckung 1/L² fest. Wie wird das mit r_c aus der Debye-Länge (ADR 0006) vereinbart, wenn L < 2 r_c? | (neu) L ≥ 2 r_c, Bedeckung folgt daraus | L aus gewünschter Bedeckung; bei L < 2 r_c explizite Summation über periodische Bilder in x/y (ADR 0006 Rev. 2, ändert ADR 0003) (§OQ-09) | Projektinhaber (2026-11-04) |
+| OQ-10 | resolved | Temperaturabhängigkeit von κ und ε_r im Replica Exchange? | (neu) κ, ε_r für alle Replicas gleich | κ_r und ε_r(T_r) pro Replica, r_c = Maximum über Replicas (§OQ-10) | Projektinhaber (2026-11-04) |
 
 > **Hinweis zu Literaturangaben:** Die Angaben des ersten Reviews stammten aus dem Gedächtnis. Im zweiten Review (2026-11-04) wurden Bibliographie und, wo möglich, Zahlenwerte per Websuche gegen Verlags-, PubMed-/PMC- und Projektseiten geprüft. Der Prüfstand jedes Punkts steht in der Checkliste am Ende. Punkte ohne Haken sind weiterhin unverifiziert. Primärtabellen (Parameterwerte) wurden nur dort eingesehen, wo es ausdrücklich vermerkt ist.
 
 ---
 
-## Ausführliche Vorschläge (Review 2026-11-04)
+## Begründungen (Review 2026-11-04, angenommen)
 
 ### OQ-01 · Polarisierbarkeiten α′(λ)
 
@@ -91,7 +93,7 @@ Offen bleibt der Lokalfeldfaktor. Ob E₀ das makroskopische Feld in Wasser ist 
 
 ### OQ-05 · Wandpotential Graphen vs. Gold
 
-Siehe **ADR 0007** (Proposed). Kurzfassung:
+Siehe **ADR 0007** (Accepted). Kurzfassung:
 
 - Die 9-3-Wand entsteht durch Integration über einen **Halbraum** – korrekt für Gold, **nicht** für eine Graphen-Monolage. Dort gilt das 10-4-Potential (eine Atomebene), für Graphit Steeles 10-4-3.
 - ε_w, σ_w pro Atomtyp werden über Lorentz-Berthelot aus den Kraftfeld-LJ-Parametern und den Wandatom-Parametern abgeleitet (kein freier Fit).
@@ -149,11 +151,11 @@ Beide Varianten brauchen eine Kalibrierung (z. B. Mg–Phosphat-PMF in explizite
 
 Bei einem Rezeptor pro Box ist die Oberflächenbelegung Γ = 1/(L_x L_y). Die Box ist also eine **physikalische** Größe. ADR 0006 (Rev. 1) koppelte L ≥ 2 r_c an die Debye-Länge. Bei 10 mM (r_c ≈ 15 nm) folgte daraus L ≥ 30 nm, also Γ ≈ 1·10¹¹ cm⁻². Reale Aptamersensoren liegen oft bei 10¹²–10¹³ cm⁻² (L ≈ 3–10 nm). Gerade bei niedrigem Salz sind die Nachbarwechselwirkungen dann physikalisch relevant und dürfen nicht durch Vergrößern der Box verschwinden.
 
-Vorschlag (ADR 0006 Rev. 2): L kommt aus der gewünschten Bedeckung. Ist L < 2 r_c, summiert der Non-Bonded-Kernel explizit über periodische Bilder in x/y. Die Summe konvergiert wegen exp(−κr) schnell. Das ändert ADR 0003 („Minimum Image in allen Paar-Berechnungen“) und braucht daher eine ausdrückliche Entscheidung.
+Entscheidung (ADR 0006 Rev. 2, Accepted): L kommt aus der gewünschten Bedeckung. Ist L < 2 r_c, summiert der Non-Bonded-Kernel explizit über periodische Bilder in x/y. Die Summe konvergiert wegen exp(−κr) schnell. Das ändert ADR 0003 („Minimum Image in allen Paar-Berechnungen“) und braucht daher eine ausdrückliche Entscheidung.
 
 ### OQ-10 · Temperaturabhängigkeit von κ und ε_r (neu)
 
-Gouy-Chapman berechnet γ bereits pro Replica aus T_r (OQ-06). κ hängt aber ebenfalls von T ab (κ ∝ 1/√(ε_r T)), und ε_r von Wasser fällt mit T merklich (Größenordnung −0,4 %/K, nicht verifiziert). Vorschlag: ε_r(T_r) über eine empirische Fitformel (z. B. Malmberg & Maryott 1956, nicht verifiziert), κ_r pro Replica, r_c als Maximum über alle Replicas (ein Kernel, eine Box-Prüfung). Alternativ bewusst festes κ, ε_r mit `ASSUMPTION(OQ-10)`.
+Gouy-Chapman berechnet γ bereits pro Replica aus T_r (OQ-06). κ hängt aber ebenfalls von T ab (κ ∝ 1/√(ε_r T)), und ε_r von Wasser fällt mit T merklich (Größenordnung −0,4 %/K, nicht verifiziert). Entscheidung: ε_r(T_r) über eine empirische Fitformel (z. B. Malmberg & Maryott 1956, nicht verifiziert), κ_r pro Replica, r_c als Maximum über alle Replicas (ein Kernel, eine Box-Prüfung). Bis die Fitformel verifiziert ist (Checkliste), wird sie im Code mit `ASSUMPTION(OQ-10)` markiert.
 
 ---
 

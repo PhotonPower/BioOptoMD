@@ -33,7 +33,7 @@ Dokumentation, Verzeichnisstruktur, Agenten-Anweisungen, Build-Entwürfe.
 
 **Aufgaben**
 1. `LangevinIntegrator` (BAOAB, Philox mit Zähler (seed, replica, step, atom), T pro Replica, γ = 0 ⇒ NVE).
-2. Plugin `PlanarSurfaceForce` (Wandform als Template-Parameter `Wall93`/`Wall104`/`Wall1043` nach ADR 0007 + optional Gouy-Chapman, nichtlinear nach OQ-06), Parameter pro (LJ-Typ, Oberflächen-Typ). *Vorbehaltlich Annahme von ADR 0007 / OQ-06.*
+2. Plugin `PlanarSurfaceForce` (Wandform als Template-Parameter `Wall93`/`Wall104`/`Wall1043` nach ADR 0007 + optional Gouy-Chapman, nichtlinear nach OQ-06), Parameter pro (LJ-Typ, Oberflächen-Typ).
 3. Plugin `HarmonicRestraintPullingForce` (Positions-Restraint, COM-Pulling, Arbeit auf Device akkumuliert, Umbrella-Modus).
 4. Energieausgabe pro Replica und Term.
 
@@ -70,7 +70,7 @@ Dokumentation, Verzeichnisstruktur, Agenten-Anweisungen, Build-Entwürfe.
 ## Phase 4 – Nicht-kovalente Kräfte (Tiled All-Pairs)
 
 **Aufgaben**
-1. 32×32-Tile-Kernel, Shared-Memory, LJ + Debye-Hückel, Switching zwischen r_s und r_c, Minimum Image in x/y. Cutoff aus der Debye-Länge (ADR 0006, *vorbehaltlich Annahme*).
+1. 32×32-Tile-Kernel, Shared-Memory, LJ + Debye-Hückel, Switching zwischen r_s und r_c, Minimum Image in x/y. Cutoff aus der Debye-Länge (ADR 0006); bei L < 2 r_c Summation über periodische Bilder statt Minimum Image.
 2. Exclusion-Bitmasken (1-2, 1-3, 1-4), Generierung im Builder (Python), Upload als Tile-Liste.
 3. LJ-Typ-Paar-Tabelle pro Replica.
 4. Elektrostatik als Template-Parameter (`DebyeHuckel`), vorbereitet für `GeneralizedBornOBC`.

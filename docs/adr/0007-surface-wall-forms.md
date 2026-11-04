@@ -1,6 +1,6 @@
 # ADR 0007: Wählbare Wandform und Parameter aus Mischungsregeln
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-11-04)
 - **Datum:** 2026-11-04
 - **Bezug:** OQ-05, OQ-07
 

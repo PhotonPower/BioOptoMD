@@ -40,7 +40,7 @@ B:  v ← v + (Δt/2) F/m
 **Elektrostatik V1 – Debye-Hückel (implizites Wasser mit Salz):**
 `V = ONE_4PI_EPS0 · q_i q_j · exp(−κ r) / (ε_r · r)`, ε_r = 78.5 (Default), κ aus Ionenstärke. κ enthält alle nicht explizit modellierten Ionen. Temperaturabhängigkeit von κ und ε_r pro Replica: OQ-10.
 
-**Cutoff:** Beide Terme mit Switching-Funktion zwischen r_s und r_c. Der Cutoff wird aus der Debye-Länge abgeleitet (ADR 0006, Proposed): `r_c = max(2.0 nm, 5/κ)`, `r_s = r_c − 0.2 nm`. Damit ist DH bei r_c auf exp(−5) ≈ 0,7 % der reinen Coulomb-Wechselwirkung abgefallen. (Der frühere feste Wert r_c = 2,0 nm ließ bei 150 mM noch ≈ 8 % übrig.) Da der Tiled-All-Pairs-Kernel alle Paare rechnet, kostet ein größerer Cutoff keine Rechenzeit. Die Box L_x, L_y ist eine physikalische Eingabe (Bedeckung Γ = 1/(L_x L_y), OQ-09) und wird nie angepasst. Für L ≥ 2 r_c gilt Minimum Image; sonst summiert der Kernel explizit über periodische Bilder in x/y, inklusive Eigenbilder mit Faktor ½; Exclusions gelten nur für das Nullbild (ADR 0006 Rev. 2).
+**Cutoff:** Beide Terme mit Switching-Funktion zwischen r_s und r_c. Der Cutoff wird aus der Debye-Länge abgeleitet (ADR 0006): `r_c = max(2.0 nm, 5/κ)`, `r_s = r_c − 0.2 nm`. Damit ist DH bei r_c auf exp(−5) ≈ 0,7 % der reinen Coulomb-Wechselwirkung abgefallen. (Der frühere feste Wert r_c = 2,0 nm ließ bei 150 mM noch ≈ 8 % übrig.) Da der Tiled-All-Pairs-Kernel alle Paare rechnet, kostet ein größerer Cutoff keine Rechenzeit. Die Box L_x, L_y ist eine physikalische Eingabe (Bedeckung Γ = 1/(L_x L_y), OQ-09) und wird nie angepasst. Für L ≥ 2 r_c gilt Minimum Image; sonst summiert der Kernel explizit über periodische Bilder in x/y, inklusive Eigenbilder mit Faktor ½; Exclusions gelten nur für das Nullbild (ADR 0006 Rev. 2).
 
 **Exclusions:** 1-2 und 1-3 vollständig ausgeschlossen, 1-4 im Non-Bonded-Kernel ausgeschlossen (werden in der Bonded-Stufe skaliert berechnet). Kodierung als 32-bit-Bitmaske pro (Atom, Tile).
 
@@ -54,7 +54,7 @@ B:  v ← v + (Δt/2) F/m
 ## 4. Oberflächen- und Umgebungsplugins
 
 ### 4.1 `PlanarSurfaceForce` (Phase 2)
-Die Wandform ist ein Template-Parameter (ADR 0007, Proposed): `Wall93` (Volumenmaterial, z. B. Gold), `Wall104` (Graphen-Monolage), `Wall1043` (Graphit). Formeln und Kräfte aller Formen stehen in ADR 0007. Die Parameter pro (LJ-Typ, Oberflächen-Typ) leitet der Builder über Lorentz-Berthelot aus den Kraftfeld-LJ-Parametern und den Wandatom-Parametern ab, optional mit Lösungsmittel-Skalierung λ (OQ-05). Oberflächen-Typ 0 hat ε = 0 und ist für Padding-Atome und Thiol-Ankeratome reserviert (OQ-07).
+Die Wandform ist ein Template-Parameter (ADR 0007): `Wall93` (Volumenmaterial, z. B. Gold), `Wall104` (Graphen-Monolage), `Wall1043` (Graphit). Formeln und Kräfte aller Formen stehen in ADR 0007. Die Parameter pro (LJ-Typ, Oberflächen-Typ) leitet der Builder über Lorentz-Berthelot aus den Kraftfeld-LJ-Parametern und den Wandatom-Parametern ab, optional mit Lösungsmittel-Skalierung λ (OQ-05). Oberflächen-Typ 0 hat ε = 0 und ist für Padding-Atome und Thiol-Ankeratome reserviert (OQ-07).
 
 9-3-Wand bei z = 0, Parameter pro Oberflächen-Typ (`d_types.y`):
 
@@ -64,7 +64,7 @@ F_z,i  = ε_w,i [ (6/5) σ_w,i⁹/z¹⁰ − 3 σ_w,i³/z⁴ ]
 ```
 Minimum bei z* = (2/5)^(1/6) σ_w mit V(z*) ≈ −1.054 ε_w. Der Builder akzeptiert wahlweise die Topftiefe und rechnet um. Für z < z_clamp (Default 0.1 σ_w) wird z geclampt; das Ereignis wird in einem Device-Zähler registriert (Diagnose).
 
-Optional elektrochemisches Potential (Gouy-Chapman, 1:1-Elektrolyt). Vorschlag OQ-06: nichtlineare geschlossene Lösung als Default, linear nur als Grenzfall:
+Optional elektrochemisches Potential (Gouy-Chapman, 1:1-Elektrolyt). Nach OQ-06: nichtlineare geschlossene Lösung als Default, linear nur als Grenzfall:
 ```
 γ_r    = tanh(Φ₀ / (4 k_B T_r))          pro Replica (T_r aus d_temperature)
 u(z)   = γ_r exp(−κ z)
@@ -75,7 +75,7 @@ Linearisiert (Φ₀ ≪ k_BT/e ≈ 25 mV): `V_i(z) = q_i Φ₀ exp(−κ z)`, `F
 
 Φ₀ in kJ/(mol·e) (Builder rechnet aus Volt um). **Φ₀ ist das Potential der diffusen Schicht**, nicht das angelegte Elektrodenpotential; der Abfall über die Stern-Schicht ist nicht modelliert.
 
-**Thiol-Anker und SAM (OQ-07, Vorschlag):** Das Ankeratom erhält Oberflächen-Typ 0 (keine Wandwechselwirkung) und einen z-Restraint auf Chemisorptionshöhe (§4.2). Eine Mercaptohexanol-Rückfüllschicht wird optional als zusätzliche weiche, rein repulsive Wand (WCA-artig) bei z ≈ 0,8–1,0 nm modelliert, die nur auf Atome oberhalb des Linkers wirkt.
+**Thiol-Anker und SAM (OQ-07):** Das Ankeratom erhält Oberflächen-Typ 0 (keine Wandwechselwirkung) und einen z-Restraint auf Chemisorptionshöhe (§4.2). Eine Mercaptohexanol-Rückfüllschicht wird optional als zusätzliche weiche, rein repulsive Wand (WCA-artig) bei z ≈ 0,8–1,0 nm modelliert, die nur auf Atome oberhalb des Linkers wirkt.
 
 ### 4.2 `HarmonicRestraintPullingForce` (Phase 2)
 - **Positions-Restraint:** `V = ½ k |r_i − r_i⁰|²` (optional nur ausgewählte Dimensionen, mit Minimum Image in x/y).
@@ -86,13 +86,13 @@ Linearisiert (Φ₀ ≪ k_BT/e ≈ 25 mV): `V_i(z) = q_i Φ₀ exp(−κ z)`, `F
 ### 4.3 `VoxelGridForce3D` (Phase 6)
 3D-Textur (`cudaTextureObject_t`, float4) mit (V, ∂V/∂x, ∂V/∂y, ∂V/∂z) pro Voxel, trilinear interpoliert, skaliert pro Atomtyp (`d_types.y`). Anwendungen: Potential gekrümmter Nanokavitäten, optische Gradientenkraft `F = ¼ Re(α) ∇|E₀|²` (α = 4πε₀ α′, E₀ komplexe Feldamplitude) aus FEM-Feldern. Hinweis: interpolierter Gradient ≠ Gradient des interpolierten Potentials → leichte Energienicht-Erhaltung; Größe in Tests quantifizieren.
 
-**Normierung optischer Kräfte (Vorschlag OQ-04):** Im Optik-Modus speichert das Gitter W = |E₀|² in (V/nm)² mit E₀ als komplexer **Spitzen**amplitude (`E(t) = Re[E₀ e^{−iωt}]`), samt Gradient. Der Typskalierungsfaktor ist
+**Normierung optischer Kräfte (OQ-04):** Im Optik-Modus speichert das Gitter W = |E₀|² in (V/nm)² mit E₀ als komplexer **Spitzen**amplitude (`E(t) = Re[E₀ e^{−iωt}]`), samt Gradient. Der Typskalierungsfaktor ist
 ```
 s_i = −α′_i · FARADAY² / (4 · ONE_4PI_EPS0)      ⇒  U_i = s_i W,  F_i = −s_i ∇W
 ```
 Bei RMS-Feldern ist der Vorfaktor ½ statt ¼; die Lade-Funktion verlangt daher das Pflichtargument `amplitude="peak" | "rms"`.
 
-**Überschusspolarisierbarkeit (Review 2, OQ-04):** In s_i steht α′_eff,i = α′_i − (3/4π) v_i (n_w² − 1)/(n_w² + 2), d. h. der Kontrast gegenüber dem verdrängten Wasser, mit denselben v_i wie im `RefractiveIndexProfiler`. Ohne Korrektur wäre die Kraft um rund Faktor 2 zu groß. Streu-/Absorptionskräfte (Im α) sind nicht konservativ und nicht abgebildet; Fluorophore sind im Optikmodus per Default ausgenommen. Größenordnung: 1 MW/cm² in Wasser, α′ ≈ 10⁻³ nm³ → U ≈ 10⁻⁷ kJ/mol pro Atom; relevant erst in plasmonischen Hotspots (Feldverstärkung ≳ 10³).
+**Überschusspolarisierbarkeit (OQ-04):** In s_i steht α′_eff,i = α′_i − (3/4π) v_i (n_w² − 1)/(n_w² + 2), d. h. der Kontrast gegenüber dem verdrängten Wasser, mit denselben v_i wie im `RefractiveIndexProfiler`. Ohne Korrektur wäre die Kraft um rund Faktor 2 zu groß. Streu-/Absorptionskräfte (Im α) sind nicht konservativ und nicht abgebildet; Fluorophore sind im Optikmodus per Default ausgenommen. Größenordnung: 1 MW/cm² in Wasser, α′ ≈ 10⁻³ nm³ → U ≈ 10⁻⁷ kJ/mol pro Atom; relevant erst in plasmonischen Hotspots (Feldverstärkung ≳ 10³).
 
 ## 5. Constraints & HMR (Phase 5)
 
@@ -125,6 +125,6 @@ n(k)            = sqrt((1 + 2L)/(1 − L))
 ```
 Ausgabe: n(z), sowie die Rohhistogramme S_α, S_V und ihre Varianz, damit andere Mischungsregeln (z. B. Maxwell-Garnett) nachträglich in Python möglich sind.
 
-**Verschmierung (Vorschlag OQ-02, Review 2):** Default ist der exakte Kugelschnitt: Atom i mit R_i = (3 v_i/4π)^{1/3} trägt zu Schicht [z_a, z_b] den Volumenanteil π∫(R_i² − (z − z_i)²) dz bei (analytisch, kompakter Träger, keine Beiträge unter z = 0 durch Ausläufer). Option: Gauß-Verschmierung mit σ_i = R_i/√5 (gleiche z-Varianz wie eine homogene Kugel). Bei Δz = 0,05 nm sind Schichten deutlich dünner als ein Atom; mit Punktatomen greift das `max(0, …)` in f_w häufig und verzerrt n(z) systematisch. Punktatome bleiben als Option für Tests.
+**Verschmierung (OQ-02):** Default ist der exakte Kugelschnitt: Atom i mit R_i = (3 v_i/4π)^{1/3} trägt zu Schicht [z_a, z_b] den Volumenanteil π∫(R_i² − (z − z_i)²) dz bei (analytisch, kompakter Träger, keine Beiträge unter z = 0 durch Ausläufer). Option: Gauß-Verschmierung mit σ_i = R_i/√5 (gleiche z-Varianz wie eine homogene Kugel). Bei Δz = 0,05 nm sind Schichten deutlich dünner als ein Atom; mit Punktatomen greift das `max(0, …)` in f_w häufig und verzerrt n(z) systematisch. Punktatome bleiben als Option für Tests.
 
-**Parameter (Vorschlag OQ-01/02):** v_i aus Voronoi-Volumina (ProtOr für Proteine, NucProt für Nukleinsäuren; Summe ≈ partielles spezifisches Volumen nur bei Proteinen), α′_i aus Typtabelle mit klassenweisem Skalierungsfaktor, gemeinsam kalibriert an dn/dc (Proteine ≈ 0,185–0,19 mL/g, DNA ≈ 0,17 mL/g), Dispersion über Cauchy-Term. Fluorophore erhalten eine separate, resonanzbewusste Polarisierbarkeit oder werden per Option ausgeschlossen.
+**Parameter (OQ-01/02):** v_i aus Voronoi-Volumina (ProtOr für Proteine, NucProt für Nukleinsäuren; Summe ≈ partielles spezifisches Volumen nur bei Proteinen), α′_i aus Typtabelle mit klassenweisem Skalierungsfaktor, gemeinsam kalibriert an dn/dc (Proteine ≈ 0,185–0,19 mL/g, DNA ≈ 0,17 mL/g), Dispersion über Cauchy-Term. Fluorophore erhalten eine separate, resonanzbewusste Polarisierbarkeit oder werden per Option ausgeschlossen.
