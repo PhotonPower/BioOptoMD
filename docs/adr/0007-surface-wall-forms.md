@@ -28,9 +28,11 @@ Der z-Clamp (Default 0,1 σ_w) und der Diagnosezähler bleiben für alle Formen 
 
 **2. Parameter aus Mischungsregeln:** Für Atomtyp i und Wandatom w: σ_iw = (σ_i + σ_w)/2, ε_iw = √(ε_i ε_w) (Lorentz-Berthelot, konsistent mit dem Kraftfeld). Der Builder berechnet die effektiven Vorfaktoren pro (LJ-Typ, Oberflächen-Typ) und lädt sie als Tabelle hoch. Wandatom-Parameter (vorläufig, zu verifizieren, siehe OQ-Checkliste): Kohlenstoff nach Steele, Gold nach INTERFACE-FF (Heinz et al.).
 
-**3. Lösungsmittelkorrektur:** Pro Oberflächen-Typ und Atomklasse optionaler Skalierungsfaktor λ ∈ (0, 1] auf ε_iw. Kalibrierung an Adsorptions-PMFs (Nukleobasen/Nukleoside) in **explizitem** Wasser. Default λ = 1 mit `ASSUMPTION(OQ-05)`-Kommentar.
+**3. Lösungsmittelkorrektur:** Pro Oberflächen-Typ und Atomklasse optionaler Skalierungsfaktor λ ∈ (0, 1] auf ε_iw. Kalibrierung an Adsorptions-PMFs (Nukleobasen/Nukleoside) in **explizitem** Wasser. Default λ = 1 mit `ASSUMPTION(OQ-05)`-Kommentar. Für Gold mit INTERFACE-FF-Parametern ist λ < 1 praktisch Pflicht, weil diese Parameter in explizitem Wasser validiert sind (Review 2).
 
 **4. Ausnahmen pro Atom:** Oberflächen-Typ 0 (ε = 0) ist reserviert für Atome, die nicht mit der Wand wechselwirken (Padding-Atome, Thiol-Ankeratom nach OQ-07).
+
+**5. Lage von z = 0 (Review 2):** Für `Wall93` liegt die Kontinuumsgrenze z = 0 einen halben Lagenabstand unter der obersten Atomlage (Au(111): Δ/2 ≈ 0,118 nm mit Δ = a/√3 ≈ 0,2355 nm). Für `Wall104` liegt die Atomebene bei z = 0, für `Wall1043` die oberste Lage. Der Builder dokumentiert z_top (Höhe der obersten Atomlage) pro Material. Alle Höhenangaben (Chemisorption OQ-07, SAM-Wand, Observer-Ursprung d) beziehen sich auf z_top, nicht auf z = 0.
 
 ## Alternativen
 - **Nur 9-3, Graphen per Fit:** Ein Fit kann den falschen Abfall nicht korrigieren; Parameter wären nicht übertragbar.

@@ -81,7 +81,10 @@ Dokumentation, Verzeichnisstruktur, Agenten-Anweisungen, Build-Entwürfe.
 - `test_phase4.py::test_full_system_vs_openmm` – Aptamer + Fluorophor (~1500 Atome) inkl. Ionen, OpenMM mit CustomNonbondedForce (DH + Switching) und identischen Exclusions; max. Kraftabweichung < 1e-4 relativ zur RMS-Kraft, Energie < 1e-4 relativ.
 - `test_phase4.py::test_padding_and_batch_independence` – dasselbe System in Replica 0 von 1 und in Replica 7 von 16 liefert identische Kräfte; Replicas beeinflussen sich nicht.
 - `test_phase4.py::test_nve_full_system` – NVE 10 ps, Δt = 1 fs, Drift im Rahmen von Phase 3.
-- `test_phase4.py::test_cutoff_from_kappa` – r_c korrekt für I = 10/150/1000 mM; zu kleine Box → Fehler; Energie vs. Referenz ohne Cutoff (große Box) < 1 % relativ (ADR 0006).
+- `test_phase4.py::test_cutoff_from_kappa` – r_c korrekt für I = 10/150/1000 mM und Replicas unterschiedlicher T; Builder ändert L nie (ADR 0006 Rev. 2).
+- `test_phase4.py::test_image_sum_vs_lattice_reference` – L < 2 r_c: elektrostatische Energie und Kräfte vs. NumPy-Gittersumme, rel. RMS-Kraftfehler < 1e-3, elektrostatische Energie rel. < 1e-3.
+- `test_phase4.py::test_image_sum_self_images` – einzelnes geladenes Atom: Energie = ½ Σ_{n≠0} V_DH(|n|), Kraft = 0.
+- `test_phase4.py::test_image_sum_reduces_to_minimum_image` – L ≥ 2 r_c: beide Pfade bis auf Rundung identisch.
 
 ---
 
@@ -113,9 +116,10 @@ Dokumentation, Verzeichnisstruktur, Agenten-Anweisungen, Build-Entwürfe.
 - `test_phase6.py::test_refractive_index_uniform_layer` – synthetische homogene Atomschicht bekannter Dichte → analytisches Lorentz-Lorenz-Ergebnis, rel. Fehler < 1e-4.
 - `test_phase6.py::test_voxel_linear_field` – lineares Potential im Gitter → konstante Kraft exakt; harmonisches Potential → Boltzmann-Verteilung (χ²).
 - `test_phase6.py::test_observer_ignores_padding`.
-- `test_phase6.py::test_refractive_index_gaussian_smearing` – einzelnes Atom: Summe über Schichten von S_α und S_V exakt erhalten; Verteilung entspricht Gauß mit σ = R/√5.
+- `test_phase6.py::test_refractive_index_smearing` – einzelnes Atom: Summe über Schichten von S_α und S_V exakt erhalten; Kugelschnitt (Default) entspricht der analytischen Schichtvolumenformel, keine Beiträge unter z = 0; Gauß-Option mit σ = R/√5.
 - `test_phase6.py::test_refractive_index_dn_dc` (`reference`) – homogene Protein- bzw. DNA-Lösung der Konzentration c: n = n_w + c·dn/dc innerhalb der Kalibriertoleranz (OQ-01/02).
-- `test_phase6.py::test_voxel_optical_normalization` – konstantes |E₀|²-Gradientenfeld: Kraft = −s_i ∇W mit s_i nach OQ-04; `amplitude="rms"` ergibt Faktor 2.
+- `test_phase6.py::test_voxel_optical_normalization` – konstantes |E₀|²-Gradientenfeld: Kraft = −s_i ∇W mit s_i aus α′_eff nach OQ-04; `amplitude="rms"` ergibt Faktor 2; Atom mit α′_i = (3/4π) v_i L_w erfährt keine Kraft.
+- `test_phase6.py::test_voxel_optical_sphere_consistency` (`reference`) – dichte Atomkugel mit Brechungsindex n_p (aus dem Profiler) im Feldgradienten: Gesamtkraft vs. Dipolkraft einer dielektrischen Kugel (Clausius-Mossotti mit n_p/n_w); Abweichung dokumentieren (klärt den Lokalfeldfaktor, OQ-04).
 
 ---
 

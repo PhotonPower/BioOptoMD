@@ -38,9 +38,9 @@ B:  v ← v + (Δt/2) F/m
 **Lennard-Jones:** `V = 4ε_ij[(σ_ij/r)¹² − (σ_ij/r)⁶]`, Kombination nach Lorentz-Berthelot, vorab als Typ-Paar-Tabelle (`N_types × N_types`, float2) im Shared/Constant Memory.
 
 **Elektrostatik V1 – Debye-Hückel (implizites Wasser mit Salz):**
-`V = ONE_4PI_EPS0 · q_i q_j · exp(−κ r) / (ε_r · r)`, ε_r = 78.5 (Default), κ aus Ionenstärke.
+`V = ONE_4PI_EPS0 · q_i q_j · exp(−κ r) / (ε_r · r)`, ε_r = 78.5 (Default), κ aus Ionenstärke. κ enthält alle nicht explizit modellierten Ionen. Temperaturabhängigkeit von κ und ε_r pro Replica: OQ-10.
 
-**Cutoff:** Beide Terme mit Switching-Funktion zwischen r_s und r_c. Der Cutoff wird aus der Debye-Länge abgeleitet (ADR 0006, Proposed): `r_c = max(2.0 nm, 5/κ)`, `r_s = r_c − 0.2 nm`. Damit ist DH bei r_c auf exp(−5) ≈ 0,7 % der reinen Coulomb-Wechselwirkung abgefallen. (Der frühere feste Wert r_c = 2,0 nm ließ bei 150 mM noch ≈ 8 % übrig.) Da der Tiled-All-Pairs-Kernel alle Paare rechnet, kostet ein größerer Cutoff keine Rechenzeit. Box-Bedingung: L_x, L_y ≥ 2 r_c; der Builder bricht bei zu kleiner Box ab.
+**Cutoff:** Beide Terme mit Switching-Funktion zwischen r_s und r_c. Der Cutoff wird aus der Debye-Länge abgeleitet (ADR 0006, Proposed): `r_c = max(2.0 nm, 5/κ)`, `r_s = r_c − 0.2 nm`. Damit ist DH bei r_c auf exp(−5) ≈ 0,7 % der reinen Coulomb-Wechselwirkung abgefallen. (Der frühere feste Wert r_c = 2,0 nm ließ bei 150 mM noch ≈ 8 % übrig.) Da der Tiled-All-Pairs-Kernel alle Paare rechnet, kostet ein größerer Cutoff keine Rechenzeit. Die Box L_x, L_y ist eine physikalische Eingabe (Bedeckung Γ = 1/(L_x L_y), OQ-09) und wird nie angepasst. Für L ≥ 2 r_c gilt Minimum Image; sonst summiert der Kernel explizit über periodische Bilder in x/y, inklusive Eigenbilder mit Faktor ½; Exclusions gelten nur für das Nullbild (ADR 0006 Rev. 2).
 
 **Exclusions:** 1-2 und 1-3 vollständig ausgeschlossen, 1-4 im Non-Bonded-Kernel ausgeschlossen (werden in der Bonded-Stufe skaliert berechnet). Kodierung als 32-bit-Bitmaske pro (Atom, Tile).
 
@@ -68,7 +68,7 @@ Optional elektrochemisches Potential (Gouy-Chapman, 1:1-Elektrolyt). Vorschlag O
 ```
 γ_r    = tanh(Φ₀ / (4 k_B T_r))          pro Replica (T_r aus d_temperature)
 u(z)   = γ_r exp(−κ z)
-V_i(z) = q_i · 2 k_B T_r · ln[(1 + u)/(1 − u)]
+V_i(z) = q_i · 2 k_B T_r · ln[(1 + u)/(1 − u)]  = q_i · 4 k_B T_r · atanh(u)   (numerisch: atanhf)
 F_z,i  = q_i · 4 k_B T_r · κ · u / (1 − u²)
 ```
 Linearisiert (Φ₀ ≪ k_BT/e ≈ 25 mV): `V_i(z) = q_i Φ₀ exp(−κ z)`, `F_z,i = q_i Φ₀ κ exp(−κ z)`. Die Linearisierung überschätzt das Fernfeld um ca. 30 % bei 100 mV und etwa Faktor 2 bei 200 mV.
@@ -90,7 +90,9 @@ Linearisiert (Φ₀ ≪ k_BT/e ≈ 25 mV): `V_i(z) = q_i Φ₀ exp(−κ z)`, `F
 ```
 s_i = −α′_i · FARADAY² / (4 · ONE_4PI_EPS0)      ⇒  U_i = s_i W,  F_i = −s_i ∇W
 ```
-Bei RMS-Feldern ist der Vorfaktor ½ statt ¼; die Lade-Funktion verlangt daher das Pflichtargument `amplitude="peak" | "rms"`. Größenordnung: 1 MW/cm² in Wasser, α′ ≈ 10⁻³ nm³ → U ≈ 10⁻⁷ kJ/mol pro Atom; relevant erst in plasmonischen Hotspots (Feldverstärkung ≳ 10³).
+Bei RMS-Feldern ist der Vorfaktor ½ statt ¼; die Lade-Funktion verlangt daher das Pflichtargument `amplitude="peak" | "rms"`.
+
+**Überschusspolarisierbarkeit (Review 2, OQ-04):** In s_i steht α′_eff,i = α′_i − (3/4π) v_i (n_w² − 1)/(n_w² + 2), d. h. der Kontrast gegenüber dem verdrängten Wasser, mit denselben v_i wie im `RefractiveIndexProfiler`. Ohne Korrektur wäre die Kraft um rund Faktor 2 zu groß. Streu-/Absorptionskräfte (Im α) sind nicht konservativ und nicht abgebildet; Fluorophore sind im Optikmodus per Default ausgenommen. Größenordnung: 1 MW/cm² in Wasser, α′ ≈ 10⁻³ nm³ → U ≈ 10⁻⁷ kJ/mol pro Atom; relevant erst in plasmonischen Hotspots (Feldverstärkung ≳ 10³).
 
 ## 5. Constraints & HMR (Phase 5)
 
@@ -123,6 +125,6 @@ n(k)            = sqrt((1 + 2L)/(1 − L))
 ```
 Ausgabe: n(z), sowie die Rohhistogramme S_α, S_V und ihre Varianz, damit andere Mischungsregeln (z. B. Maxwell-Garnett) nachträglich in Python möglich sind.
 
-**Verschmierung (Vorschlag OQ-02):** Default ist die Gauß-Verschmierung jedes Atoms über benachbarte Schichten mit σ_i = R_i/√5 (gleiche z-Varianz wie eine homogene Kugel vom Radius R_i). Bei Δz = 0,05 nm sind Schichten deutlich dünner als ein Atom; mit Punktatomen greift das `max(0, …)` in f_w häufig und verzerrt n(z) systematisch. Punktatome bleiben als Option für Tests.
+**Verschmierung (Vorschlag OQ-02, Review 2):** Default ist der exakte Kugelschnitt: Atom i mit R_i = (3 v_i/4π)^{1/3} trägt zu Schicht [z_a, z_b] den Volumenanteil π∫(R_i² − (z − z_i)²) dz bei (analytisch, kompakter Träger, keine Beiträge unter z = 0 durch Ausläufer). Option: Gauß-Verschmierung mit σ_i = R_i/√5 (gleiche z-Varianz wie eine homogene Kugel). Bei Δz = 0,05 nm sind Schichten deutlich dünner als ein Atom; mit Punktatomen greift das `max(0, …)` in f_w häufig und verzerrt n(z) systematisch. Punktatome bleiben als Option für Tests.
 
-**Parameter (Vorschlag OQ-01/02):** v_i aus Voronoi-Volumina (Summe ≈ partielles spezifisches Volumen), α′_i aus Typtabelle mit klassenweisem Skalierungsfaktor, gemeinsam kalibriert an dn/dc (Proteine ≈ 0,185–0,19 mL/g, DNA ≈ 0,17 mL/g), Dispersion über Cauchy-Term. Fluorophore erhalten eine separate, resonanzbewusste Polarisierbarkeit oder werden per Option ausgeschlossen.
+**Parameter (Vorschlag OQ-01/02):** v_i aus Voronoi-Volumina (ProtOr für Proteine, NucProt für Nukleinsäuren; Summe ≈ partielles spezifisches Volumen nur bei Proteinen), α′_i aus Typtabelle mit klassenweisem Skalierungsfaktor, gemeinsam kalibriert an dn/dc (Proteine ≈ 0,185–0,19 mL/g, DNA ≈ 0,17 mL/g), Dispersion über Cauchy-Term. Fluorophore erhalten eine separate, resonanzbewusste Polarisierbarkeit oder werden per Option ausgeschlossen.
