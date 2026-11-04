@@ -33,7 +33,7 @@ Dokumentation, Verzeichnisstruktur, Agenten-Anweisungen, Build-Entwürfe.
 
 **Aufgaben**
 1. `LangevinIntegrator` (BAOAB, Philox mit Zähler (seed, replica, step, atom), T pro Replica, γ = 0 ⇒ NVE).
-2. Plugin `PlanarSurfaceForce` (9-3 + optional Gouy-Chapman), Parameter pro Oberflächen-Typ.
+2. Plugin `PlanarSurfaceForce` (Wandform als Template-Parameter `Wall93`/`Wall104`/`Wall1043` nach ADR 0007 + optional Gouy-Chapman, nichtlinear nach OQ-06), Parameter pro (LJ-Typ, Oberflächen-Typ). *Vorbehaltlich Annahme von ADR 0007 / OQ-06.*
 3. Plugin `HarmonicRestraintPullingForce` (Positions-Restraint, COM-Pulling, Arbeit auf Device akkumuliert, Umbrella-Modus).
 4. Energieausgabe pro Replica und Term.
 
@@ -42,7 +42,10 @@ Dokumentation, Verzeichnisstruktur, Agenten-Anweisungen, Build-Entwürfe.
 - `test_phase2.py::test_velocity_distribution` – Maxwell-Boltzmann-Verteilung der Geschwindigkeitskomponenten, KS-Test p > 0.001.
 - `test_phase2.py::test_restraint_boltzmann` – unabhängige Atome im harmonischen Restraint: Histogramm P(x) vs. exp(−V/k_BT), χ²-Test p > 0.001.
 - `test_phase2.py::test_wall_boltzmann` – Atome zwischen 9-3-Wand und harmonischem z-Restraint: P(z) vs. Boltzmann, χ²-Test.
-- `test_phase2.py::test_gouy_chapman_force` – Kraft vs. finite Differenzen der Energie, rel. Fehler < 1e-4.
+- `test_phase2.py::test_gouy_chapman_force` – Kraft vs. finite Differenzen der Energie, rel. Fehler < 1e-4 (nichtlineare Form, Φ₀ ∈ {25, 100, 200} mV).
+- `test_phase2.py::test_gouy_chapman_linear_limit` – nichtlineare Form → lineare Form für Φ₀ → 0 (rel. Abweichung < 1e-3 bei 1 mV); γ wird pro Replica aus T_r berechnet.
+- `test_phase2.py::test_wall_forms_vs_numpy` – alle Wandformen: Energie/Kraft vs. NumPy-Referenz und finite Differenzen, rel. Fehler < 1e-4; Lage und Tiefe des Minimums analytisch (ADR 0007).
+- `test_phase2.py::test_wall_mixing_rules` – Builder-Parametertabelle vs. manuell berechnete Lorentz-Berthelot-Werte.
 - `test_phase2.py::test_determinism` – zwei Läufe mit gleichem Seed bitidentisch, anderer Seed verschieden.
 - `test_phase2.py::test_jarzynski_harmonic` – Pulling in rein harmonischem Potential: ⟨exp(−βW)⟩ liefert ΔG = 0 innerhalb Fehlerbalken.
 
@@ -67,7 +70,7 @@ Dokumentation, Verzeichnisstruktur, Agenten-Anweisungen, Build-Entwürfe.
 ## Phase 4 – Nicht-kovalente Kräfte (Tiled All-Pairs)
 
 **Aufgaben**
-1. 32×32-Tile-Kernel, Shared-Memory, LJ + Debye-Hückel, Switching zwischen r_s und r_c, Minimum Image in x/y.
+1. 32×32-Tile-Kernel, Shared-Memory, LJ + Debye-Hückel, Switching zwischen r_s und r_c, Minimum Image in x/y. Cutoff aus der Debye-Länge (ADR 0006, *vorbehaltlich Annahme*).
 2. Exclusion-Bitmasken (1-2, 1-3, 1-4), Generierung im Builder (Python), Upload als Tile-Liste.
 3. LJ-Typ-Paar-Tabelle pro Replica.
 4. Elektrostatik als Template-Parameter (`DebyeHuckel`), vorbereitet für `GeneralizedBornOBC`.
@@ -78,6 +81,7 @@ Dokumentation, Verzeichnisstruktur, Agenten-Anweisungen, Build-Entwürfe.
 - `test_phase4.py::test_full_system_vs_openmm` – Aptamer + Fluorophor (~1500 Atome) inkl. Ionen, OpenMM mit CustomNonbondedForce (DH + Switching) und identischen Exclusions; max. Kraftabweichung < 1e-4 relativ zur RMS-Kraft, Energie < 1e-4 relativ.
 - `test_phase4.py::test_padding_and_batch_independence` – dasselbe System in Replica 0 von 1 und in Replica 7 von 16 liefert identische Kräfte; Replicas beeinflussen sich nicht.
 - `test_phase4.py::test_nve_full_system` – NVE 10 ps, Δt = 1 fs, Drift im Rahmen von Phase 3.
+- `test_phase4.py::test_cutoff_from_kappa` – r_c korrekt für I = 10/150/1000 mM; zu kleine Box → Fehler; Energie vs. Referenz ohne Cutoff (große Box) < 1 % relativ (ADR 0006).
 
 ---
 
@@ -109,6 +113,9 @@ Dokumentation, Verzeichnisstruktur, Agenten-Anweisungen, Build-Entwürfe.
 - `test_phase6.py::test_refractive_index_uniform_layer` – synthetische homogene Atomschicht bekannter Dichte → analytisches Lorentz-Lorenz-Ergebnis, rel. Fehler < 1e-4.
 - `test_phase6.py::test_voxel_linear_field` – lineares Potential im Gitter → konstante Kraft exakt; harmonisches Potential → Boltzmann-Verteilung (χ²).
 - `test_phase6.py::test_observer_ignores_padding`.
+- `test_phase6.py::test_refractive_index_gaussian_smearing` – einzelnes Atom: Summe über Schichten von S_α und S_V exakt erhalten; Verteilung entspricht Gauß mit σ = R/√5.
+- `test_phase6.py::test_refractive_index_dn_dc` (`reference`) – homogene Protein- bzw. DNA-Lösung der Konzentration c: n = n_w + c·dn/dc innerhalb der Kalibriertoleranz (OQ-01/02).
+- `test_phase6.py::test_voxel_optical_normalization` – konstantes |E₀|²-Gradientenfeld: Kraft = −s_i ∇W mit s_i nach OQ-04; `amplitude="rms"` ergibt Faktor 2.
 
 ---
 
@@ -116,7 +123,7 @@ Dokumentation, Verzeichnisstruktur, Agenten-Anweisungen, Build-Entwürfe.
 
 **Aufgaben**
 1. `biooptomd.builder.from_parmed()` / `from_openmm()`: Topologie → gepaddete SoA, Exclusions, 1-4-Liste, HMR, Debye-Länge aus I, T, ε_r.
-2. Helfer: Ankeratome auswählen, Fluorophor-Gruppe/Dipolachse definieren, Oberflächen-Typen zuweisen, Atom-Polarisierbarkeiten zuweisen (Tabelle aus OQ-01).
+2. Helfer: Ankeratome auswählen (Oberflächen-Typ 0, z-Restraint auf Chemisorptionshöhe, OQ-07), Fluorophor-Gruppe/Dipolachse definieren (Tabelle pro Farbstoff, OQ-03), Oberflächen-Typen zuweisen, Atom-Polarisierbarkeiten und -Volumina zuweisen (OQ-01/02), automatischer Cutoff (ADR 0006), optionale SAM/MCH-Wand.
 3. I/O: Trajektorien als DCD oder HDF5 (pro Replica), Checkpoints (Positionen, Geschwindigkeiten, RNG-Zähler, Schrittzähler) bitgenau wiederherstellbar.
 4. `biooptomd.analysis`: FRET-Mittelungsregime, Blockmittelung, n(z)-Export für Transfer-Matrix-Solver.
 5. Beispiel `examples/aptamer_on_graphene/`.
