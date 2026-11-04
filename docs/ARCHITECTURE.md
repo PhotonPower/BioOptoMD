@@ -127,7 +127,7 @@ dip = sim.add_observer(bomd.observers.DipoleAndDistance(atom_a=..., atom_b=..., 
 nz  = sim.add_observer(bomd.observers.RefractiveIndexProfile(dz=0.05, z_max=10.0,
                        wavelength_nm=633.0, stride=100))
 sim.step(1_000_000)
-mu_t   = dip.result()        # (n_replicas, n_frames, 3)  [D bzw. normiert]
+mu_t   = dip.result()        # (n_replicas, n_frames, 7) = (R_F [nm], μ̂, d [nm]), s. PHYSICS_MODEL §6.1
 n_of_z = nz.result()         # (n_replicas, n_bins)
 x = sim.positions(dlpack=True)   # Zero-Copy nach CuPy/PyTorch
 ```

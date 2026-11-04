@@ -50,7 +50,7 @@ Der nächste Agent hat keinen anderen Kontext als das Repository.
 4. **Division durch Abstände:** immer gegen `r² < EPS_R2` absichern; dokumentieren, was im Grenzfall passiert.
 5. **Determinismus:** Gleicher Seed + gleiche Eingabe ⇒ bitidentische Trajektorie. RNG ist Philox, Zähler = (seed, replica, step, atom). Kein `curand_init` pro Schritt mit sequentiellem State.
 6. **Padding-Atome** (Dummies zum Auffüllen auf Vielfache von 32): Ladung 0, LJ-Typ 0 (ε = 0), `inv_mass = 0`, in keiner Bindungsliste, von allen Observern ignoriert. Tests müssen das prüfen.
-7. **Periodizität:** x/y periodisch (Minimum Image, Box pro Replica), z nicht periodisch. Jeder Paar-Kernel muss Minimum Image anwenden (ADR 0003).
+7. **Periodizität:** x/y periodisch (Minimum Image, Box pro Replica), z nicht periodisch. Jeder Paar-Kernel muss Minimum Image anwenden (ADR 0003). Ausnahme: Der Non-Bonded-Kernel summiert bei L_x oder L_y < 2 r_c explizit über periodische Bilder (ADR 0006).
 8. **Thermodynamische Tests** prüfen gegen statistisch begründete Toleranzen (z. B. 4σ der Schätzung über dekorrelierte Samples), nie gegen „exakt“.
 
 ### CUDA
