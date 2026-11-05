@@ -19,7 +19,8 @@ struct GeneralizedBornParams {
   std::vector<std::vector<float>> radius_nm;
   /// HCT-Skalierungsfaktor s je Topologie und Atom (n_atoms), >= 0.
   std::vector<std::vector<float>> scale;
-  /// Radius-Offset δ [nm]: or = ρ − δ (OBC2 0.009, GBn2 0.0195141).
+  /// Radius-Offset δ [nm]: or = ρ − δ (OBC2 0.009, GBn2 0.0195141); gilt für alle Topologien
+  /// (ein Modell je Strategie).
   float offset_nm = 0.009f;
   /// (α, β, γ) des Born-Radius-tanh je Topologie und Atom (n_atoms·3); leer ⇒ OBC2 (1, 0.8, 4.85).
   std::vector<std::vector<float>> alpha_beta_gamma;
@@ -51,6 +52,7 @@ class TiledGeneralizedBorn final : public TiledAllPairs {
   GeneralizedBornParams gb_;
   DeviceBuffer<float4> d_gb_atom_;      // (or, sr, ρ, Neck-Index) je Topologie-Atom (n_pad)
   DeviceBuffer<float4> d_gb_abg_;       // (α, β, γ, 0) je Topologie-Atom (n_pad)
+  bool use_abg_ = false;                // false ⇒ OBC2-Konstanten (double) im Kernel
   DeviceBuffer<float2> d_neck_;         // (m0, d0) aller Topologien konkateniert
   DeviceBuffer<int2> d_neck_info_;      // (Offset in d_neck_, U) je Replica
   DeviceBuffer<int> d_gb_offset_;       // Offset in d_gb_atom_ je Replica

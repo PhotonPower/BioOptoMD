@@ -90,10 +90,15 @@ def test_gbn2_reference_forces_fd(box, n_max, r_s, r_c):
         np.column_stack([rng.uniform(0.3, 0.9, n), rng.uniform(0.2, 0.9, n), rng.uniform(0.1, 0.5, n)]),
         rng.integers(0, u, n), rng.uniform(0.1, 0.6, (u, u)), rng.uniform(0.25, 0.4, (u, u)),
     )  # fmt: skip
-    # Kein Paar am Neck-Cutoff (Stufe, dort ist E nicht differenzierbar)
-    d = np.linalg.norm(pos[:, None] - pos[None], axis=-1)
+    # Kein Paar (auch kein Bildpaar) am Neck-Cutoff: dort ist E nicht differenzierbar
     cut = rho[:, None] + rho[None] + gb_ref.NECK_CUT
-    assert np.abs(d - cut)[np.triu_indices(n, 1)].min() > 1e-4
+    shifts = [(0, 0)] if box is None else [
+        (nx, ny) for nx in range(-n_max, n_max + 1) for ny in range(-n_max, n_max + 1)
+    ]  # fmt: skip
+    for nx, ny in shifts:
+        shift = np.zeros(3) if box is None else np.array([nx * box[0], ny * box[1], 0.0])
+        d = np.linalg.norm(pos[:, None] - pos[None] + shift, axis=-1)
+        assert np.abs(d - cut).min() > 1e-4, (nx, ny)
 
     def run(p):
         return gb_ref.gb_nonbonded(
@@ -260,3 +265,71 @@ def test_gbn2_nve(core):
     assert np.all(np.abs(drift) < 1e-4), f"Drift {drift}"
     assert np.all(fluct < 1e-3), f"Fluktuation {fluct}"
     assert ctx.status() == 0
+
+
+@pytest.mark.gpu
+def test_gbn2_multiple_topologies(core):
+    """Zwei Topologien mit verschiedenen GBn2-Parametern und Neck-Tabellen unterschiedlicher Größe U,
+    Replicas gemischt (auch ACE aus): jede Replica bitidentisch zu einem Einzelkontext ihrer Topologie;
+    Validierung der Eingaben (Index außerhalb, nicht quadratische Tabelle, abg-Shape, Neck ohne abg)."""
+    from test_phase4 import _random_system
+
+    rng = np.random.default_rng(33)
+    n = 40
+    pos, sig, eps, q, excl = _random_system(rng, n, 4.5, 15)
+    types, topo = nonbonded_topology(padded_atom_count(n), sig, eps, excl)
+    params = []
+    for u in (3, 5):
+        params.append({
+            "rho": rng.uniform(0.12, 0.185, n), "scale": rng.uniform(0.2, 1.6, n),
+            "abg": np.column_stack([rng.uniform(0.3, 0.9, n), rng.uniform(0.2, 0.9, n),
+                                    rng.uniform(0.1, 0.5, n)]),
+            "idx": rng.integers(0, u, n).astype(np.int32), "m0": rng.uniform(0.1, 0.6, (u, u)),
+            "d0": rng.uniform(0.25, 0.4, (u, u)),
+        })  # fmt: skip
+    replica_topology = np.array([1, 0, 1], np.int32)
+    batch_pos = np.repeat(pos[None], 3, 0) + rng.normal(0, 0.02, (3, n, 3))
+
+    def kwargs(sel):
+        return {
+            "offset": 0.0195141, "alpha_beta_gamma": [p["abg"] for p in sel],
+            "neck_index": [p["idx"] for p in sel], "neck_m0": [p["m0"] for p in sel],
+            "neck_d0": [p["d0"] for p in sel], "ace": False,
+        }  # fmt: skip
+
+    many = core.SimulationContext(3, n)
+    many.set_box(np.full((3, 2), 4.5, np.float32))
+    many.set_masses(np.full((3, n), 12.0, np.float32))
+    many.set_positions(batch_pos.astype(np.float32))
+    many.set_charges(np.tile(q, (3, 1)).astype(np.float32))
+    t2 = np.zeros((3, n, 2), np.int32)
+    t2[..., 0] = types
+    many.set_types(t2)
+    many.set_nonbonded_gb(
+        [topo, topo], replica_topology, np.full(3, 0.8, np.float32), np.full(3, 78.5, np.float32),
+        [p["rho"] for p in params], [p["scale"] for p in params], r_switch=2.0, r_cutoff=2.2,
+        **kwargs(params),
+    )  # fmt: skip
+    many.compute_forces()
+    for r, t in enumerate(replica_topology):
+        p = params[t]
+        one = _gb_context(
+            core, 1, batch_pos[r], q, types, topo, p["rho"], p["scale"], (4.5, 4.5), 0.8, 78.5,
+            2.0, 2.2, **kwargs([p]),
+        )  # fmt: skip
+        assert np.array_equal(one.forces_fixed_point()[:, 0], many.forces_fixed_point()[:, r]), r
+        assert np.array_equal(one.energies_fixed_point()[0], many.energies_fixed_point()[r])
+    assert many.status() == 0
+
+    p = params[0]
+    base = (core, 1, pos, q, types, topo, p["rho"], p["scale"], (4.5, 4.5), 0.8, 78.5, 2.0, 2.2)
+    bad = [
+        dict(kwargs([p]), neck_index=[np.full(n, 3, np.int32)]),  # Index = U
+        dict(kwargs([p]), neck_m0=[p["m0"][:, :2]]),  # nicht quadratisch
+        dict(kwargs([p]), alpha_beta_gamma=[p["abg"].T.copy()]),  # (3, n)
+        dict(kwargs([p]), alpha_beta_gamma=None),  # Neck ohne α/β/γ
+        dict(kwargs([p]), neck_index=[p["idx"].astype(np.float64)]),  # kein Integer
+    ]
+    for kw in bad:
+        with pytest.raises(ValueError):
+            _gb_context(*base, **kw)

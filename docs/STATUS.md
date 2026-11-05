@@ -32,8 +32,13 @@ ausstehend. Reihenfolge vom Projektinhaber am 2026-11-05 festgelegt (OQ-15).
 - Kernel: α/β/γ je Atom, Offset als Parameter, Neck-Term in Born-Integralen und Kettenregel; OBC2 als
   Spezialfall (alle OBC2-Tests unverändert grün). Bindings `set_nonbonded_gb(..., offset,
   alpha_beta_gamma, neck_index, neck_m0, neck_d0)`; Builder `solvent="gb-gbn2"`.
-- Tests `test_phase9_gbn2.py` 9/9 grün (GPU vs. Referenz: Born-Radien 1.7e-6, Energie 5e-8, Kräfte
-  3e-6 RMS); NVE-Drift ≈ 5e-5 (wie OBC2). pytest gesamt 123/123; memcheck/racecheck sauber.
+- Tests `test_phase9_gbn2.py` 10/10 grün (GPU vs. Referenz: Born-Radien 1.7e-6, Energie 5e-8, Kräfte
+  3e-6 RMS); NVE-Drift ≈ 5e-5 (wie OBC2). pytest gesamt 124/124; memcheck/racecheck sauber.
+- Review-Agent: Physik korrekt; umgesetzt: OBC2 wieder mit double-Konstanten (bitgleich zu Phase 9.1),
+  Formprüfungen in `set_nonbonded_gb` (abg (n, 3), quadratische Neck-Tabellen gleicher Shape, Integer-
+  Index, endliche Werte), Neck nur mit α/β/γ, Offset global dokumentiert, Builder akzeptiert
+  handgebaute OBC2-Specs ohne `gb_model`, FD-Schutz am Neck-Cutoff über alle Bilder, Test mit mehreren
+  Topologien (verschiedene U, ACE aus) und Negativtests.
 
 ## Phase 9.2 – Replica Exchange: abgenommen 2026-11-05 (Branch `phase-9/remd`)
 - ADR 0011 (Accepted 2026-11-05): Zustände (T, κ, ε) statt Koordinaten tauschen, Hamiltonian-Kriterium mit

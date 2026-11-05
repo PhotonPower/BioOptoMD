@@ -384,9 +384,10 @@ def build_context(
         ctx.set_nonbonded_tiled([nbt], zeros, k32, e32, r_switch=r_s, r_cutoff=r_c)
     elif solvent in ("gb-obc2", "gb-gbn2"):
         model = solvent[3:]
-        if spec.gb_model != model:
+        spec_model = spec.gb_model or ("obc2" if spec.gb_radius is not None else None)
+        if spec_model != model:
             raise ValueError(
-                f"build_context: solvent={solvent!r}, aber GB-Parameter für {spec.gb_model!r} "
+                f"build_context: solvent={solvent!r}, aber GB-Parameter für {spec_model!r} "
                 f"(System mit implicit/{model}.xml erzeugen)"
             )
         ones = np.ones(n_replicas, np.float32)
@@ -410,7 +411,7 @@ def build_context(
 
 def _gb_model_kwargs(spec: SystemSpec) -> dict:
     """Zusatzargumente für ``set_nonbonded_gb`` je Modell."""
-    if spec.gb_model == "obc2":
+    if spec.gb_model in (None, "obc2"):  # handgebaute Specs ohne gb_model: OBC2
         return {}
     return {
         "offset": GB_OFFSET["gbn2"], "alpha_beta_gamma": [spec.gb_abg],

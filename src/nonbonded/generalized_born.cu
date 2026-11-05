@@ -170,7 +170,7 @@ __global__ void __launch_bounds__(kWarpsPerBlock * 32)
 }
 
 /// Pass (b): B_i, dB_i/dI_i, Selbst- und ACE-Energie, ∂E/∂B_i (Selbstanteil) in FP64.
-__global__ void k_gb_radii(DeviceState s, const float4* gb_atom, const float4* gb_abg,
+__global__ void k_gb_radii(DeviceState s, const float4* gb_atom, const float4* gb_abg, int use_abg,
                            const int* gb_offset, const float2* screening, float eps_in, int ace,
                            const long long* integral, float* born, float* db_di, long long* de_db) {
   const int i_local = blockIdx.x * blockDim.x + threadIdx.x;
@@ -183,11 +183,14 @@ __global__ void k_gb_radii(DeviceState s, const float4* gb_atom, const float4* g
       const float4 abg = gb_abg[gb_offset[r] + i_local];  // (α, β, γ)
       const double o = g.x, rho = g.z;
       const double psi = static_cast<double>(detail::from_fixed_point(integral[i])) * o;
-      const double x = abg.x * psi - abg.y * psi * psi + abg.z * psi * psi * psi;
+      // OBC2 (ohne α/β/γ je Atom) mit den exakten double-Konstanten 1, 0.8, 4.85
+      const double al = use_abg ? abg.x : 1.0, be = use_abg ? abg.y : 0.8,
+                   ga = use_abg ? abg.z : 4.85;
+      const double x = al * psi - be * psi * psi + ga * psi * psi * psi;
       const double th = tanh(x);
       const double b = 1.0 / (1.0 / o - th / rho);
       const double dbdi =
-          b * b * (1.0 - th * th) * (abg.x - 2.0 * abg.y * psi + 3.0 * abg.z * psi * psi) * o / rho;
+          b * b * (1.0 - th * th) * (al - 2.0 * be * psi + 3.0 * ga * psi * psi) * o / rho;
       const float2 sc = screening[r];  // (κ, ε_out)
       const double q = s.d_pos[i].w;
       const double ex = exp(-static_cast<double>(sc.x) * b);
@@ -452,11 +455,16 @@ TiledGeneralizedBorn::TiledGeneralizedBorn(GeneralizedBornParams params)
               "alpha_beta_gamma: (n_atoms, 3) je Topologie");
     const int u = t < gb_.neck_size.size() ? gb_.neck_size[t] : 0;
     if (u > 0) {
+      require(t < gb_.alpha_beta_gamma.size() && !gb_.alpha_beta_gamma[t].empty(),
+              "Neck-Term (GBn2) braucht alpha_beta_gamma je Atom");
       require(gb_.neck_m0[t].size() == static_cast<std::size_t>(u) * u &&
                   gb_.neck_d0[t].size() == static_cast<std::size_t>(u) * u &&
                   gb_.neck_index[t].size() == gb_.radius_nm[t].size(),
               "Neck: m0, d0 (U, U) und Index (n_atoms) je Topologie");
       for (int idx : gb_.neck_index[t]) require(idx >= 0 && idx < u, "Neck-Index außerhalb [0, U)");
+      for (std::size_t k = 0; k < gb_.neck_m0[t].size(); ++k)
+        require(std::isfinite(gb_.neck_m0[t][k]) && std::isfinite(gb_.neck_d0[t][k]),
+                "Neck-Tabellen endlich");
     }
   }
   require(std::isfinite(gb_.offset_nm) && gb_.offset_nm >= 0.0f, "offset >= 0 erwartet");
@@ -501,6 +509,8 @@ void TiledGeneralizedBorn::initialize(SimulationContext& ctx) {
     neck_info[r] = topo_neck[params_.replica_topology[r]];
   }
   if (neck.empty()) neck.push_back(make_float2(0.0f, 0.0f));  // Puffer nie leer
+  use_abg_ = false;
+  for (const auto& v : gb_.alpha_beta_gamma) use_abg_ = use_abg_ || !v.empty();
   const cudaStream_t st = ctx.stream();
   const std::size_t n_total = static_cast<std::size_t>(n_rep) * n_pad;
   d_gb_atom_ = DeviceBuffer<float4>(atoms.size());
@@ -538,9 +548,9 @@ void TiledGeneralizedBorn::compute(DeviceState& s, cudaStream_t stream) {
         d_neck_.data(), d_neck_info_.data(), sw, d_tile_bounds_.data(), d_integral_.data());
     BOMD_LAUNCH_CHECK();
     k_gb_radii<<<dim3(detail::elementwise_grid(s.n_pad), s.n_replicas), detail::kElementwiseBlock,
-                 0, stream>>>(s, d_gb_atom_.data(), d_gb_abg_.data(), d_gb_offset_.data(),
-                              d_screening_.data(), gb_.eps_in, gb_.ace ? 1 : 0, d_integral_.data(),
-                              d_born_.data(), d_db_di_.data(), d_de_db_.data());
+                 0, stream>>>(s, d_gb_atom_.data(), d_gb_abg_.data(), use_abg_ ? 1 : 0,
+                              d_gb_offset_.data(), d_screening_.data(), gb_.eps_in, gb_.ace ? 1 : 0,
+                              d_integral_.data(), d_born_.data(), d_db_di_.data(), d_de_db_.data());
     BOMD_LAUNCH_CHECK();
     k_gb_pairs<kImg><<<grid, block, shmem, stream>>>(
         s, d_tile_pairs_.data(), n_tile_pairs_, d_lj_.data(), d_mask_index_.data(), d_masks_.data(),

@@ -786,9 +786,12 @@ NB_MODULE(_core, m) {
           return l;
         };
         nb::list abg = per_topo(alpha_beta_gamma, "alpha_beta_gamma");
-        for (nb::handle a : abg)
-          p.alpha_beta_gamma.push_back(to_vector(
-              nb::cast<HostInput<float>>(np.attr("ascontiguousarray")(a, "dtype"_a = "float32"))));
+        for (nb::handle a : abg) {
+          nb::object arr = np.attr("ascontiguousarray")(a, "dtype"_a = "float32");
+          if (nb::cast<int>(arr.attr("ndim")) != 2 || nb::cast<int>(arr.attr("shape")[1]) != 3)
+            throw nb::value_error("alpha_beta_gamma: Shape (n_atoms, 3) je Topologie");
+          p.alpha_beta_gamma.push_back(to_vector(nb::cast<HostInput<float>>(arr)));
+        }
         nb::list ni = per_topo(neck_index, "neck_index");
         nb::list m0 = per_topo(neck_m0, "neck_m0");
         nb::list d0 = per_topo(neck_d0, "neck_d0");
@@ -796,13 +799,23 @@ NB_MODULE(_core, m) {
           throw nb::value_error("neck_index, neck_m0, neck_d0 nur gemeinsam");
         for (std::size_t t = 0; t < nb::len(ni); ++t) {
           nb::object table = np.attr("ascontiguousarray")(m0[t], "dtype"_a = "float32");
+          nb::object table_d = np.attr("ascontiguousarray")(d0[t], "dtype"_a = "float32");
+          const int nd = nb::cast<int>(table.attr("ndim"));
+          if (nd != 2 || nb::cast<int>(table_d.attr("ndim")) != 2 ||
+              nb::cast<int>(table.attr("shape")[0]) != nb::cast<int>(table.attr("shape")[1]) ||
+              nb::cast<int>(table_d.attr("shape")[0]) != nb::cast<int>(table.attr("shape")[0]) ||
+              nb::cast<int>(table_d.attr("shape")[1]) != nb::cast<int>(table.attr("shape")[1]))
+            throw nb::value_error("neck_m0, neck_d0: quadratische Tabellen (U, U) gleicher Shape");
+          nb::object idx = np.attr("asarray")(ni[t]);
+          const std::string kind = nb::cast<std::string>(idx.attr("dtype").attr("kind"));
+          if (kind != "i" && kind != "u")
+            throw nb::value_error("neck_index: Integer-dtype erwartet");
           const int u = nb::cast<int>(table.attr("shape")[0]);
           p.neck_size.push_back(u);
           p.neck_m0.push_back(to_vector(nb::cast<HostInput<float>>(table)));
-          p.neck_d0.push_back(to_vector(nb::cast<HostInput<float>>(
-              np.attr("ascontiguousarray")(d0[t], "dtype"_a = "float32"))));
+          p.neck_d0.push_back(to_vector(nb::cast<HostInput<float>>(table_d)));
           p.neck_index.push_back(to_vector(nb::cast<HostInput<int32_t>>(
-              np.attr("ascontiguousarray")(ni[t], "dtype"_a = "int32"))));
+              np.attr("ascontiguousarray")(idx, "dtype"_a = "int32"))));
         }
         c.set_nonbonded(std::make_unique<bomd::TiledGeneralizedBorn>(std::move(p)));
       },
@@ -810,7 +823,8 @@ NB_MODULE(_core, m) {
       "r_switch"_a = 1.8f, "r_cutoff"_a = 2.0f, "eps_in"_a = 1.0f, "ace"_a = true,
       "image_sum"_a = "auto", "offset"_a = 0.009f, "alpha_beta_gamma"_a = nb::none(),
       "neck_index"_a = nb::none(), "neck_m0"_a = nb::none(), "neck_d0"_a = nb::none(),
-      "Nonbonded mit Generalized Born OBC2 (ADR 0010): LJ + Coulomb (eps_in) + GB mit Salz.\n"
+      "Nonbonded mit Generalized Born OBC2 (ADR 0010) oder GBn2 (ADR 0012): LJ + Coulomb\n"
+      "(eps_in) + GB mit Salz.\n"
       "topologies wie set_nonbonded_tiled; kappa [1/nm] und eps_out (n_replicas,); radius rho "
       "[nm]\n"
       "und scale s je Topologie (n_atoms,), aus biooptomd.builder (implicit/obc2.xml); r_switch,\n"
