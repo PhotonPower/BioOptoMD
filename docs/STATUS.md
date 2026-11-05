@@ -26,7 +26,7 @@ erweiterbar für GBn2).
   Review siehe unten.
 
 ## Phase 9.1 – GB-OBC2: abgenommen 2026-11-05 (PR #12)
-- ADR 0010 (Proposed): Modell, Kopplung an Cutoff/Switching/Bildsumme, Passes; OQ-15 (OBC2 vs. GBn2),
+- ADR 0010 (Accepted 2026-11-05): Modell, Kopplung an Cutoff/Switching/Bildsumme, Passes; OQ-15 (OBC2 vs. GBn2),
   OQ-16 (dielektrische Grenze an der Oberfläche, offen). Abnahmetests als Vorschlag in ROADMAP 9.1.
 - NumPy-Referenz `tests/reference/gb_ref.py` (vs. OpenMM-CustomGBForce 2·10⁻⁷, FD 2·10⁻⁸).
 - `TiledGeneralizedBorn` (`src/nonbonded/generalized_born.*`, abgeleitet von `TiledAllPairs`, gemeinsame

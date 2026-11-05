@@ -1,6 +1,6 @@
 # ADR 0010: Generalized Born OBC2 mit Salz und Cutoff aus κ
 
-- **Status:** Proposed
+- **Status:** Accepted (Projektinhaber 2026-11-05, mit Abnahme Phase 9.1)
 - **Datum:** 2026-11-05
 - **Bezug:** ADR 0004 (V2 = GB-OBC2), ADR 0006 (Cutoff aus κ, Bildsumme), OQ-15, OQ-16
 
