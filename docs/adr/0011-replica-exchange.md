@@ -1,6 +1,6 @@
 # ADR 0011: Temperatur-Replica-Exchange mit zustandsabhängiger Abschirmung
 
-- **Status:** Proposed
+- **Status:** Accepted (Projektinhaber 2026-11-05, mit Abnahme Phase 9.2)
 - **Datum:** 2026-11-05
 - **Bezug:** ROADMAP Phase 9.2, OQ-10 (κ_r, ε_r(T_r)), ADR 0006 (r_c aus κ), ADR 0010 (GB)
 

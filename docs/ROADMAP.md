@@ -174,14 +174,14 @@ Dokumentation, Verzeichnisstruktur, Agenten-Anweisungen, Build-Entwürfe.
   Drift im Rahmen von Phase 3. (Bei 1 fs ohne Constraints driftet GB mit ≈ 1.5e-4 – Integrationsfehler, skaliert
   stark mit Δt, unabhängig von r_c; mit H-Constraints bei 1 fs gleichauf mit DH.)
 
-### Phase 9.2 – Replica Exchange (ADR 0011, Proposed; Reihenfolge vom Projektinhaber am 2026-11-05 festgelegt)
+### Phase 9.2 – Replica Exchange (ADR 0011, Accepted; abgenommen 2026-11-05)
 
 **Aufgaben**
 1. Plugin-Hook `set_screening` (κ_r, ε_r je Replica zur Laufzeit), `scale_velocities`.
 2. `biooptomd.remd.ReplicaExchange`: Zustandstausch mit Hamiltonian-Kriterium (Kreuzenergien), Statistik,
    Checkpoint.
 
-**Abnahmetests (Vorschlag, mit ADR 0011 vom Projektinhaber zu bestätigen)**
+**Abnahmetests (vom Projektinhaber am 2026-11-05 bestätigt)**
 - `test_phase9_remd.py::test_remd_exchange_mechanics` – jede Entscheidung gleich der unabhängig (frische Kontexte)
   berechneten Metropolis-Entscheidung; nach Tausch T, κ, ε je Slot getauscht (Energien gleich frischem Kontext),
   Geschwindigkeiten exakt mit sqrt(T_neu/T_alt) skaliert.
