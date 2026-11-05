@@ -34,6 +34,15 @@ class LangevinIntegrator {
   /// Abschließendes B mit F(x_neu) in d_force.
   void second_half(const DeviceState& s, cudaStream_t stream) const;
 
+  // Einzelne Teilschritte für den Pfad mit Constraints (PHYSICS_MODEL.md §1):
+  /// B: v += Δt/2·F/m für alle beweglichen Atome.
+  void kick(const DeviceState& s, cudaStream_t stream) const { second_half(s, stream); }
+  /// A: x += Δt/2·v für alle beweglichen Atome mit skip[i] == 0 (Cluster-Atome macht SHAKE).
+  void drift(const DeviceState& s, const unsigned char* skip, cudaStream_t stream) const;
+  /// O: v = c1 v + c2 ξ mit Philox-Zähler `step` (identisch zum fusionierten Pfad).
+  void thermostat(const DeviceState& s, std::int64_t step, cudaStream_t stream) const;
+  double half_dt() const { return half_dt_; }
+
  private:
   LangevinParams params_;
   double half_dt_;      // Δt/2 [ps]

@@ -153,6 +153,7 @@ void SimulationContext::set_positions(const float* xyz_nm) {
   scatter_xyz(pos_.data(), xyz_nm);
   pos_corr_.zero_async(stream_.get());  // Eingabe ist FP32 ⇒ Korrektur 0
   forces_valid_ = false;
+  constraints_dirty_ = true;
   image_.zero_async(stream_.get());  // neue Positionen = neuer ungewrappter Ursprung
   synchronize();
 }
@@ -177,6 +178,22 @@ void SimulationContext::scatter_vel_w(const double* src) {
 
 void SimulationContext::set_velocities(const double* v_nm_ps) {
   scatter_vel_xyz(v_nm_ps);
+  constraints_dirty_ = true;
+}
+
+void SimulationContext::set_constraints(ConstraintParams params) {
+  activate();
+  constraints_ = std::make_unique<ConstraintSet>(std::move(params), *this);
+  constraints_dirty_ = true;
+}
+
+void SimulationContext::apply_constraints() {
+  if (!constraints_) return;
+  activate();
+  constraints_->project_positions(state_, stream_.get());
+  constraints_->rattle(state_, stream_.get());
+  constraints_dirty_ = false;
+  forces_valid_ = false;
 }
 
 void SimulationContext::set_charges(const float* q_e) {
@@ -287,17 +304,34 @@ void SimulationContext::step(std::int64_t n) {
   if (!integrator_) throw std::logic_error("step: kein Integrator gesetzt (set_integrator)");
   if (!box_set_) throw std::logic_error("step: Box nicht gesetzt (set_box)");
   activate();
+  if (constraints_ && constraints_dirty_) apply_constraints();
   if (!forces_valid_) compute_forces();
+  const cudaStream_t st = stream_.get();
+  const LangevinIntegrator& li = *integrator_;
   for (std::int64_t k = 0; k < n; ++k) {
-    integrator_->first_half(state_, step_, stream_.get());
-    detail::launch_wrap_xy(state_, stream_.get());
+    if (constraints_) {
+      // B, RATTLE, A+SHAKE, O, RATTLE, A+SHAKE (PHYSICS_MODEL.md §1)
+      const ConstraintSet& cs = *constraints_;
+      li.kick(state_, st);
+      cs.rattle(state_, st);
+      li.drift(state_, cs.d_in_cluster(), st);
+      cs.drift_and_shake(state_, li.half_dt(), st);
+      li.thermostat(state_, step_, st);
+      cs.rattle(state_, st);
+      li.drift(state_, cs.d_in_cluster(), st);
+      cs.drift_and_shake(state_, li.half_dt(), st);
+    } else {
+      li.first_half(state_, step_, st);
+    }
+    detail::launch_wrap_xy(state_, st);
     ++step_;
     previous_time_ps_ = time_ps_;
-    time_ps_ += integrator_->params().dt_ps;
+    time_ps_ += li.params().dt_ps;
     compute_forces();
-    integrator_->second_half(state_, stream_.get());
+    li.second_half(state_, st);
+    if (constraints_) constraints_->rattle(state_, st);
     for (auto& observer : observers_)
-      if (step_ % observer->stride() == 0) observer->observe(state_, step_, stream_.get());
+      if (step_ % observer->stride() == 0) observer->observe(state_, step_, st);
   }
 }
 
@@ -319,6 +353,8 @@ std::vector<int> SimulationContext::degrees_of_freedom() {
   for (int r = 0; r < n_replicas(); ++r)
     for (int i = 0; i < n_atoms(); ++i)
       if (vel[static_cast<std::size_t>(r) * n_pad() + i].w > 0.0) n_dof[r] += 3;
+  if (constraints_)  // N_dof = 3·N_mobile − N_constraints (PHYSICS_MODEL.md §1)
+    for (int r = 0; r < n_replicas(); ++r) n_dof[r] -= constraints_->constraint_counts()[r];
   return n_dof;
 }
 

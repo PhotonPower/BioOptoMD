@@ -244,6 +244,7 @@ NB_MODULE(_core, m) {
   m.attr("STATUS_NON_FINITE") = static_cast<unsigned int>(bomd::kStatusNonFinite);
   m.attr("STATUS_WRAP_RANGE") = static_cast<unsigned int>(bomd::kStatusWrapRange);
   m.attr("STATUS_UNKNOWN_TYPE") = static_cast<unsigned int>(bomd::kStatusUnknownType);
+  m.attr("STATUS_CONSTRAINT_FAILURE") = static_cast<unsigned int>(bomd::kStatusConstraintFailure);
 
   // Kompilierte Konstanten aus units.hpp (Test: test_units.py).
   auto units = m.def_submodule("units", "Konstanten aus include/biooptomd/units.hpp.");
@@ -591,6 +592,45 @@ NB_MODULE(_core, m) {
       "biooptomd.nonbonded.nonbonded_topology(); replica_topology int32 (n_replicas,),\n"
       "kappa [1/nm], eps_r (n_replicas,), r_switch/r_cutoff [nm]. LJ-Typen aus types[..., 0].\n"
       "Ersetzt eine zuvor gesetzte Nonbonded-Strategie (daher kein zurückgegebenes Handle).");
+
+  cls.def(
+         "set_constraints",
+         [](SimulationContext& c, nb::list topologies, HostInput<int32_t> replica_topology,
+            double tolerance, int max_iterations) {
+           bomd::ConstraintParams p;
+           nb::module_ np = nb::module_::import_("numpy");
+           for (nb::handle h : topologies) {
+             const nb::dict d = nb::cast<nb::dict>(h);
+             for (auto [key, value] : d) {
+               const std::string k = nb::cast<std::string>(key);
+               if (k != "clusters" && k != "distances")
+                 throw nb::value_error(
+                     ("Constraint-Topologie: unbekannter Schlüssel '" + k + "'").c_str());
+               (void)value;
+             }
+             nb::object cl = np.attr("asarray")(d["clusters"]);
+             nb::object di = np.attr("asarray")(d["distances"]);
+             if (nb::cast<std::string>(cl.attr("dtype").attr("kind")) != "i")
+               throw nb::value_error("clusters: Integer-dtype erwartet");
+             bomd::ConstraintTopology t;
+             t.clusters = to_vector(nb::cast<HostInput<int32_t>>(
+                 np.attr("ascontiguousarray")(cl, "dtype"_a = "int32")));
+             t.distances = to_vector(nb::cast<HostInput<float>>(
+                 np.attr("ascontiguousarray")(di, "dtype"_a = "float32")));
+             p.topologies.push_back(std::move(t));
+           }
+           p.replica_topology = to_vector(replica_topology);
+           p.tolerance = tolerance;
+           p.max_iterations = max_iterations;
+           c.set_constraints(std::move(p));
+         },
+         "topologies"_a, "replica_topology"_a, "tolerance"_a = 1e-6, "max_iterations"_a = 200,
+         "H-Bindungs-Constraints (SHAKE/RATTLE). topologies: Liste von dicts {clusters int32\n"
+         "(n,4) (Schweratom, H1..H3, -1 = fehlt), distances float32 (n,3) [nm]} aus\n"
+         "biooptomd.constraints.constraint_topology(); tolerance = relative Längentoleranz.")
+      .def("apply_constraints", &SimulationContext::apply_constraints,
+           "Projiziert Positionen und Geschwindigkeiten sofort auf die Constraints.")
+      .def_prop_ro("has_constraints", &SimulationContext::has_constraints);
 
   // --- Test-Hooks ---------------------------------------------------------------------------
   auto testing = m.def_submodule("testing", "Test-Hooks für pytest; keine Produktions-API.");

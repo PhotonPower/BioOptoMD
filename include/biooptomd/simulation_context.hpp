@@ -14,6 +14,7 @@
 #include "biooptomd/device_state.hpp"
 #include "biooptomd/langevin.hpp"
 #include "biooptomd/plugin.hpp"
+#include "core/constraints.hpp"
 
 namespace bomd {
 
@@ -118,6 +119,13 @@ class SimulationContext {
   /// Wirft std::logic_error ohne Integrator oder Box. Synchronisiert nicht.
   void step(std::int64_t n);
 
+  /// Setzt (oder ersetzt) H-Bindungs-Constraints (SHAKE/RATTLE). Positionen und Geschwindigkeiten
+  /// werden vor dem nächsten Schritt auf die Constraints projiziert.
+  void set_constraints(ConstraintParams params);
+  bool has_constraints() const { return constraints_ != nullptr; }
+  /// Projiziert Positionen (SHAKE) und Geschwindigkeiten (RATTLE) sofort auf die Constraints.
+  void apply_constraints();
+
   /// Energie-Frame pro Replica, Shape (n_replicas, 1 + kNumEnergyTerms), kJ/mol:
   /// [E_kin, E_pot je Term] zum aktuellen Zustand (E_pot aus dem letzten compute_forces).
   /// Synchronisiert.
@@ -156,8 +164,9 @@ class SimulationContext {
   double time_ps_ = 0.0;
   double previous_time_ps_ = 0.0;
   std::uint64_t masses_version_ = 0;
-  bool forces_valid_ = false;  // d_force entspricht F(x) des aktuellen Zustands
-  CudaStream stream_;          // vor den Puffern deklariert ⇒ wird nach ihnen zerstört
+  bool forces_valid_ = false;       // d_force entspricht F(x) des aktuellen Zustands
+  bool constraints_dirty_ = false;  // Zustand seit set_positions/velocities nicht projiziert
+  CudaStream stream_;               // vor den Puffern deklariert ⇒ wird nach ihnen zerstört
   bool box_set_ = false;
   std::vector<float2> h_box_;  // Host-Kopie der Box für Eingabeprüfungen
 
@@ -178,6 +187,7 @@ class SimulationContext {
   DeviceState state_;
 
   std::unique_ptr<LangevinIntegrator> integrator_;
+  std::unique_ptr<ConstraintSet> constraints_;
 
   std::unique_ptr<NonbondedStrategy> nonbonded_;
   std::vector<std::unique_ptr<ForcePlugin>> forces_;

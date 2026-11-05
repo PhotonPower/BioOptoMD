@@ -71,6 +71,43 @@ __global__ void k_b(DeviceState s, double half_dt) {
   s.d_vel[i] = v;
 }
 
+/// A allein (Pfad mit Constraints): x += Δt/2·v, Cluster-Atome (skip) übernimmt SHAKE.
+__global__ void k_a(DeviceState s, double half_dt, const unsigned char* skip) {
+  const int i_local = blockIdx.x * blockDim.x + threadIdx.x;
+  const int r = blockIdx.y;
+  if (i_local >= s.n_atoms) return;
+  const int i = r * s.n_pad + i_local;
+  if (skip[i]) return;
+  const Vec4d v = s.d_vel[i];
+  if (v.w == 0.0) return;
+  double3 x = detail::load_position(s, i);
+  x.x += half_dt * v.x;
+  x.y += half_dt * v.y;
+  x.z += half_dt * v.z;
+  detail::store_position(s, i, x);
+}
+
+/// O allein (Pfad mit Constraints), gleiche Philox-Belegung wie k_baoa.
+__global__ void k_o(DeviceState s, double c1, double noise_coeff, uint2 key, std::int64_t step) {
+  const int i_local = blockIdx.x * blockDim.x + threadIdx.x;
+  const int r = blockIdx.y;
+  if (i_local >= s.n_atoms) return;
+  const int i = r * s.n_pad + i_local;
+  Vec4d v = s.d_vel[i];
+  if (v.w == 0.0) return;
+  const double c2 = sqrt(noise_coeff * s.d_temperature[r] * v.w);
+  const uint4 bits = detail::philox4x32_10(
+      detail::philox_counter(static_cast<unsigned int>(i_local), static_cast<unsigned int>(r), step,
+                             detail::kPhiloxLangevin),
+      key);
+  const float2 n01 = detail::box_muller(bits.x, bits.y);
+  const float2 n23 = detail::box_muller(bits.z, bits.w);
+  v.x = c1 * v.x + c2 * n01.x;
+  v.y = c1 * v.y + c2 * n01.y;
+  v.z = c1 * v.z + c2 * n23.x;
+  s.d_vel[i] = v;
+}
+
 }  // namespace
 
 LangevinIntegrator::LangevinIntegrator(const LangevinParams& params) : params_(params) {
@@ -95,6 +132,21 @@ void LangevinIntegrator::first_half(const DeviceState& s, std::int64_t step,
 void LangevinIntegrator::second_half(const DeviceState& s, cudaStream_t stream) const {
   const dim3 grid(elementwise_grid(s.n_atoms), s.n_replicas);
   k_b<<<grid, kElementwiseBlock, 0, stream>>>(s, half_dt_);
+  BOMD_LAUNCH_CHECK();
+}
+
+void LangevinIntegrator::drift(const DeviceState& s, const unsigned char* skip,
+                               cudaStream_t stream) const {
+  const dim3 grid(elementwise_grid(s.n_atoms), s.n_replicas);
+  k_a<<<grid, kElementwiseBlock, 0, stream>>>(s, half_dt_, skip);
+  BOMD_LAUNCH_CHECK();
+}
+
+void LangevinIntegrator::thermostat(const DeviceState& s, std::int64_t step,
+                                    cudaStream_t stream) const {
+  const dim3 grid(elementwise_grid(s.n_atoms), s.n_replicas);
+  k_o<<<grid, kElementwiseBlock, 0, stream>>>(s, c1_, noise_coeff_,
+                                              detail::philox_key(params_.seed), step);
   BOMD_LAUNCH_CHECK();
 }
 
