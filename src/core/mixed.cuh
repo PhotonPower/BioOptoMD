@@ -1,4 +1,4 @@
-// BioOptoMD – Mixed-Precision-Zustand (ADR 0007): Position x = d_pos.xyz + d_pos_corr.xyz in FP64.
+// BioOptoMD – Mixed-Precision-Zustand (ADR 0009): Position x = d_pos.xyz + d_pos_corr.xyz in FP64.
 #pragma once
 
 #include <cuda_runtime.h>

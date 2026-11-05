@@ -18,7 +18,7 @@ struct PlanarSurfaceParams {
   std::vector<float> sigma_nm;
   float z0_nm = 0.0f;         ///< Lage der Wand [nm]
   float clamp_factor = 0.1f;  ///< ζ_c >= clamp_factor·σ (> 0)
-  /// Kraftschranke am Clamp (ADR 0006): ζ_c >= ζ_F mit |F_wall(ζ_F)| = max_force [kJ/mol/nm].
+  /// Kraftschranke am Clamp (ADR 0008): ζ_c >= ζ_F mit |F_wall(ζ_F)| = max_force [kJ/mol/nm].
   float max_force_kj_mol_nm = 1.0e6f;
   float phi0_kj_mol_e = 0.0f;  ///< Φ0 [kJ/(mol·e)], 0 ⇒ kein Gouy-Chapman-Term
   float kappa_per_nm = 0.0f;   ///< inverse Debye-Länge κ [1/nm], >= 0

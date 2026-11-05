@@ -41,8 +41,8 @@ Alles läuft auf **einem** `cudaStream_t`; die Reihenfolge der Kernel-Launches i
 | Array | Typ | Inhalt | Größe |
 |---|---|---|---|
 | `d_pos` | `float4` | x, y, z [nm], q [e] | `N_replicas·N_pad` |
-| `d_pos_corr` | `float4` | Positionskorrektur: x = d_pos.xyz + d_pos_corr.xyz (ADR 0007) | `N_replicas·N_pad` |
-| `d_vel` | `double4` | vx, vy, vz [nm/ps], 1/m [1/amu] (FP64, ADR 0007) | `N_replicas·N_pad` |
+| `d_pos_corr` | `float4` | Positionskorrektur: x = d_pos.xyz + d_pos_corr.xyz (ADR 0009) | `N_replicas·N_pad` |
+| `d_vel` | `double4` | vx, vy, vz [nm/ps], 1/m [1/amu] (FP64, ADR 0009) | `N_replicas·N_pad` |
 | `d_force_fp` | `long long` ×3 (SoA: fx, fy, fz) | Fixed-Point-Kraft, Skala 2³² | `3·N_replicas·N_pad` |
 | `d_force` | `float4` | Fx, Fy, Fz [kJ/mol/nm], frei | `N_replicas·N_pad` |
 | `d_energy_fp` | `long long` | Potentielle Energie pro Replica und Term | `N_replicas·N_TERMS` |
@@ -50,7 +50,7 @@ Alles läuft auf **einem** `cudaStream_t`; die Reihenfolge der Kernel-Launches i
 | `d_box` | `float2` | (Lx, Ly) [nm] pro Replica | `N_replicas` |
 | `d_temperature` | `float` | T_r [K] | `N_replicas` |
 | `d_image` | `int2` | Box-Imagezähler x/y (für ungewrapte Koordinaten) | `N_replicas·N_pad` |
-| `d_status` | `unsigned int` | Statusbits (Sättigung, NaN, Wrap-Bereich), ADR 0006 | 1 |
+| `d_status` | `unsigned int` | Statusbits (Sättigung, NaN, Wrap-Bereich), ADR 0008 | 1 |
 
 **Entscheidung:** Parameter- und Topologie-Arrays (Bindungslisten, LJ-Tabellen, Exclusions) sind **pro Replica** gespeichert (ADR 0005). Gemeinsame Topologie ist der Spezialfall, in dem alle Replicas auf denselben Puffer zeigen (Offset-Array `d_topo_offset[r]`).
 
@@ -150,7 +150,7 @@ dip = sim.add_observer(bomd.observers.DipoleAndDistance(atom_a=..., atom_b=..., 
 nz  = sim.add_observer(bomd.observers.RefractiveIndexProfile(dz=0.05, z_max=10.0,
                        wavelength_nm=633.0, stride=100))
 sim.step(1_000_000)
-mu_t   = dip.result()        # (n_replicas, n_frames, 3)  [D bzw. normiert]
+mu_t   = dip.result()        # (n_replicas, n_frames, 7) = (R_F [nm], μ̂, d [nm]), s. PHYSICS_MODEL §6.1
 n_of_z = nz.result()         # (n_replicas, n_bins)
 x = sim.positions(dlpack=True)   # Zero-Copy nach CuPy/PyTorch
 ```

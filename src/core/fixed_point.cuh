@@ -1,10 +1,10 @@
-// BioOptoMD – Fixed-Point-Akkumulation von Kräften und Energien (ADR 0002, ADR 0006).
+// BioOptoMD – Fixed-Point-Akkumulation von Kräften und Energien (ADR 0002, ADR 0008).
 //
 // Darstellung: v_fp = round_to_nearest_even(v · 2^32) als int64 (Zweierkomplement).
 // Akkumulation über atomicAdd auf unsigned long long: Ganzzahladdition modulo 2^64 ist
 // assoziativ und kommutativ ⇒ das Ergebnis ist unabhängig von der Reihenfolge der Atomics.
 //
-// ADR 0006: Jeder Beitrag wird auf |v| <= kFixedPointMaxAbs = 2^30 (kJ/mol/nm bzw. kJ/mol)
+// ADR 0008: Jeder Beitrag wird auf |v| <= kFixedPointMaxAbs = 2^30 (kJ/mol/nm bzw. kJ/mol)
 // gesättigt, NaN wird zu 0; beides setzt ein Bit in DeviceState::d_status. Die Summe kann erst
 // bei mehreren gesättigten, gleichgerichteten Beiträgen überlaufen – dann ist das Flag gesetzt.
 // Auflösung 2^-32 ≈ 2.3·10^-10.
@@ -18,12 +18,12 @@
 namespace bomd::detail {
 
 inline constexpr float kInvFixedPointScaleF = 1.0f / units::FIXED_POINT_SCALE_F;  // 2^-32, exakt
-/// Sättigungsgrenze pro Beitrag (ADR 0006).
+/// Sättigungsgrenze pro Beitrag (ADR 0008).
 inline constexpr float kFixedPointMaxAbs = 1073741824.0f;  // 2^30
 /// Sättigungsgrenze pro Lane in warp_add_energy: 32·2^26 = 2^31 ⇒ Warpsumme läuft nicht über.
 inline constexpr float kWarpEnergyMaxAbs = 67108864.0f;  // 2^26
 
-/// float → Fixed-Point mit Sättigung auf ±limit und Statusbits (ADR 0006).
+/// float → Fixed-Point mit Sättigung auf ±limit und Statusbits (ADR 0008).
 /// Multiplikation mit 2^32 ist exakt; einzige Rundung ist die nach int64.
 __device__ __forceinline__ long long to_fixed_point(float v, unsigned int* status,
                                                     float limit = kFixedPointMaxAbs) {

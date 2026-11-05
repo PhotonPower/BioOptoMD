@@ -27,7 +27,7 @@ __global__ void k_fixed_point_to_float(DeviceState s) {
                   from_fixed_point(s.d_force_fp_z()[i]), 0.0f);
 }
 
-/// Wrappt eine Koordinate x (FP64, ADR 0007) nach [0, L) und gibt die Anzahl der abgezogenen
+/// Wrappt eine Koordinate x (FP64, ADR 0009) nach [0, L) und gibt die Anzahl der abgezogenen
 /// Boxlängen n zurück, sodass x_alt = x_neu + n·L exakt gilt (UNITS_AND_CONVENTIONS.md, ADR 0003).
 ///
 /// x hat ≈ 48 signifikante Bit, n·L höchstens 24 + 21 Bit (|x/L| < 2^20): x − n·L ist in FP64
@@ -56,7 +56,7 @@ __global__ void k_wrap_xy(DeviceState s) {
   const float2 box = s.d_box[r];
   double3 x = load_position(s, i);
   int2 img = s.d_image[i];
-  // ADR 0006: außerhalb |x/L| < 2^20 ist der Wrap nicht mehr exakt.
+  // ADR 0008: außerhalb |x/L| < 2^20 ist der Wrap nicht mehr exakt.
   if (!(fabs(x.x) < 1048576.0 * box.x && fabs(x.y) < 1048576.0 * box.y))
     atomicOr(s.d_status, kStatusWrapRange);
   img.x += wrap_coordinate(x.x, box.x);

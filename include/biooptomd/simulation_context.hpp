@@ -73,7 +73,7 @@ class SimulationContext {
   void set_temperatures(const float* t_k);
   bool box_is_set() const { return box_set_; }
 
-  /// Geräte-Statuswort (Bits bomd::StatusBit, ADR 0006). Synchronisiert.
+  /// Geräte-Statuswort (Bits bomd::StatusBit, ADR 0008). Synchronisiert.
   unsigned int status();
   /// Setzt das Statuswort auf 0 (asynchron).
   void clear_status();
