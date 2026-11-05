@@ -31,6 +31,19 @@ namespace bomd {
 ///
 /// Alle Kernels laufen auf stream(). Die Host-Setter synchronisieren den Stream am Ende
 /// (nicht im Hot-Path); die Kernel-Methoden (clear_forces, wrap_xy, …) synchronisieren nicht.
+/// Dynamischer Zustand für bitgenaue Checkpoints (ROADMAP Phase 7): alle Atomplätze inkl.
+/// Padding (n_replicas·n_pad), Schrittzähler (= Philox-Zähler mit dem Integrator-Seed) und Zeit.
+/// Nicht enthalten: Box, Temperaturen, Integrator, Plugins (inkl. Observer und Pulling-Arbeit).
+struct DynamicState {
+  std::vector<float4> pos;       ///< (x, y, z) [nm], q [e]
+  std::vector<float4> pos_corr;  ///< Positionskorrektur [nm] (ADR 0009)
+  std::vector<Vec4d> vel;        ///< (vx, vy, vz) [nm/ps], 1/m [1/amu]
+  std::vector<int2> image;       ///< Box-Imagezähler
+  std::int64_t step = 0;
+  double time_ps = 0.0;
+  double previous_time_ps = 0.0;
+};
+
 class SimulationContext {
  public:
   /// Maximaler Betrag |x/L| bzw. |y/L| für Eingabepositionen (2^20).
@@ -108,6 +121,16 @@ class SimulationContext {
   double time_ps() const { return time_ps_; }
   /// Simulationszeit vor dem letzten Schritt [ps] (für Protokoll-Arbeit, z. B. Pulling).
   double previous_time_ps() const { return previous_time_ps_; }
+  /// Integrator-Parameter (dt, γ, Seed); wirft std::logic_error ohne Integrator.
+  const LangevinParams& integrator_params() const;
+  /// Kopie des dynamischen Zustands (synchronisiert).
+  DynamicState save_dynamic_state();
+  /// Stellt einen mit save_dynamic_state gesicherten Zustand bitgenau wieder her. Der Kontext muss
+  /// dieselbe Größe haben; Box, Temperaturen, Integrator und Plugins setzt der Aufrufer vorher
+  /// (set_box setzt die Imagezähler zurück). Kräfte werden vor dem nächsten Schritt aus den
+  /// wiederhergestellten Positionen neu berechnet (deterministisch, ADR 0002); die Positionen
+  /// gelten als bereits projiziert (keine erneute SHAKE-Projektion).
+  void restore_dynamic_state(const DynamicState& state);
 
   /// Markiert d_force als veraltet (z. B. nach Schreibzugriff über eine DLPack-Sicht);
   /// step() berechnet die Kräfte dann vor dem ersten B neu.
