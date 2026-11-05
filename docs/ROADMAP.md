@@ -243,6 +243,25 @@ Dokumentation, Verzeichnisstruktur, Agenten-Anweisungen, Build-Entwürfe.
 - `::test_image_determinism` – zwei Läufe bitidentisch.
 - Messung (kein Kriterium): Kosten des Passes für ein Aptamer auf Gold relativ zu Debye-Hückel.
 
+### Phase 9.6 – Tile-Paarliste für große Einzelsysteme (ADR 0014, Proposed; Projektinhaber 2026-11-06: „Cell-List“)
+
+**Aufgaben**
+1. Listenaufbau je Auswertung (Thread je Tile-Paar, Hüllentest wie bisher), persistenter
+   Interaktionskernel über die Liste je Replica; `TiledAllPairs` (DH), danach `TiledGeneralizedBorn`.
+2. Interner Schalter `use_tile_list` für Vergleichstests und Messungen.
+
+**Abnahmetests (Vorschlag, Bestätigung durch den Projektinhaber offen)**
+- `test_phase9_tile_list.py::test_tile_list_bitidentical` – Energien und Kräfte bitidentisch zum bisherigen
+  Kernel (`use_tile_list=False`): 2k-System mit mehreren Replicas, 20k-System, verschiedene Boxen je Replica,
+  per-Replica-Topologien (ADR 0005); DH und GB-OBC2/GBn2.
+- `::test_tile_list_extremes` – alle Tile-Paare verworfen (nur Diagonale), keines verworfen, ein einzelnes Tile,
+  Atome nahe der periodischen Grenze: bitidentisch.
+- `::test_tile_list_determinism` – zwei Läufe (1000 Schritte, Langevin) bitidentisch.
+- Bildsummenpfad (L < 2 r_c) unverändert (bestehende Tests aus Phase 4 und 9.1).
+- memcheck und racecheck ohne Befund.
+- Messung (Kriterium): 1 × 20 k mindestens 1.25× schneller als vorher; 32 × 2 k und 128 × 1 k nicht
+  langsamer (Toleranz 2 %); Vergleich mit OpenMM berichtet, kein Muss. Messung erst bei freier GPU.
+
 - Generalized Born OBC2 (ADR 0004)
 - Replica-Exchange-Moves (Temperatur-Austausch auf Host-Seite)
 - `ImageChargeForce` für Metalloberflächen

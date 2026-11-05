@@ -26,6 +26,13 @@ Alle PRs #1–#6, #9–#14 am 2026-11-05 nach `main` gemergt (Merge-Commits, Rei
 - Phase 5 (PR #5): HMR, SHAKE/RATTLE auf H-Bindungen, N_dof. Abgenommen 2026-11-03; Nacharbeit nach
   Review siehe unten.
 
+## Phase 9.6 – Tile-Paarliste (Auftrag „Cell-List“), Entwurf (Branch `phase-9/tile-list`)
+- Messung 1 × 20 k (GPU geteilt, Verhältnisse): räumliche Sortierung bringt nichts (Atomreihenfolge
+  13.3 % lebende Tile-Paare, Morton 14.7 %); Leerlauf durch 171 k Warps / 42.8 k Blöcke ≈ 300 von
+  922 µs je compute_forces. Nsight Systems: Nonbonded 70 %, SHAKE 16 %, RATTLE 8 % (FP64).
+- ADR 0014 (Proposed): kompakte Tile-Paarliste je Auswertung, persistenter Kernel, bitidentisch.
+  Kriterien als Vorschlag in ROADMAP 9.6. Implementierung nach Annahme.
+
 ## Phase 9.5 – ImageChargeForce: abgenommen 2026-11-06 (Branch `phase-9/image-charge`, PR #16)
 - ADR 0013 Accepted (Projektinhaber 2026-11-05, Kriterien und Defaults OQ-18 bestätigt).
 - `src/forces/image_charge.{hpp,cu}` (Tile-Pass, Vorauswahl in z und lateral, Bildsumme, Clamping-
