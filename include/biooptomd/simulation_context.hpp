@@ -112,6 +112,8 @@ class SimulationContext {
   void invalidate_forces() { forces_valid_ = false; }
   /// Wird bei jedem set_masses erhöht; Plugins mit massenabhängigen Daten prüfen ihn.
   std::uint64_t masses_version() const { return masses_version_; }
+  /// Wird bei jedem set_box erhöht; Plugins mit boxabhängigen Daten prüfen ihn.
+  std::uint64_t box_version() const { return box_version_; }
 
   /// n BAOAB-Schritte (PHYSICS_MODEL.md §1, ARCHITECTURE.md §1). Pro Schritt:
   /// B A O A → wrap_xy → step += 1 → compute_forces → B → Observer mit step % stride == 0.
@@ -142,6 +144,9 @@ class SimulationContext {
   /// Übernimmt den Besitz, ruft initialize() auf und gibt eine Referenz zurück.
   ForcePlugin& add_force(std::unique_ptr<ForcePlugin> plugin);
   ObserverPlugin& add_observer(std::unique_ptr<ObserverPlugin> plugin);
+  /// Führt alle Observer einmal am aktuellen Zustand aus (unabhängig von stride; Schritt =
+  /// current_step). Asynchron.
+  void observe_now();
   void set_nonbonded(std::unique_ptr<NonbondedStrategy> strategy);
   std::size_t num_forces() const { return forces_.size(); }
   std::size_t num_observers() const { return observers_.size(); }
@@ -164,6 +169,7 @@ class SimulationContext {
   double time_ps_ = 0.0;
   double previous_time_ps_ = 0.0;
   std::uint64_t masses_version_ = 0;
+  std::uint64_t box_version_ = 0;
   bool forces_valid_ = false;       // d_force entspricht F(x) des aktuellen Zustands
   bool constraints_dirty_ = false;  // Zustand seit set_positions/velocities nicht projiziert
   CudaStream stream_;               // vor den Puffern deklariert ⇒ wird nach ihnen zerstört

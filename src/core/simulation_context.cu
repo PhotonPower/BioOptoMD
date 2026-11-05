@@ -256,6 +256,7 @@ void SimulationContext::set_box(const float* box_nm) {
   forces_valid_ = false;
   box_.upload_async(h_box_.data(), stream_.get());
   image_.zero_async(stream_.get());  // neue Box = neuer ungewrappter Ursprung
+  ++box_version_;
   synchronize();
 }
 
@@ -391,6 +392,11 @@ ObserverPlugin& SimulationContext::add_observer(std::unique_ptr<ObserverPlugin> 
   plugin->initialize(*this);
   observers_.push_back(std::move(plugin));
   return *observers_.back();
+}
+
+void SimulationContext::observe_now() {
+  activate();
+  for (auto& observer : observers_) observer->observe(state_, step_, stream_.get());
 }
 
 void SimulationContext::set_nonbonded(std::unique_ptr<NonbondedStrategy> strategy) {

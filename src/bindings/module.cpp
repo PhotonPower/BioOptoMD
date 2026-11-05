@@ -26,8 +26,10 @@
 #include "forces/bonded.hpp"
 #include "forces/harmonic_restraint.hpp"
 #include "forces/planar_surface.hpp"
+#include "forces/voxel_grid.hpp"
 #include "nonbonded/tiled_all_pairs.hpp"
 #include "observers/energy_tracker.hpp"
+#include "observers/optics.hpp"
 
 namespace nb = nanobind;
 using namespace nb::literals;
@@ -203,6 +205,23 @@ bomd::NonbondedTopology nonbonded_topology_from_dict(const nb::dict& d) {
   nb::object masks = np.attr("ascontiguousarray")(d["masks"], "dtype"_a = "uint32");
   t.masks = to_vector(nb::cast<HostInput<uint32_t>>(masks));
   return t;
+}
+
+/// ObserverResult → dict {name: numpy-Array mit der gespeicherten Shape}.
+nb::dict result_to_dict(const bomd::ObserverResult& res) {
+  nb::dict d;
+  for (const auto& a : res.arrays) {
+    Shape shape;
+    for (std::int64_t s : a.shape) shape.push_back(static_cast<std::size_t>(s));
+    d[a.name.c_str()] = vector_to_numpy(a.data, shape);
+  }
+  return d;
+}
+
+bomd::DipoleProbeParams probe_params(const HostInput<int32_t>& offsets,
+                                     const HostInput<int32_t>& atoms, const HostInput<int32_t>& a,
+                                     const HostInput<int32_t>& b) {
+  return bomd::DipoleProbeParams{to_vector(offsets), to_vector(atoms), to_vector(a), to_vector(b)};
 }
 
 Shape atoms_shape(const SimulationContext& c, std::size_t last) {
@@ -631,6 +650,119 @@ NB_MODULE(_core, m) {
       .def("apply_constraints", &SimulationContext::apply_constraints,
            "Projiziert Positionen und Geschwindigkeiten sofort auf die Constraints.")
       .def_prop_ro("has_constraints", &SimulationContext::has_constraints);
+
+  // --- Optik-Observer (Phase 6) ---------------------------------------------------------------
+  cls.def("observe_now", &SimulationContext::observe_now,
+          "Führt alle Observer einmal am aktuellen Zustand aus (asynchron).");
+  nb::class_<bomd::DipoleAndDistanceTracker>(m, "DipoleAndDistanceTracker",
+                                             "R_F, μ̂, d je Frame, PHYSICS_MODEL.md §6.1.")
+      .def_prop_ro("overwritten", &bomd::DipoleAndDistanceTracker::overwritten)
+      .def("reset", &bomd::DipoleAndDistanceTracker::reset)
+      .def(
+          "result",
+          [](const bomd::DipoleAndDistanceTracker& t) { return result_to_dict(t.download()); },
+          "dict: frames float64 (n_replicas, n_frames, 7) = (R_F [nm] ungewrappt, μ̂, d [nm]),\n"
+          "steps (n_frames,). Ringpuffer: älteste Frames werden überschrieben.");
+  cls.def(
+      "add_dipole_tracker",
+      [](SimulationContext& c, HostInput<int32_t> offsets, HostInput<int32_t> atoms,
+         HostInput<int32_t> atom_a, HostInput<int32_t> atom_b, float z_surface, int stride,
+         int capacity) -> bomd::DipoleAndDistanceTracker& {
+        return static_cast<bomd::DipoleAndDistanceTracker&>(
+            c.add_observer(std::make_unique<bomd::DipoleAndDistanceTracker>(
+                probe_params(offsets, atoms, atom_a, atom_b), z_surface, stride, capacity)));
+      },
+      "group_offsets"_a, "group_atoms"_a, "atom_a"_a, "atom_b"_a, "z_surface"_a = 0.0f,
+      "stride"_a = 1, "capacity"_a = 1000, nb::rv_policy::reference_internal,
+      "Dipol-/Abstands-Tracker: Fluorophorgruppe je Replica als CSR (lokale Indizes),\n"
+      "Dipolachse atom_a → atom_b (n_replicas,), z_surface [nm].");
+
+  nb::class_<bomd::FRETTracker>(m, "FRETTracker", "R_DA, κ², E je Frame, PHYSICS_MODEL.md §6.2.")
+      .def_prop_ro("overwritten", &bomd::FRETTracker::overwritten)
+      .def("reset", &bomd::FRETTracker::reset)
+      .def(
+          "result",
+          [](const bomd::FRETTracker& t) {
+            nb::dict d = result_to_dict(t.download());
+            nb::object f = d["frames"];
+            d["r_da"] = f[nb::make_tuple(nb::slice(nb::none(), nb::none(), nb::none()),
+                                         nb::slice(nb::none(), nb::none(), nb::none()), 0)];
+            d["kappa2"] = f[nb::make_tuple(nb::slice(nb::none(), nb::none(), nb::none()),
+                                           nb::slice(nb::none(), nb::none(), nb::none()), 1)];
+            d["efficiency"] = f[nb::make_tuple(nb::slice(nb::none(), nb::none(), nb::none()),
+                                               nb::slice(nb::none(), nb::none(), nb::none()), 2)];
+            return d;
+          },
+          "dict: r_da [nm], kappa2, efficiency (0 ohne r0) je (n_replicas, n_frames), frames,\n"
+          "steps.");
+  cls.def(
+      "add_fret_tracker",
+      [](SimulationContext& c, HostInput<int32_t> d_off, HostInput<int32_t> d_atoms,
+         HostInput<int32_t> d_a, HostInput<int32_t> d_b, HostInput<int32_t> a_off,
+         HostInput<int32_t> a_atoms, HostInput<int32_t> a_a, HostInput<int32_t> a_b, float r0,
+         int stride, int capacity) -> bomd::FRETTracker& {
+        return static_cast<bomd::FRETTracker&>(c.add_observer(std::make_unique<bomd::FRETTracker>(
+            probe_params(d_off, d_atoms, d_a, d_b), probe_params(a_off, a_atoms, a_a, a_b), r0,
+            stride, capacity)));
+      },
+      "donor_offsets"_a, "donor_atoms"_a, "donor_a"_a, "donor_b"_a, "acceptor_offsets"_a,
+      "acceptor_atoms"_a, "acceptor_a"_a, "acceptor_b"_a, "r0"_a = 0.0f, "stride"_a = 1,
+      "capacity"_a = 1000, nb::rv_policy::reference_internal,
+      "FRET-Tracker: Donor- und Akzeptor-Sonde wie add_dipole_tracker; r0 [nm] > 0 liefert\n"
+      "zusätzlich E (Förster-Radius für κ² = 2/3).");
+
+  nb::class_<bomd::RefractiveIndexProfiler>(m, "RefractiveIndexProfiler",
+                                            "n(z) nach Lorentz-Lorenz, PHYSICS_MODEL.md §6.3.")
+      .def_prop_ro("n_frames", &bomd::RefractiveIndexProfiler::n_frames)
+      .def("reset", &bomd::RefractiveIndexProfiler::reset)
+      .def(
+          "result",
+          [](const bomd::RefractiveIndexProfiler& p) {
+            nb::dict d = result_to_dict(p.download());
+            return d;
+          },
+          "dict: z (n_bins,) Schichtmitten [nm], n, s_alpha_mean/var, s_volume_mean/var\n"
+          "(n_replicas, n_bins) [nm^3 bzw. nm^6], n_frames.");
+  cls.def(
+      "add_refractive_index_profiler",
+      [](SimulationContext& c, float dz, int n_bins, HostInput<float> alpha,
+         HostInput<float> volume, float z_min, float n_water, float smear_sigma,
+         int stride) -> bomd::RefractiveIndexProfiler& {
+        bomd::RefractiveIndexParams p{
+            dz, n_bins, z_min, to_vector(alpha), to_vector(volume), n_water, smear_sigma};
+        return static_cast<bomd::RefractiveIndexProfiler&>(
+            c.add_observer(std::make_unique<bomd::RefractiveIndexProfiler>(std::move(p), stride)));
+      },
+      "dz"_a, "n_bins"_a, "alpha"_a, "volume"_a, "z_min"_a = 0.0f, "n_water"_a = 1.333f,
+      "smear_sigma"_a = 0.0f, "stride"_a = 1, nb::rv_policy::reference_internal,
+      "Brechungsindexprofil: Schichten der Dicke dz [nm] ab z_min; alpha (α′ [nm^3]) und\n"
+      "volume (v [nm^3]) je Optik-Typ types[..., 1]; n_water; smear_sigma [nm] > 0 verteilt\n"
+      "Atome gaußförmig auf Nachbarschichten.");
+
+  // --- VoxelGridForce3D -------------------------------------------------------------------------
+  nb::class_<bomd::VoxelGridForce3D>(m, "VoxelGridForce3D", "Externes Gitterpotential, §4.3.");
+  cls.def(
+      "add_voxel_grid",
+      [](SimulationContext& c,
+         nb::ndarray<const float, nb::shape<-1, -1, -1, 4>, nb::c_contig, nb::device::cpu> values,
+         std::array<float, 3> origin, std::array<float, 3> spacing, HostInput<float> scale,
+         bool periodic_xy) -> bomd::VoxelGridForce3D& {
+        bomd::VoxelGridParams p;
+        p.values.assign(values.data(), values.data() + values.size());
+        p.shape = {static_cast<int>(values.shape(2)), static_cast<int>(values.shape(1)),
+                   static_cast<int>(values.shape(0))};
+        p.origin_nm = origin;
+        p.spacing_nm = spacing;
+        p.scale_by_type = to_vector(scale);
+        p.periodic_xy = periodic_xy;
+        return static_cast<bomd::VoxelGridForce3D&>(
+            c.add_force(std::make_unique<bomd::VoxelGridForce3D>(std::move(p))));
+      },
+      "values"_a, "origin"_a, "spacing"_a, "scale"_a, "periodic_xy"_a = false,
+      nb::rv_policy::reference_internal,
+      "Gitterpotential: values float32 (nz, ny, nx, 4) = (V [kJ/mol], dV/dx, dV/dy, dV/dz\n"
+      "[kJ/mol/nm]) pro Skalierungseinheit (biooptomd.voxel.values_from_potential), origin und\n"
+      "spacing [nm], scale je Optik-/Oberflächen-Typ types[..., 1].");
 
   // --- Test-Hooks ---------------------------------------------------------------------------
   auto testing = m.def_submodule("testing", "Test-Hooks für pytest; keine Produktions-API.");
