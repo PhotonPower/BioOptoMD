@@ -23,7 +23,7 @@ Die Vorschläge aus den Reviews vom 2026-11-04 (inklusive der Nachträge aus Rev
 | OQ-12 | assumption | Gouy-Chapman-Term für Atome hinter der Wand (ζ < 0): wie fortsetzen? | – | V = q Φ0 konstant, F = 0 (energiekonsistent; die 9-3-Wand verhindert ζ < 0 praktisch). | – (Bestätigung offen) |
 | OQ-13 | resolved | Widerspruch PHYSICS_MODEL §4.1 ↔ ADR 0002: Clamp bei 0.1 σ erzeugte Kräfte ≫ 2³¹, Fixed-Point-Summen konnten überlaufen. | – | Entschieden 2026-11-03 (Projektinhaber): Kraftschranke für ζ_c + Sättigung pro Beitrag + Geräte-Statusflags, siehe ADR 0008. | Projektinhaber (2026-11-03) |
 | OQ-14 | open | Welcher Temperaturschätzer soll gemeldet werden? Die kinetische Temperatur am vollen BAOAB-Schritt ist bei Δt = 4 fs um ~10 % zu niedrig (PHYSICS_MODEL §1), obwohl die Konfigurationen korrekt bei 300 K gesampelt werden. Alternativen: Geschwindigkeiten nach dem O-Schritt (Halbschritt), konfigurationelle Temperatur, oder nur dokumentieren. | – | Unverändert: E_kin am vollen Schritt, Bias dokumentiert. | – (Bestätigung offen) |
-| OQ-15 | assumption | GB-Modell und Radiensatz für Nukleinsäuren: OBC2 (mbondi2, ADR 0004) oder GB-neck2 (GBn2, mbondi3, Nguyen et al. 2014), das für DNA/RNA-Strukturen als deutlich besser gilt? | – | Projektinhaber 2026-11-05: zuerst OBC2 mit mbondi2 und Salzkorrektur (ADR 0010); GBn2 mit mbondi3 und Nukleinsäure-Parametern als zweites Modell ergänzt (ADR 0012, Phase 9.3). Welches Modell für Aptamer-Produktionsläufe gilt, steht noch aus (Literaturvergleich). | Projektinhaber (2026-11-05) |
+| OQ-15 | assumption | GB-Modell und Radiensatz für Nukleinsäuren: OBC2 (mbondi2, ADR 0004) oder GB-neck2 (GBn2, mbondi3, Nguyen et al. 2014), das für DNA/RNA-Strukturen als deutlich besser gilt? | – | Projektinhaber 2026-11-05: zuerst OBC2 mit mbondi2 und Salzkorrektur (ADR 0010); GBn2 mit mbondi3 und Nukleinsäure-Parametern als zweites Modell ergänzt (ADR 0012, Phase 9.3). **Vorschlag (2026-11-05, siehe §OQ-15):** GBn2 als Default für Nukleinsäure-Systeme, Validierung mit OL21 vor Produktionsläufen. | Projektinhaber (2026-11-05) |
 | OQ-16 | open | GB nahe der Oberfläche: Die Wand (Graphen/Gold) ist im GB-Modell Lösungsmittel; die dielektrische Grenze (Desolvatation an der Oberfläche, Bildladungen) fehlt. Wie modellieren (Wand als Niedrig-ε-Halbraum in den Born-Integralen, ImageChargeForce)? Folgen: Desolvatation an der Wand fehlt, ACE überschätzt die zugängliche Fläche an der Wand, der Gouy-Chapman-Wandterm arbeitet weiter mit κ (konsistent, aber nicht aus GB abgeleitet). | – | Vorerst nicht modelliert, in ADR 0010 dokumentiert. | – (offen) |
 | OQ-17 | open | Replica Exchange mit Gouy-Chapman: Ist Φ0 der diffusen Schicht über die Temperaturleiter konstant (fest vorgegebenes Potential) oder folgt es bei fester Oberflächenladung der Grahame-Gleichung Φ0(T, κ)? | – | Φ0 fest über alle Zustände; κ folgt dem Zustand (ADR 0011). | – (offen) |
 
@@ -168,6 +168,47 @@ Entscheidung (ADR 0006 Rev. 2, Accepted): L kommt aus der gewünschten Bedeckung
 Gouy-Chapman berechnet γ bereits pro Replica aus T_r (OQ-06). κ hängt aber ebenfalls von T ab (κ ∝ 1/√(ε_r T)), und ε_r von Wasser fällt mit T merklich (Größenordnung −0,4 %/K, nicht verifiziert). Entscheidung: ε_r(T_r) über eine empirische Fitformel (z. B. Malmberg & Maryott 1956, nicht verifiziert), κ_r pro Replica, r_c als Maximum über alle Replicas (ein Kernel, eine Box-Prüfung). Bis die Fitformel verifiziert ist (Checkliste), wird sie im Code mit `ASSUMPTION(OQ-10)` markiert.
 
 ---
+
+### OQ-15 · GB-Modell für Aptamer-Produktionsläufe – Vorschlag (2026-11-05, Entscheidung offen)
+
+**Vorschlag:** GB-neck2 (`solvent="gb-gbn2"`, ADR 0012) mit den Nukleinsäure-Parametern aus
+`implicit/gbn2.xml` als **Default für alle Systeme mit Nukleinsäuren** (Aptamere, Duplexe, Komplexe);
+OBC2 bleibt als Vergleichs- und Altmodell. Salz wie bisher über κ_r (Srinivasan-Korrektur, OQ-10),
+ACE an (Default von OpenMM `gbn2.xml`). **Status nach Annahme:** `assumption`. Das Vorgehen ist damit
+entschieden, offen bleibt die Validierung mit OL21 (unten).
+
+**Begründung**
+- Die Nukleinsäure-Parametrisierung von GB-neck2 (Nguyen, Pérez, Bermeo & Simmerling, J. Chem. Theory
+  Comput. 11(8), 3714–3728 (2015); PMC4805114) senkt den Fehler der Solvatationsenergie gegenüber
+  Poisson-Boltzmann deutlich. Sie stabilisiert DNA/RNA-Duplexe, Quadruplexe und Protein-Nukleinsäure-
+  Komplexe und faltet kleine DNA/RNA-Hairpins in nahezu native Strukturen. Für Aptamere, deren Funktion
+  an Sekundär- und Tertiärstruktur hängt, ist das der entscheidende Punkt.
+- OBC2 gibt DNA-Strukturgrößen (z. B. Furchenbreiten) laut älteren Vergleichen schlechter wieder als
+  HCT/GBMV2 und erzeugt bei Proteinen einen Helix-Bias. Das war die Motivation für GB-neck2.
+- Kosten: GBn2 ≈ OBC2 (Phase 9.3), der Wechsel ist also ohne Durchsatzverlust möglich.
+
+**Einschränkungen (offen zu halten)**
+1. Die GBn2-Nukleinsäure-Parameter wurden mit einem älteren AMBER-Nukleinsäure-Kraftfeld trainiert. Mit
+   welchem genau, ist nicht verifiziert; vermutlich ff99bsc0-Familie. Die Kombination mit **OL21** (OQ-03)
+   ist nicht publiziert validiert.
+2. Neuere Arbeiten (GB-Neck3-Preprint 2024) berichten bei Proteinen eine Überstabilisierung von α-Helices
+   mit GB-neck2. Für Aptamer-Protein-Komplexe ist das zu beachten.
+3. Ob der ACE-Term in den Validierungsläufen des Papers aktiv war, ist nicht verifiziert. Eventuell
+   gegenprüfen, ob `ace=False` die bessere Wahl ist.
+4. Keine dielektrische Grenze an der Oberfläche (OQ-16). Die Wahl des GB-Modells löst das nicht.
+
+**Validierung vor Produktionsläufen (Vorschlag, eigene Aufgabe)**
+- (a) B-DNA-Duplex 1BNA (OL21, GBn2 vs. OBC2, 0.15 M, 300 K, 4 × 100 ns mit HMR/4 fs): RMSD zur
+  Kristallstruktur, Basenpaar-Erhalt, Furchenbreiten.
+- (b) Kleiner DNA-Hairpin (Literaturbeispiel aus Nguyen et al. 2015): Faltung aus gestreckter Struktur
+  mit Replica Exchange (Phase 9.2).
+- (c) Optional Vergleich mit expliziter Wasser-Referenz (OpenMM, TIP3P/OPC) für ein Aptamer-Fragment.
+Akzeptanz: GBn2 mindestens so stabil wie OBC2 und strukturell näher am Experiment. Sonst OQ-15 neu
+bewerten (z. B. GB-Neck3 oder OL21-angepasste Radien).
+
+**Quellen (per Websuche geprüft, 2026-11-05):** Stony Brook Research Connect / PMC4805114 (Nguyen et
+al. 2015, Bibliographie und Abstract); chemRxiv 666325fbe7ccf7753a3a337c (GB-Neck3-Preprint, 2024).
+Volltext von PMC4805114 nicht eingesehen (Browser-Prüfung), Trainingskraftfeld daher unverifiziert.
 
 ## Checkliste: Literatur/Zahlen (Stand Review 2, 2026-11-04)
 
