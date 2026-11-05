@@ -75,6 +75,8 @@ class SimulationContext {
   bool box_is_set() const { return box_set_; }
   /// Host-Kopie der Box (Lx, Ly) [nm] je Replica; leer, solange keine Box gesetzt ist.
   const std::vector<float2>& host_box() const { return h_box_; }
+  /// Host-Kopie der Temperaturen T_r [K] je Replica (anfangs 0).
+  const std::vector<float>& host_temperatures() const { return h_temperature_; }
 
   /// Geräte-Statuswort (Bits bomd::StatusBit, ADR 0008). Synchronisiert.
   unsigned int status();
@@ -174,7 +176,8 @@ class SimulationContext {
   bool constraints_dirty_ = false;  // Zustand seit set_positions/velocities nicht projiziert
   CudaStream stream_;               // vor den Puffern deklariert ⇒ wird nach ihnen zerstört
   bool box_set_ = false;
-  std::vector<float2> h_box_;  // Host-Kopie der Box für Eingabeprüfungen
+  std::vector<float2> h_box_;         // Host-Kopie der Box für Eingabeprüfungen
+  std::vector<float> h_temperature_;  // Host-Kopie der Temperaturen für Eingabeprüfungen
 
   DeviceBuffer<float4> pos_;
   DeviceBuffer<float4> pos_corr_;

@@ -41,7 +41,7 @@ B:  v ← v + (Δt/2) F/m
 **Elektrostatik V1 – Debye-Hückel (implizites Wasser mit Salz):**
 `V = ONE_4PI_EPS0 · q_i q_j · exp(−κ r) / (ε_r · r)`, ε_r = 78.5 (Default), κ aus Ionenstärke. κ enthält alle nicht explizit modellierten Ionen. Temperaturabhängigkeit von κ und ε_r pro Replica: OQ-10.
 
-**Cutoff:** Beide Terme mit Switching-Funktion zwischen r_s und r_c. Der Cutoff wird aus der Debye-Länge abgeleitet (ADR 0006): `r_c = max(2.0 nm, 5/κ)`, `r_s = r_c − 0.2 nm`. Damit ist DH bei r_c auf exp(−5) ≈ 0,7 % der reinen Coulomb-Wechselwirkung abgefallen. (Der frühere feste Wert r_c = 2,0 nm ließ bei 150 mM noch ≈ 8 % übrig.) Da der Tiled-All-Pairs-Kernel alle Paare rechnet, kostet ein größerer Cutoff keine Rechenzeit. Die Box L_x, L_y ist eine physikalische Eingabe (Bedeckung Γ = 1/(L_x L_y), OQ-09) und wird nie angepasst. Für L ≥ 2 r_c gilt Minimum Image; sonst summiert der Kernel explizit über periodische Bilder in x/y, inklusive Eigenbilder mit Faktor ½; Exclusions gelten nur für das Nullbild (ADR 0006 Rev. 2).
+**Cutoff:** Beide Terme mit Switching-Funktion zwischen r_s und r_c. Der Cutoff wird aus der Debye-Länge abgeleitet (ADR 0006): `r_c = max(2.0 nm, 5/κ)`, `r_s = r_c − 0.2 nm`. Damit ist DH bei r_c auf exp(−5) ≈ 0,7 % der reinen Coulomb-Wechselwirkung abgefallen. (Der frühere feste Wert r_c = 2,0 nm ließ bei 150 mM noch ≈ 8 % übrig.) Da der Tiled-All-Pairs-Kernel alle Paare rechnet, kostet ein größerer Cutoff keine Rechenzeit. Die Box L_x, L_y ist eine physikalische Eingabe (Bedeckung Γ = 1/(L_x L_y), OQ-09) und wird nie angepasst. Für L ≥ 2 r_c gilt Minimum Image; sonst summiert der Kernel explizit über periodische Bilder in x/y, inklusive Eigenbilder mit Faktor ½; Exclusions gelten nur für das Nullbild (ADR 0006 Rev. 2). Implementierung: Das Nullbild ist das Minimum-Image-Bild (der gebundene Nachbar in seiner nächsten Kopie). Pro Richtung werden |n| ≤ ⌈r_c/L + ½⌉ Verschiebungen geprüft, für L ≥ 2 r_c in dieser Richtung keine. Die Bildsumme läuft nur, wenn eine Box einer Replica kleiner als 2 r_c ist; sonst bleibt es beim Minimum-Image-Kernel. Builder: `biooptomd.nonbonded.cutoff_from_kappa`, κ_r aus `debye_kappa(I, T_r, water_permittivity(T_r))` (OQ-10).
 Switching wie OpenMM (`useSwitchingFunction`): `V = (V_LJ + V_el)·S(r)` mit `S = 1 − 10x³ + 15x⁴ − 6x⁵ = (1−x)³(1 + 3x + 6x²)`, `x = (r − r_s)/(r_c − r_s)` für r_s < r < r_c (S = 1 darunter, 0 darüber); die Kraft enthält den Term −V·dS/dr. Im Kernel faktorisiert ausgewertet (keine Auslöschung für x → 1).
 
 **Exclusions:** 1-2 und 1-3 vollständig ausgeschlossen, 1-4 im Non-Bonded-Kernel ausgeschlossen (werden in der Bonded-Stufe skaliert berechnet). Kodierung als 32-bit-Bitmaske pro (Atom, Tile).
@@ -56,24 +56,27 @@ Switching wie OpenMM (`useSwitchingFunction`): `V = (V_LJ + V_el)·S(r)` mit `S 
 ## 4. Oberflächen- und Umgebungsplugins
 
 ### 4.1 `PlanarSurfaceForce` (Phase 2)
-Die Wandform ist ein Template-Parameter (ADR 0007): `Wall93` (Volumenmaterial, z. B. Gold), `Wall104` (Graphen-Monolage), `Wall1043` (Graphit). Formeln und Kräfte aller Formen stehen in ADR 0007. Die Parameter pro (LJ-Typ, Oberflächen-Typ) leitet der Builder über Lorentz-Berthelot aus den Kraftfeld-LJ-Parametern und den Wandatom-Parametern ab, optional mit Lösungsmittel-Skalierung λ (OQ-05). Oberflächen-Typ 0 hat ε = 0 und ist für Padding-Atome und Thiol-Ankeratome reserviert (OQ-07).
+Die Wandform ist ein Template-Parameter (ADR 0007): `Wall93` (Volumenmaterial, z. B. Gold), `Wall104` (Graphen-Monolage), `Wall1043` (Graphit). Formeln und Kräfte aller Formen stehen in ADR 0007. Die Parameter pro (LJ-Typ, Oberflächen-Typ) leitet der Builder über Lorentz-Berthelot aus den Kraftfeld-LJ-Parametern und den Wandatom-Parametern ab, optional mit Lösungsmittel-Skalierung λ (OQ-05). Oberflächen-Typ 0 hat ε = 0 und ist für Padding-Atome und Thiol-Ankeratome reserviert (OQ-07); `PlanarSurfaceForce` lehnt Tabellen mit C ≠ 0 in Zeile 0 ab. λ gilt derzeit pro Oberflächen-Typ; Atomklassen werden über eigene Oberflächen-Typen abgebildet.
 
-9-3-Wand bei z = 0, Parameter pro Oberflächen-Typ (`d_types.y`):
+Implementierung: Tabelle (C, σ_iw) pro (Oberflächen-Typ s = `d_types.y`, LJ-Typ l = `d_types.x`), erstellt von `biooptomd.surface.wall_table` (Materialtabelle `MATERIALS`, Lorentz-Berthelot, λ pro Oberflächen-Typ). Eine Tabelle mit nur einem LJ-Typ gilt für alle LJ-Typen. Der Kernel ist ein Template über die Form; die Form wird pro Launch auf dem Host gewählt. Mit s = σ_iw/ζ und dem Vorfaktor C aus ADR 0007:
 
 ```
-V_i(z) = ε_w,i [ (2/15)(σ_w,i/z)⁹ − (σ_w,i/z)³ ]
-F_z,i  = ε_w,i [ (6/5) σ_w,i⁹/z¹⁰ − 3 σ_w,i³/z⁴ ]
+9-3     V = C [ (2/15) s⁹ − s³ ]                        F_z = C [ (6/5) s⁹ − 3 s³ ] / ζ
+10-4    V = C [ (2/5) s¹⁰ − s⁴ ]                        F_z = 4C [ s¹⁰ − s⁴ ] / ζ
+10-4-3  V = C [ (2/5) s¹⁰ − s⁴ ] − B/(ζ + 0.61Δ)³       F_z = 4C [ s¹⁰ − s⁴ ] / ζ − 3B/(ζ + 0.61Δ)⁴,  B = C σ⁴/(3Δ)
 ```
-Minimum bei z* = (2/5)^(1/6) σ_w mit V(z*) ≈ −1.054 ε_w. Der Builder akzeptiert wahlweise die Topftiefe und rechnet um. Für z < z_clamp wird z geclampt; das Ereignis wird in einem Device-Zähler registriert (Diagnose). z_clamp = max(0.1 σ_w, ζ_F) mit |F(ζ_F)| = F_max (Default 10⁶ kJ/mol/nm), damit die Wandkraft im Fixed-Point-Bereich bleibt (ADR 0008).
+Minima: 9-3 bei z* = (2/5)^(1/6) σ mit V(z*) = −(√10/3) C ≈ −1.054 C; 10-4 bei z* = σ mit V = −(3/5) C; 10-4-3 numerisch (tiefer als 10-4). Für ζ < ζ_c wird ζ geclampt; das Ereignis wird in einem Device-Zähler registriert (Diagnose). ζ_c = max(0.1 σ_iw, ζ_F) mit |F(ζ_F)| = F_max (Default 10⁶ kJ/mol/nm), damit die Wandkraft im Fixed-Point-Bereich bleibt (ADR 0008). Atome mit Typen außerhalb der Tabelle spüren keine Wand (eigener Zähler).
 
 Optional elektrochemisches Potential (Gouy-Chapman, 1:1-Elektrolyt). Nach OQ-06: nichtlineare geschlossene Lösung als Default, linear nur als Grenzfall:
 ```
 γ_r    = tanh(Φ₀ / (4 k_B T_r))          pro Replica (T_r aus d_temperature)
 u(z)   = γ_r exp(−κ z)
-V_i(z) = q_i · 2 k_B T_r · ln[(1 + u)/(1 − u)]  = q_i · 4 k_B T_r · atanh(u)   (numerisch: atanhf)
+V_i(z) = q_i · 2 k_B T_r · ln[(1 + u)/(1 − u)]  = q_i · 4 k_B T_r · atanh(u)   (numerisch: s. u.)
 F_z,i  = q_i · 4 k_B T_r · κ · u / (1 − u²)
 ```
-Linearisiert (Φ₀ ≪ k_BT/e ≈ 25 mV): `V_i(z) = q_i Φ₀ exp(−κ z)`, `F_z,i = q_i Φ₀ κ exp(−κ z)`. Die Linearisierung überschätzt das Fernfeld um ca. 30 % bei 100 mV und etwa Faktor 2 bei 200 mV.
+Numerik: Gerechnet wird mit |Φ₀| (u > 0) und 1 − u = (1 − e^{−κζ}) + (1 − γ) e^{−κζ} ohne Auslöschung, damit V für γ → 1 (große Φ₀) endlich bleibt. κ_r kommt pro Replica (OQ-10). Das nichtlineare Gouy-Chapman verlangt T_r > 0 für alle Replicas (sonst Fehler in `compute`). Der Term hat keine Kraftschranke nach ADR 0008: Bei großem Φ₀ ist F(0) = 2k_BTκ·sinh(Φ₀/2k_BT) und kann den Fixed-Point-Bereich sprengen (dann Statusbit gesetzt). Für ζ < 0 gilt V = V(0), F = 0 (ASSUMPTION(OQ-12)).
+
+Linearisiert (Φ₀ ≪ k_BT/e ≈ 25 mV, Option `gouy_chapman="linear"`): `V_i(z) = q_i Φ₀ exp(−κ z)`, `F_z,i = q_i Φ₀ κ exp(−κ z)`. Die Linearisierung überschätzt das Fernfeld um ca. 30 % bei 100 mV und etwa Faktor 2 bei 200 mV.
 
 Φ₀ in kJ/(mol·e) (Builder rechnet aus Volt um). **Φ₀ ist das Potential der diffusen Schicht**, nicht das angelegte Elektrodenpotential; der Abfall über die Stern-Schicht ist nicht modelliert.
 
@@ -92,7 +95,7 @@ Linearisiert (Φ₀ ≪ k_BT/e ≈ 25 mV): `V_i(z) = q_i Φ₀ exp(−κ z)`, `F
 ```
 s_i = −α′_i · FARADAY² / (4 · ONE_4PI_EPS0)      ⇒  U_i = s_i W,  F_i = −s_i ∇W
 ```
-Bei RMS-Feldern ist der Vorfaktor ½ statt ¼; die Lade-Funktion verlangt daher das Pflichtargument `amplitude="peak" | "rms"`.
+Bei RMS-Feldern ist der Vorfaktor ½ statt ¼; die Lade-Funktion verlangt daher das Pflichtargument `amplitude="peak" | "rms"`. Implementierung: `biooptomd.voxel.optical_scale(alpha, volume, n_water, amplitude=...)` liefert s_i je Optik-Typ für `add_voxel_grid`; das Gitter selbst baut `values_from_potential(W, spacing)`.
 
 **Überschusspolarisierbarkeit (OQ-04):** In s_i steht α′_eff,i = α′_i − (3/4π) v_i (n_w² − 1)/(n_w² + 2), d. h. der Kontrast gegenüber dem verdrängten Wasser, mit denselben v_i wie im `RefractiveIndexProfiler`. Ohne Korrektur wäre die Kraft um rund Faktor 2 zu groß. Streu-/Absorptionskräfte (Im α) sind nicht konservativ und nicht abgebildet; Fluorophore sind im Optikmodus per Default ausgenommen. Größenordnung: 1 MW/cm² in Wasser, α′ ≈ 10⁻³ nm³ → U ≈ 10⁻⁷ kJ/mol pro Atom; relevant erst in plasmonischen Hotspots (Feldverstärkung ≳ 10³).
 
@@ -127,6 +130,6 @@ n(k)            = sqrt((1 + 2L)/(1 − L))
 ```
 Ausgabe: n(z), sowie die Rohhistogramme S_α, S_V und ihre Varianz, damit andere Mischungsregeln (z. B. Maxwell-Garnett) nachträglich in Python möglich sind.
 
-**Verschmierung (OQ-02):** Default ist der exakte Kugelschnitt: Atom i mit R_i = (3 v_i/4π)^{1/3} trägt zu Schicht [z_a, z_b] den Volumenanteil π∫(R_i² − (z − z_i)²) dz bei (analytisch, kompakter Träger, keine Beiträge unter z = 0 durch Ausläufer). Option: Gauß-Verschmierung mit σ_i = R_i/√5 (gleiche z-Varianz wie eine homogene Kugel). Bei Δz = 0,05 nm sind Schichten deutlich dünner als ein Atom; mit Punktatomen greift das `max(0, …)` in f_w häufig und verzerrt n(z) systematisch. Punktatome bleiben als Option für Tests.
+**Verschmierung (OQ-02):** Default ist der exakte Kugelschnitt: Atom i mit R_i = (3 v_i/4π)^{1/3} trägt zu Schicht [z_a, z_b] den Volumenanteil π∫(R_i² − (z − z_i)²) dz bei (analytisch, kompakter Träger, keine Beiträge unter z = 0 durch Ausläufer). Option: Gauß-Verschmierung mit σ_i = R_i/√5 (gleiche z-Varianz wie eine homogene Kugel). Bei Δz = 0,05 nm sind Schichten deutlich dünner als ein Atom; mit Punktatomen greift das `max(0, …)` in f_w häufig und verzerrt n(z) systematisch. Punktatome bleiben als Option für Tests. API: `add_refractive_index_profiler(..., smearing="sphere" | "gauss" | "point")`; Atomtypen mit v_i = 0 werden immer als Punkt gezählt.
 
 **Parameter (OQ-01/02):** v_i aus Voronoi-Volumina (ProtOr für Proteine, NucProt für Nukleinsäuren; Summe ≈ partielles spezifisches Volumen nur bei Proteinen), α′_i aus Typtabelle mit klassenweisem Skalierungsfaktor, gemeinsam kalibriert an dn/dc (Proteine ≈ 0,185–0,19 mL/g, DNA ≈ 0,17 mL/g), Dispersion über Cauchy-Term. Fluorophore erhalten eine separate, resonanzbewusste Polarisierbarkeit oder werden per Option ausgeschlossen.

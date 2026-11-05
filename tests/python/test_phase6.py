@@ -161,7 +161,9 @@ def test_refractive_index_pure_water():
 
 def test_refractive_index_uniform_layer():
     """Homogene Atomschicht bekannter Dichte (Gitter, je Schicht gleich viele Atome) →
-    analytisches Lorentz-Lorenz-Ergebnis, rel. Fehler < 1e-4; außerhalb n = n_w; Varianz 0."""
+    analytisches Lorentz-Lorenz-Ergebnis, rel. Fehler < 1e-4; außerhalb n = n_w; Varianz 0.
+    Punktatome exakt; mit Kugelschnitt (Default) gilt dasselbe für Schichten, die mehr als R vom
+    Rand der Atomschicht entfernt sind."""
     box, dz, a_lat = 4.0, 0.1, 0.25
     xy = (np.arange(16) + 0.5) * a_lat
     zs = 1.0 + (np.arange(10) + 0.5) * dz  # Schichten 10 … 19
@@ -172,7 +174,7 @@ def test_refractive_index_uniform_layer():
     ctx = _ctx(1, n, box)
     ctx.set_positions(pos[None])
     prof = ctx.add_refractive_index_profiler(
-        dz, 40, np.array([alpha]), np.array([vol]), n_water=n_w
+        dz, 40, np.array([alpha]), np.array([vol]), n_water=n_w, smearing="point"
     )
     for _ in range(3):
         ctx.observe_now()
@@ -189,16 +191,27 @@ def test_refractive_index_uniform_layer():
     assert res["s_alpha_var"].max() < 1e-12 * (per_layer * float(alpha)) ** 2
     np.testing.assert_allclose(res["z"][:3], [0.05, 0.15, 0.25], rtol=1e-6)
 
-    # Gauß-Verschmierung erhält die Gesamtsumme (Schicht weit innerhalb des Profils).
+    # Kugelschnitt (Default, R ≈ 0.078 nm < Δz): innere Schichten unverändert.
+    ctx3 = _ctx(1, n, box)
+    ctx3.set_positions(pos[None])
+    sp = ctx3.add_refractive_index_profiler(dz, 40, np.array([alpha]), np.array([vol]), n_water=n_w)
+    ctx3.observe_now()
+    res3 = sp.result()
+    inner = (np.arange(40) >= 11) & (np.arange(40) < 19)
+    np.testing.assert_allclose(res3["n"][0, inner], expected, rtol=1e-4)
+    assert res3["s_alpha_mean"][0].sum() == pytest.approx(n * float(alpha), rel=1e-6)
+
+    # Gauß-Verschmierung (σ = R/√5) erhält die Gesamtsumme (Schicht weit innerhalb des Profils).
     ctx2 = _ctx(1, n, box)
     ctx2.set_positions(pos[None])
     sm = ctx2.add_refractive_index_profiler(
-        dz, 40, np.array([alpha]), np.array([vol]), smear_sigma=0.05
+        dz, 40, np.array([alpha]), np.array([vol]), smearing="gauss"
     )
     ctx2.observe_now()
     res2 = sm.result()
     s = res2["s_alpha_mean"][0]
     assert s.sum() == pytest.approx(n * float(alpha), rel=1e-5)
+    sigma = float(oref.sphere_radius(float(vol))) / np.sqrt(5.0)
     ref_a, ref_v = oref.layer_histograms_smeared(
         pos[:, 2],
         np.full(n, float(alpha)),
@@ -206,13 +219,79 @@ def test_refractive_index_uniform_layer():
         0.0,
         dz,
         40,
-        float(np.float32(0.05)),
+        sigma,
     )
     # Fixed-Point hat eine absolute Auflösung von 2^-32 je Beitrag; in den äußersten Tail-Schichten
     # (Beiträge ~1e-7 nm³) dominiert sie den relativen Fehler ⇒ absolute Toleranz relativ zur Schicht.
     np.testing.assert_allclose(s, ref_a, rtol=1e-5, atol=1e-6 * ref_a.max())
     np.testing.assert_allclose(res2["s_volume_mean"][0], ref_v, rtol=1e-5, atol=1e-6 * ref_v.max())
     assert s[9] > 0 and s[20] > 0  # Beiträge in die Nachbarschichten
+
+
+def test_refractive_index_smearing():
+    """OQ-02: einzelnes Atom – Summe über Schichten von S_α und S_V exakt erhalten; Kugelschnitt
+    (Default) entspricht der analytischen Schichtvolumenformel, keine Beiträge unter z = 0;
+    Gauß-Option mit σ = R/√5 (gleiche z-Varianz wie die homogene Kugel); v = 0 ⇒ Punkt."""
+    alpha = np.array([1.2e-3, 2.0e-3], np.float32)
+    vol = np.array([0.03, 0.0], np.float32)  # Typ 1 ohne Volumen
+    dz, n_bins, z_min = 0.05, 60, -1.0
+    radius = float(oref.sphere_radius(float(vol[0])))
+    assert radius > 2 * dz, "Kugel muss mehrere Schichten überdecken"
+    z_atoms = [radius + 0.013, 0.731]  # erstes Atom berührt fast z = 0
+    lo = z_min + np.arange(n_bins) * dz
+    for mode in ("sphere", "gauss"):
+        for z_atom in z_atoms:
+            ctx = _ctx(1, 2)
+            pos = np.full((1, 2, 3), 5.0, np.float32)
+            pos[0, 0, 2] = z_atom
+            pos[0, 1, 2] = 4.0  # oberhalb des Profils
+            ctx.set_positions(pos)
+            prof = ctx.add_refractive_index_profiler(
+                dz, n_bins, alpha, vol, z_min=z_min, smearing=mode
+            )
+            ctx.observe_now()
+            res = prof.result()
+            s_a, s_v = res["s_alpha_mean"][0], res["s_volume_mean"][0]
+            zf = float(np.float32(z_atom))
+            # Erhaltung bis auf die Fixed-Point-Auflösung (2^-32 je Schichtbeitrag)
+            assert abs(s_a.sum() - float(alpha[0])) < n_bins * 2.0**-32
+            assert abs(s_v.sum() - float(vol[0])) < n_bins * 2.0**-32
+            if mode == "sphere":
+                ref_a, ref_v = oref.layer_histograms_sphere(
+                    [zf], [float(alpha[0])], [float(vol[0])], z_min, dz, n_bins
+                )
+                w = oref.sphere_layer_fraction(zf, radius, lo, lo + dz)
+                assert w.sum() == pytest.approx(1.0, rel=1e-12)
+                assert not s_a[lo + dz <= 0.0].any(), "Beitrag unter z = 0"
+                assert not s_a[lo >= zf + radius].any() and not s_a[lo + dz <= zf - radius].any()
+            else:
+                ref_a, ref_v = oref.layer_histograms_smeared(
+                    [zf], [float(alpha[0])], [float(vol[0])], z_min, dz, n_bins,
+                    radius / np.sqrt(5.0),
+                )  # fmt: skip
+            np.testing.assert_allclose(s_a, ref_a, rtol=1e-5, atol=1e-6 * ref_a.max())
+            np.testing.assert_allclose(s_v, ref_v, rtol=1e-5, atol=1e-6 * ref_v.max())
+
+    # z-Varianz: Kugel und Gauß mit σ = R/√5 stimmen überein (Schicht → 0 Grenzwert, Δz fein).
+    zc = 0.5
+    fine = np.linspace(zc - radius, zc + radius, 20001)
+    var_sphere = np.trapezoid((fine - zc) ** 2 * (radius**2 - (fine - zc) ** 2), fine)
+    var_sphere /= np.trapezoid(radius**2 - (fine - zc) ** 2, fine)
+    assert var_sphere == pytest.approx((radius / np.sqrt(5.0)) ** 2, rel=1e-6)
+
+    # v = 0: Punktatom in der Schicht des Mittelpunkts, auch im Kugelmodus.
+    ctx = _ctx(1, 1)
+    types = np.ones((1, 1, 2), np.int32)
+    ctx.set_types(types)
+    pos = np.full((1, 1, 3), 5.0, np.float32)
+    pos[0, 0, 2] = 0.731
+    ctx.set_positions(pos)
+    prof = ctx.add_refractive_index_profiler(dz, n_bins, alpha, vol, z_min=z_min)
+    ctx.observe_now()
+    s_a = prof.result()["s_alpha_mean"][0]
+    k = int(np.floor((float(np.float32(0.731)) - z_min) / dz))
+    assert s_a[k] == pytest.approx(float(alpha[1]), rel=1e-7)
+    assert np.count_nonzero(s_a) == 1
 
 
 def test_observer_ignores_padding():
@@ -431,3 +510,50 @@ def test_observer_and_voxel_guards():
     with pytest.raises(RuntimeError):
         ctx.observe_now()  # Profiler: Box seit reset() geändert
     prof.reset()
+
+
+def test_voxel_optical_normalization():
+    """OQ-04: konstantes |E₀|²-Gradientenfeld W = W0 + g·r → Kraft = −s_i g mit
+    s_i = −α′_eff,i FARADAY²/(4 ONE_4PI_EPS0), α′_eff = α′ − (3/4π) v L_w; amplitude="rms" ergibt
+    Faktor 2; ein Atom mit α′_i = (3/4π) v_i L_w erfährt keine Kraft."""
+    from biooptomd import units
+    from biooptomd.voxel import optical_scale, values_from_potential
+
+    n_w = 1.333
+    l_w = (n_w**2 - 1) / (n_w**2 + 2)
+    vol = np.array([0.02, 0.01, 0.015])
+    alpha = np.array([1.5e-3, 3.0 / (4 * np.pi) * 0.01 * l_w, 0.2e-3])  # Typ 1: kein Kontrast
+    s_peak = optical_scale(alpha, vol, n_w, amplitude="peak")
+    s_rms = optical_scale(alpha, vol, n_w, amplitude="rms")
+    np.testing.assert_allclose(s_rms, 2.0 * s_peak, rtol=1e-7)
+    alpha_eff = alpha - 3 / (4 * np.pi) * vol * l_w
+    np.testing.assert_allclose(
+        s_peak, -alpha_eff * units.FARADAY**2 / (4 * units.ONE_4PI_EPS0), rtol=1e-6
+    )
+    assert abs(s_peak[1]) < 1e-9 * abs(s_peak[0])
+    assert s_peak[0] < 0 < s_peak[2], "positiver Kontrast zieht ins Feld, negativer stößt ab"
+    with pytest.raises(TypeError):
+        optical_scale(alpha, vol, n_w)  # amplitude ist Pflicht
+    with pytest.raises(ValueError):
+        optical_scale(alpha, vol, n_w, amplitude="mean")
+
+    # Feld: W = 40 + g·r [(V/nm)²] (plasmonischer Hotspot), g in (V/nm)²/nm; Gitter 1 … 3 nm.
+    # Kräfte ~10⁻² kJ/mol/nm, weit über der Fixed-Point-Auflösung 2⁻³².
+    g = np.array([3.0, -2.0, 5.0])
+    shape, origin, spacing = (9, 9, 9), (1.0, 1.0, 1.0), 0.25
+    zz, yy, xx = np.meshgrid(*(origin[0] + spacing * np.arange(m) for m in shape), indexing="ij")
+    w_field = 40.0 + g[0] * xx + g[1] * yy + g[2] * zz
+    values = values_from_potential(w_field, (spacing,) * 3)
+    for scale, label in ((s_peak, "peak"), (s_rms, "rms")):
+        ctx = _ctx(1, 3)
+        pos = np.array([[[1.6, 2.1, 1.9], [2.3, 1.4, 2.6], [1.8, 2.7, 1.2]]], np.float32)
+        types = np.zeros((1, 3, 2), np.int32)
+        types[0, :, 1] = [0, 1, 2]
+        ctx.set_positions(pos)
+        ctx.set_types(types)
+        ctx.add_voxel_grid(values, origin, (spacing,) * 3, scale)
+        ctx.compute_forces()
+        f = ctx.forces()[0, :3, :3].astype(np.float64)
+        expected = -scale.astype(np.float64)[:, None] * g[None, :]
+        np.testing.assert_allclose(f, expected, rtol=1e-5, atol=1e-6 * np.abs(expected).max())
+        assert np.abs(f[1]).max() < 1e-9 * np.abs(f[0]).max(), label

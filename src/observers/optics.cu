@@ -115,9 +115,15 @@ __global__ void k_fret(DeviceState s, const int* d_off, const int* d_atoms, cons
   }
 }
 
-/// Pro echtem Atom: Beitrag (α′, v) seines Optik-Typs in die Schicht(en) des aktuellen Frames.
-__global__ void k_layer_histogram(DeviceState s, const float2* type_params, int n_types,
-                                  double z_min, double dz, int n_bins, double sigma,
+/// Pro echtem Atom: Beitrag (α′, v) seines Optik-Typs in die Schicht(en) des aktuellen Frames
+/// (PHYSICS_MODEL.md §6.3). Anteile außerhalb des Profils entfallen.
+///  - kSphere: Anteil der Kugel (Radius R) in [lo, hi]: mit a = max(lo, z − R) − z,
+///    b = min(hi, z + R) − z ist w = 3/(4R³) [R²(b − a) − (b³ − a³)/3] (Σ_k w = 1).
+///  - kGauss: w ∝ Φ((hi − z)/σ) − Φ((lo − z)/σ), σ = R/√5, über alle Schichten mit |z − z_k| ≤ 4σ,
+///    normiert auf die Summe über dieses (nicht abgeschnittene) Fenster.
+///  - kPoint bzw. R = 0: alles in die Schicht des Mittelpunkts.
+__global__ void k_layer_histogram(DeviceState s, const float4* type_params, int n_types,
+                                  double z_min, double dz, int n_bins, LayerSmearing mode,
                                   long long* hist) {
   const int i_local = blockIdx.x * blockDim.x + threadIdx.x;
   const int r = blockIdx.y;
@@ -128,11 +134,12 @@ __global__ void k_layer_histogram(DeviceState s, const float2* type_params, int 
     atomicOr(s.d_status, kStatusUnknownType);
     return;
   }
-  const float2 av = type_params[t];
+  const float4 av = type_params[t];  // (α′, v, R, 0)
   const double z = detail::load_position(s, i).z;
   long long* h_alpha = hist + static_cast<long long>(r) * 2 * n_bins;
   long long* h_volume = h_alpha + n_bins;
-  if (sigma <= 0.0) {
+  const double radius = av.z;
+  if (mode == LayerSmearing::kPoint || radius <= 0.0) {
     const double u = floor((z - z_min) / dz);
     if (u < 0.0 || u >= n_bins) return;
     const int k = static_cast<int>(u);
@@ -140,17 +147,25 @@ __global__ void k_layer_histogram(DeviceState s, const float2* type_params, int 
     detail::atomic_add_fixed_point(h_volume + k, av.y, s.d_status);
     return;
   }
-  // Gauß-Verschmierung: Gewicht der Schicht k ∝ Φ((z_hi − z)/σ) − Φ((z_lo − z)/σ) über alle
-  // Schichten mit |z − z_k| ≤ 4σ, normiert auf die Summe über dieses (nicht abgeschnittene)
-  // Fenster, damit die Gesamtsumme erhalten bleibt; Anteile außerhalb des Profils entfallen.
-  const int w_lo = static_cast<int>(floor((z - 4.0 * sigma - z_min) / dz));
-  const int w_hi = static_cast<int>(floor((z + 4.0 * sigma - z_min) / dz));
-  const double inv = 1.0 / (sigma * sqrt(2.0));
+  const bool sphere = mode == LayerSmearing::kSphere;
+  const double reach = sphere ? radius : 4.0 * radius / sqrt(5.0);
+  const int w_lo = static_cast<int>(floor((z - reach - z_min) / dz));
+  const int w_hi = static_cast<int>(floor((z + reach - z_min) / dz));
+  const double inv = sqrt(5.0) / (radius * sqrt(2.0));  // 1/(σ√2)
   const double norm =
-      0.5 * (erf((z_min + (w_hi + 1) * dz - z) * inv) - erf((z_min + w_lo * dz - z) * inv));
+      sphere
+          ? 1.0
+          : 0.5 * (erf((z_min + (w_hi + 1) * dz - z) * inv) - erf((z_min + w_lo * dz - z) * inv));
+  const double inv_r3 = 0.75 / (radius * radius * radius);
   for (int k = max(0, w_lo); k <= min(n_bins - 1, w_hi); ++k) {
     const double lo = z_min + k * dz, hi = lo + dz;
-    const double w = 0.5 * (erf((hi - z) * inv) - erf((lo - z) * inv)) / norm;
+    double w;
+    if (sphere) {
+      const double a = fmax(lo, z - radius) - z, b = fmin(hi, z + radius) - z;
+      w = b > a ? inv_r3 * (radius * radius * (b - a) - (b * b * b - a * a * a) / 3.0) : 0.0;
+    } else {
+      w = 0.5 * (erf((hi - z) * inv) - erf((lo - z) * inv)) / norm;
+    }
     if (w <= 0.0) continue;
     detail::atomic_add_fixed_point(h_alpha + k, static_cast<float>(w * av.x), s.d_status);
     detail::atomic_add_fixed_point(h_volume + k, static_cast<float>(w * av.y), s.d_status);
@@ -303,17 +318,20 @@ RefractiveIndexProfiler::RefractiveIndexProfiler(RefractiveIndexParams params, i
                 std::isfinite(p.volume_nm3[t]) && p.volume_nm3[t] >= 0.0f,
             "RefractiveIndexProfiler: alpha, volume endlich und >= 0");
   require(std::isfinite(p.n_water) && p.n_water >= 1.0f, "RefractiveIndexProfiler: n_water >= 1");
-  require(std::isfinite(p.smear_sigma_nm) && p.smear_sigma_nm >= 0.0f,
-          "RefractiveIndexProfiler: smear_sigma >= 0");
+  const int mode = static_cast<int>(p.smearing);
+  require(mode >= 0 && mode <= 2, "RefractiveIndexProfiler: unbekannte Verschmierung");
 }
 
 void RefractiveIndexProfiler::initialize(SimulationContext& ctx) {
   ctx_ = &ctx;
   const std::size_t n_types = params_.alpha_nm3.size();
-  std::vector<float2> tp(n_types);
-  for (std::size_t t = 0; t < n_types; ++t)
-    tp[t] = make_float2(params_.alpha_nm3[t], params_.volume_nm3[t]);
-  d_type_params_ = DeviceBuffer<float2>(n_types);
+  std::vector<float4> tp(n_types);
+  for (std::size_t t = 0; t < n_types; ++t) {
+    const double radius = std::cbrt(3.0 * params_.volume_nm3[t] / (4.0 * kPi));
+    tp[t] =
+        make_float4(params_.alpha_nm3[t], params_.volume_nm3[t], static_cast<float>(radius), 0.0f);
+  }
+  d_type_params_ = DeviceBuffer<float4>(n_types);
   d_frame_hist_ =
       DeviceBuffer<long long>(static_cast<std::size_t>(ctx.n_replicas()) * 2 * params_.n_bins);
   d_sums_ = DeviceBuffer<double>(static_cast<std::size_t>(ctx.n_replicas()) * 4 * params_.n_bins);
@@ -333,7 +351,7 @@ void RefractiveIndexProfiler::observe(const DeviceState& s, std::int64_t, cudaSt
   const dim3 grid_atoms(detail::elementwise_grid(s.n_atoms), s.n_replicas);
   k_layer_histogram<<<grid_atoms, detail::kElementwiseBlock, 0, stream>>>(
       s, d_type_params_.data(), static_cast<int>(params_.alpha_nm3.size()), params_.z_min_nm,
-      params_.dz_nm, params_.n_bins, params_.smear_sigma_nm, d_frame_hist_.data());
+      params_.dz_nm, params_.n_bins, params_.smearing, d_frame_hist_.data());
   BOMD_LAUNCH_CHECK();
   const dim3 grid_bins(detail::elementwise_grid(params_.n_bins), s.n_replicas);
   k_layer_accumulate<<<grid_bins, detail::kElementwiseBlock, 0, stream>>>(

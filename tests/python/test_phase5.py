@@ -111,7 +111,10 @@ def _context(core, d, n_rep, dt, gamma, seed=1, surface=False, temperature=300.0
     if surface:
         # 9-3-Wand bei z = 0 (ASSUMPTION(OQ-05): graphenartige Platzhalterwerte) und je Duplex ein
         # Ankeratom (tiefstes Schweratom): z-Restraint + schwacher xy-Restraint (ASSUMPTION(OQ-07)).
-        ctx.add_planar_surface(np.array([2.0], np.float32), np.array([0.3], np.float32))
+        # Oberflächen-Typ 1 für alle Atome (Typ 0 ist reserviert, ADR 0007)
+        t2[..., 1] = 1
+        ctx.set_types(t2)
+        ctx.add_planar_surface(np.array([0.0, 2.0], np.float32), np.array([0.0, 0.3], np.float32))
         z = d["positions"][:, 2]
         parts = [slice(0, n)] if anchors == 1 else [slice(0, n // 2), slice(n // 2, n)]
         anchor_atoms = [int(np.argmin(np.where(~is_h[s], z[s], np.inf))) + s.start for s in parts]

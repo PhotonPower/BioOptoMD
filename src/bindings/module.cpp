@@ -4,6 +4,7 @@
 #include <nanobind/nanobind.h>
 #include <nanobind/ndarray.h>
 #include <nanobind/stl/array.h>
+#include <nanobind/stl/optional.h>
 #include <nanobind/stl/string.h>
 
 #include <algorithm>
@@ -12,6 +13,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -484,8 +486,8 @@ NB_MODULE(_core, m) {
       "Registriert einen EnergyTracker (alle `stride` Schritte, höchstens `capacity` Frames).");
 
   // --- Kraft-Plugins -------------------------------------------------------------------------
-  nb::class_<bomd::PlanarSurfaceForce>(m, "PlanarSurfaceForce",
-                                       "9-3-Wand + Gouy-Chapman, PHYSICS_MODEL.md §4.1.")
+  nb::class_<bomd::PlanarSurfaceForce>(
+      m, "PlanarSurfaceForce", "Wand (9-3/10-4/10-4-3) + Gouy-Chapman, PHYSICS_MODEL.md §4.1.")
       .def("clamp_count", &bomd::PlanarSurfaceForce::clamp_count,
            "Anzahl Auswertungen mit geclamptem Wandabstand.")
       .def("unknown_type_count", &bomd::PlanarSurfaceForce::unknown_type_count,
@@ -495,26 +497,60 @@ NB_MODULE(_core, m) {
           "clamp_distances",
           [](const bomd::PlanarSurfaceForce& f) {
             const auto& z = f.clamp_distances();
-            return vector_to_numpy(z, {z.size()});
+            const std::size_t n_lj = static_cast<std::size_t>(f.params().n_lj_types);
+            return vector_to_numpy(z, {z.size() / n_lj, n_lj});
           },
-          "float32 (n_surface_types,): zeta_c = max(clamp_factor*sigma, zeta_F) [nm], ADR 0008.");
+          "float32 (n_surface_types, n_lj_types): zeta_c = max(clamp_factor*sigma, zeta_F) [nm],\n"
+          "ADR 0008.");
   cls.def(
       "add_planar_surface",
-      [](SimulationContext& c, HostInput<float> epsilon, HostInput<float> sigma, float z0,
-         float clamp_factor, float phi0, float kappa,
-         float max_force) -> bomd::PlanarSurfaceForce& {
-        if (epsilon.ndim() != 1 || sigma.ndim() != 1)
-          throw nb::value_error("epsilon und sigma: 1D-Arrays (n_surface_types,)");
-        bomd::PlanarSurfaceParams p{
-            to_vector(epsilon), to_vector(sigma), z0, clamp_factor, max_force, phi0, kappa};
+      [](SimulationContext& c, HostInput<float> prefactor, HostInput<float> sigma,
+         const std::string& form, float delta, float z0, float clamp_factor, float phi0,
+         std::optional<HostInput<float>> kappa, float max_force,
+         const std::string& gouy_chapman) -> bomd::PlanarSurfaceForce& {
+        if (prefactor.ndim() < 1 || prefactor.ndim() > 2)
+          throw nb::value_error("prefactor: (n_surface_types,) oder (n_surface_types, n_lj_types)");
+        if (sigma.ndim() != prefactor.ndim() || sigma.shape(0) != prefactor.shape(0) ||
+            (sigma.ndim() == 2 && sigma.shape(1) != prefactor.shape(1)))
+          throw nb::value_error("sigma braucht dieselbe Shape wie prefactor");
+        bomd::PlanarSurfaceParams p;
+        if (form == "9-3") {
+          p.form = bomd::WallForm::kWall93;
+        } else if (form == "10-4") {
+          p.form = bomd::WallForm::kWall104;
+        } else if (form == "10-4-3") {
+          p.form = bomd::WallForm::kWall1043;
+        } else {
+          throw nb::value_error("form: '9-3', '10-4' oder '10-4-3'");
+        }
+        if (gouy_chapman != "nonlinear" && gouy_chapman != "linear")
+          throw nb::value_error("gouy_chapman: 'nonlinear' oder 'linear'");
+        p.n_lj_types = prefactor.ndim() == 2 ? static_cast<int>(prefactor.shape(1)) : 1;
+        p.prefactor_kj_mol = to_vector(prefactor);
+        p.sigma_nm = to_vector(sigma);
+        p.delta_nm = delta;
+        p.z0_nm = z0;
+        p.clamp_factor = clamp_factor;
+        p.max_force_kj_mol_nm = max_force;
+        p.phi0_kj_mol_e = phi0;
+        if (kappa) {
+          check_shape(*kappa, {static_cast<std::size_t>(c.n_replicas())}, "kappa");
+          p.kappa_per_nm = to_vector(*kappa);
+        }
+        p.gouy_chapman_linear = gouy_chapman == "linear";
         return static_cast<bomd::PlanarSurfaceForce&>(
             c.add_force(std::make_unique<bomd::PlanarSurfaceForce>(std::move(p))));
       },
-      "epsilon"_a, "sigma"_a, "z0"_a = 0.0f, "clamp_factor"_a = 0.1f, "phi0"_a = 0.0f,
-      "kappa"_a = 0.0f, "max_force"_a = 1.0e6f, nb::rv_policy::reference_internal,
-      "9-3-Wand bei z0 [nm]: epsilon [kJ/mol], sigma [nm] pro Oberflächen-Typ (types[..., 1]);\n"
-      "optional Gouy-Chapman mit phi0 [kJ/(mol e)] und kappa [1/nm]. Clamp bei\n"
-      "zeta_c = max(clamp_factor*sigma, zeta_F) mit |F(zeta_F)| = max_force [kJ/mol/nm].");
+      "prefactor"_a, "sigma"_a, "form"_a = "9-3", "delta"_a = 0.335f, "z0"_a = 0.0f,
+      "clamp_factor"_a = 0.1f, "phi0"_a = 0.0f, "kappa"_a = nb::none(), "max_force"_a = 1.0e6f,
+      "gouy_chapman"_a = "nonlinear", nb::rv_policy::reference_internal,
+      "Wand bei z0 [nm] (ADR 0007): form '9-3' | '10-4' | '10-4-3', Vorfaktor C [kJ/mol] und\n"
+      "sigma [nm] je (Oberflächen-Typ types[..., 1], LJ-Typ types[..., 0]); 1D-Arrays\n"
+      "(n_surface_types,) gelten für alle LJ-Typen. Tabellen baut biooptomd.surface.wall_table.\n"
+      "delta [nm]: Lagenabstand (nur 10-4-3). Clamp bei zeta_c = max(clamp_factor*sigma,\n"
+      "zeta_F) mit |F(zeta_F)| = max_force [kJ/mol/nm]. Optional Gouy-Chapman (OQ-06): phi0 =\n"
+      "Potential der diffusen Schicht [kJ/(mol e)] (nicht das Elektrodenpotential), kappa [1/nm]\n"
+      "je Replica (n_replicas,), T_r aus set_temperatures; gouy_chapman='linear' nur als Test.");
 
   nb::class_<bomd::HarmonicRestraintPullingForce>(
       m, "HarmonicRestraintPullingForce", "Positions-Restraints / Schwerpunkt-Pulling, §4.2.")
@@ -594,7 +630,10 @@ NB_MODULE(_core, m) {
   cls.def(
       "set_nonbonded_tiled",
       [](SimulationContext& c, nb::list topologies, HostInput<int32_t> replica_topology,
-         HostInput<float> kappa, HostInput<float> eps_r, float r_switch, float r_cutoff) {
+         HostInput<float> kappa, HostInput<float> eps_r, float r_switch, float r_cutoff,
+         const std::string& image_sum) {
+        if (image_sum != "auto" && image_sum != "always")
+          throw nb::value_error("image_sum: 'auto' oder 'always'");
         bomd::TiledAllPairsParams p;
         for (nb::handle h : topologies)
           p.topologies.push_back(nonbonded_topology_from_dict(nb::cast<nb::dict>(h)));
@@ -603,13 +642,16 @@ NB_MODULE(_core, m) {
         p.eps_r = to_vector(eps_r);
         p.r_switch_nm = r_switch;
         p.r_cutoff_nm = r_cutoff;
+        p.always_image_sum = image_sum == "always";
         c.set_nonbonded(std::make_unique<bomd::TiledAllPairs>(std::move(p)));
       },
       "topologies"_a, "replica_topology"_a, "kappa"_a, "eps_r"_a, "r_switch"_a = 1.8f,
-      "r_cutoff"_a = 2.0f,
+      "r_cutoff"_a = 2.0f, "image_sum"_a = "auto",
       "Nonbonded (Tiled All-Pairs). topologies: Liste von dicts aus\n"
       "biooptomd.nonbonded.nonbonded_topology(); replica_topology int32 (n_replicas,),\n"
-      "kappa [1/nm], eps_r (n_replicas,), r_switch/r_cutoff [nm]. LJ-Typen aus types[..., 0].\n"
+      "kappa [1/nm], eps_r (n_replicas,), r_switch/r_cutoff [nm] (biooptomd.nonbonded.\n"
+      "cutoff_from_kappa, ADR 0006). LJ-Typen aus types[..., 0]. Bei L_x oder L_y < 2 r_c\n"
+      "Summe über periodische Bilder; image_sum='always' erzwingt sie (Test).\n"
       "Ersetzt eine zuvor gesetzte Nonbonded-Strategie (daher kein zurückgegebenes Handle).");
 
   cls.def(
@@ -726,18 +768,28 @@ NB_MODULE(_core, m) {
   cls.def(
       "add_refractive_index_profiler",
       [](SimulationContext& c, float dz, int n_bins, HostInput<float> alpha,
-         HostInput<float> volume, float z_min, float n_water, float smear_sigma,
+         HostInput<float> volume, float z_min, float n_water, const std::string& smearing,
          int stride) -> bomd::RefractiveIndexProfiler& {
-        bomd::RefractiveIndexParams p{
-            dz, n_bins, z_min, to_vector(alpha), to_vector(volume), n_water, smear_sigma};
+        bomd::LayerSmearing mode;
+        if (smearing == "sphere") {
+          mode = bomd::LayerSmearing::kSphere;
+        } else if (smearing == "gauss") {
+          mode = bomd::LayerSmearing::kGauss;
+        } else if (smearing == "point") {
+          mode = bomd::LayerSmearing::kPoint;
+        } else {
+          throw nb::value_error("smearing: 'sphere', 'gauss' oder 'point'");
+        }
+        bomd::RefractiveIndexParams p{dz,      n_bins, z_min, to_vector(alpha), to_vector(volume),
+                                      n_water, mode};
         return static_cast<bomd::RefractiveIndexProfiler&>(
             c.add_observer(std::make_unique<bomd::RefractiveIndexProfiler>(std::move(p), stride)));
       },
       "dz"_a, "n_bins"_a, "alpha"_a, "volume"_a, "z_min"_a = 0.0f, "n_water"_a = 1.333f,
-      "smear_sigma"_a = 0.0f, "stride"_a = 1, nb::rv_policy::reference_internal,
+      "smearing"_a = "sphere", "stride"_a = 1, nb::rv_policy::reference_internal,
       "Brechungsindexprofil: Schichten der Dicke dz [nm] ab z_min; alpha (α′ [nm^3]) und\n"
-      "volume (v [nm^3]) je Optik-Typ types[..., 1]; n_water; smear_sigma [nm] > 0 verteilt\n"
-      "Atome gaußförmig auf Nachbarschichten.");
+      "volume (v [nm^3]) je Optik-Typ types[..., 1]; n_water. smearing (OQ-02): 'sphere'\n"
+      "(Default, Kugelschnitt mit R = (3v/4π)^(1/3)), 'gauss' (σ = R/√5) oder 'point'.");
 
   // --- VoxelGridForce3D -------------------------------------------------------------------------
   nb::class_<bomd::VoxelGridForce3D>(m, "VoxelGridForce3D", "Externes Gitterpotential, §4.3.");

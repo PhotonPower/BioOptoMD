@@ -71,3 +71,73 @@ def nonbonded(pos, charges, types, table, excluded, box, kappa, eps_r, r_s=1.8, 
     np.add.at(forces, i, f)
     np.add.at(forces, j, -f)
     return v.sum(), forces
+
+
+def nonbonded_lattice(
+    pos,
+    charges,
+    types,
+    table,
+    excluded,
+    box,
+    kappa,
+    eps_r,
+    r_s,
+    r_c,
+    n_max,
+    electrostatics_only=False,
+):
+    """Explizite Gittersumme über periodische Bilder in x/y (ADR 0006 Rev. 2), unabhängig vom
+    Minimum Image: Für alle Paare i < j und alle n = (n_x L_x, n_y L_y), |n_x|, |n_y| ≤ n_max, mit
+    |r_i − r_j + n| < r_c trägt V(|r_i − r_j + n|) bei. Exclusions gelten nur für das Bild mit dem
+    Minimum-Image-Abstand (n = −rint((r_i − r_j)/L), der gebundene Nachbar in seiner nächsten
+    Kopie). Eigenbilder (i = j, n ≠ 0) tragen ½ V(|n|) bei (Kraft 0). n_max muss ⌈r_c/L⌉ + 1
+    übersteigen.
+
+    Returns:
+        Energie [kJ/mol] und Kräfte [kJ/mol/nm] (n, 3); mit electrostatics_only nur Debye-Hückel.
+    """
+    pos = np.asarray(pos, np.float64)
+    q = np.asarray(charges, np.float64)
+    n = len(pos)
+    big_l = np.asarray(box, np.float64)
+    tab = np.asarray(table, np.float64)
+    excl = set()
+    for a, b in np.asarray(excluded, np.int64).reshape(-1, 2):
+        excl.add((min(a, b), max(a, b)))
+    i_all, j_all = np.triu_indices(n, 0)  # inkl. i = j (Eigenbilder)
+    is_excl = np.array([(a, b) in excl for a, b in zip(i_all, j_all, strict=True)], bool)
+    mi_n = -np.rint((pos[i_all, :2] - pos[j_all, :2]) / big_l).astype(
+        np.int64
+    )  # Minimum-Image-Bild
+    energy = 0.0
+    forces = np.zeros_like(pos)
+    for nx in range(-n_max, n_max + 1):
+        for ny in range(-n_max, n_max + 1):
+            shift = np.array([nx * big_l[0], ny * big_l[1], 0.0])
+            at_mi = (mi_n[:, 0] == nx) & (mi_n[:, 1] == ny)
+            keep = ~(is_excl & at_mi) & ((i_all != j_all) | (nx != 0) | (ny != 0))
+            i, j = i_all[keep], j_all[keep]
+            d = pos[i] - pos[j] + shift
+            r2 = np.einsum("ij,ij->i", d, d)
+            ok = (r2 >= EPS_R2) & (r2 < r_c * r_c)
+            i, j, d, r = i[ok], j[ok], d[ok], np.sqrt(r2[ok])
+            if electrostatics_only:
+                v_lj = dv_lj = 0.0
+            else:
+                sig = tab[types[i], types[j], 0]
+                eps = tab[types[i], types[j], 1]
+                sr6 = (sig / r) ** 6
+                v_lj = 4.0 * eps * (sr6 * sr6 - sr6)
+                dv_lj = -4.0 * eps * (12.0 * sr6 * sr6 - 6.0 * sr6) / r
+            v_dh = ONE_4PI_EPS0 * q[i] * q[j] * np.exp(-kappa * r) / (eps_r * r)
+            dv_dh = -v_dh * (kappa + 1.0 / r)
+            s, ds = switch(r, r_s, r_c)
+            v = (v_lj + v_dh) * s
+            dv = (dv_lj + dv_dh) * s + (v_lj + v_dh) * ds
+            weight = np.where(i == j, 0.5, 1.0)
+            energy += float((weight * v).sum())
+            f = (-dv / r * (i != j))[:, None] * d
+            np.add.at(forces, i, f)
+            np.add.at(forces, j, -f)
+    return energy, forces

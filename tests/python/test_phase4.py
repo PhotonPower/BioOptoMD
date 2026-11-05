@@ -12,11 +12,14 @@ import numpy as np
 import pytest
 
 from biooptomd.nonbonded import (
+    cutoff_from_kappa,
+    debye_kappa,
     exclusion_tiles,
     lj_type_table,
     nonbonded_topology,
     padded_atom_count,
     tile_pairs,
+    water_permittivity,
 )
 
 INPUTS = Path(__file__).resolve().parents[1] / "reference" / "inputs"
@@ -312,7 +315,8 @@ def test_nve_full_system(core):
 
 @pytest.mark.gpu
 def test_nonbonded_validation(core):
-    """Box < 2 r_c wird abgelehnt; unbekannter LJ-Typ setzt STATUS_UNKNOWN_TYPE; Typ 0 braucht ε = 0."""
+    """Box < 2 r_c läuft über die Bildsumme (ADR 0006, vorher abgelehnt); unbekannter LJ-Typ setzt
+    STATUS_UNKNOWN_TYPE; Typ 0 braucht ε = 0."""
     rng = np.random.default_rng(45)
     pos, sigma, eps, q, excl = _random_system(rng, 40, 3.9, 10)
     types, topo = nonbonded_topology(64, sigma, eps, excl)
@@ -320,8 +324,8 @@ def test_nonbonded_validation(core):
     ctx.set_nonbonded_tiled(
         [topo], np.zeros(1, np.int32), np.ones(1, np.float32), np.full(1, 78.5, np.float32)
     )
-    with pytest.raises(RuntimeError):
-        ctx.compute_forces()  # 3.9 < 2 · 2.0
+    ctx.compute_forces()  # 3.9 < 2 · 2.0 ⇒ Bildsumme statt Fehler
+    assert ctx.status() == 0 and np.isfinite(ctx.energies()).all()
     ctx.set_box(np.full((1, 2), 4.2, np.float32))
     bad_types = np.zeros((1, 40, 2), np.int32)
     bad_types[0, :, 0] = types
@@ -347,3 +351,159 @@ def test_nonbonded_validation(core):
         ctx.set_nonbonded_tiled(
             [bad], np.zeros(1, np.int32), np.ones(1, np.float32), np.ones(1, np.float32)
         )
+
+
+# --- ADR 0006 Rev. 2: Cutoff aus κ, Summe über periodische Bilder ----------------------------
+
+
+@pytest.mark.gpu
+def test_cutoff_from_kappa(core):
+    """ADR 0006: r_c = max(2 nm, 5/min κ_r), r_s = r_c − 0.2 nm für I = 10/150/1000 mM und für
+    Replicas unterschiedlicher T (κ_r, ε_r(T_r), OQ-10). Der Builder ändert L nie; bei L < 2 r_c
+    rechnet der Kernel über periodische Bilder."""
+    t0 = 298.15
+    eps0 = water_permittivity(t0)
+    assert eps0 == pytest.approx(78.3, abs=0.1)
+    for ionic in (0.01, 0.15, 1.0):
+        kappa = debye_kappa(ionic, t0, eps0)
+        # Faustformel UNITS_AND_CONVENTIONS: κ⁻¹ ≈ 0.304 nm / √I bei 298 K
+        assert 1.0 / kappa == pytest.approx(0.304 / np.sqrt(ionic), rel=5e-3)
+        r_s, r_c = cutoff_from_kappa(kappa)
+        assert r_c == pytest.approx(max(2.0, 5.0 / kappa), rel=1e-12)
+        assert r_s == pytest.approx(r_c - 0.2, rel=1e-12)
+    assert cutoff_from_kappa(debye_kappa(1.0, t0, eps0))[1] == 2.0
+    assert cutoff_from_kappa(debye_kappa(0.01, t0, eps0))[1] == pytest.approx(15.2, abs=0.1)
+
+    temps = np.array([280.0, 300.0, 330.0, 360.0])
+    eps_r = water_permittivity(temps)
+    assert np.all(np.diff(eps_r) < 0), "ε_r von Wasser fällt mit T"
+    kappa_r = debye_kappa(0.15, temps, eps_r)
+    assert len(np.unique(kappa_r)) == len(temps)
+    _, r_c = cutoff_from_kappa(kappa_r)
+    assert r_c == pytest.approx(5.0 / kappa_r.min(), rel=1e-12)
+    with pytest.raises(ValueError):
+        cutoff_from_kappa([0.0, 1.0])  # ohne Salz kein Cutoff aus κ
+
+    # L = 3 nm bei 10 mM (r_c ≈ 15 nm): Box bleibt, Energie gleich der Gittersumme.
+    rng = np.random.default_rng(46)
+    n, box = 24, 3.0
+    pos, _, _, q, excl = _random_system(rng, n, box, 6)
+    kappa = debye_kappa(0.01, temps[:2], water_permittivity(temps[:2])).astype(np.float32)
+    r_s, r_c = cutoff_from_kappa(kappa)
+    types, topo = nonbonded_topology(32, np.zeros(n), np.zeros(n), excl)
+    ctx = _context(core, 2, n, (box, box), np.stack([pos, pos]), np.stack([q, q]), types)
+    ctx.set_nonbonded_tiled(
+        [topo], np.zeros(2, np.int32), kappa, water_permittivity(temps[:2]).astype(np.float32),
+        r_switch=r_s, r_cutoff=r_c,
+    )  # fmt: skip
+    ctx.compute_forces()
+    np.testing.assert_array_equal(ctx.box(), np.full((2, 2), box, np.float32))
+    e = ctx.energies()[:, NB_COL]
+    for r in range(2):
+        e_ref, _ = nr.nonbonded_lattice(
+            _f32(pos), _f32(q), types, topo["lj_table"], excl, (box, box), float(kappa[r]),
+            float(np.float32(water_permittivity(temps[r]))), float(np.float32(r_s)),
+            float(np.float32(r_c)), 8, electrostatics_only=True,
+        )  # fmt: skip
+        assert e[r] == pytest.approx(e_ref, rel=1e-3)
+    assert ctx.status() == 0
+
+
+@pytest.mark.gpu
+def test_image_sum_vs_lattice_reference(core):
+    """L < 2 r_c: elektrostatische Energie und Kräfte vs. NumPy-Gittersumme mit großem n_max
+    (rel. RMS-Kraftfehler < 1e-3, Energie rel. < 1e-3). Replicas: quadratische Box, anisotrope
+    Box (nur L_y < 2 r_c) und L ≥ 2 r_c; Exclusions nur für das Nullbild. Zusätzlich LJ + DH."""
+    rng = np.random.default_rng(47)
+    n = 40
+    kappa, eps_r, r_s, r_c = 0.8, 78.5, 6.05, 6.25  # r_c = 5/κ
+    boxes = [(3.0, 3.0), (13.0, 4.5), (12.6, 12.6)]
+    systems = [_random_system(rng, n, min(b), 12) for b in boxes]
+    for elec_only in (True, False):
+        topos, all_types = [], []
+        for _, sigma, eps, _, excl in systems:
+            s = np.zeros(n) if elec_only else sigma
+            e_ = np.zeros(n) if elec_only else eps
+            t, topo = nonbonded_topology(64, s, e_, excl)
+            topos.append(topo)
+            all_types.append(t)
+        ctx = core.SimulationContext(3, n)
+        ctx.set_box(np.array(boxes, np.float32))
+        ctx.set_masses(np.full((3, n), 12.0, np.float32))
+        ctx.set_positions(np.stack([s[0] for s in systems]).astype(np.float32))
+        ctx.set_charges(np.stack([s[3] for s in systems]).astype(np.float32))
+        t2 = np.zeros((3, n, 2), np.int32)
+        t2[..., 0] = np.stack(all_types)
+        ctx.set_types(t2)
+        ctx.set_nonbonded_tiled(
+            topos, np.arange(3, dtype=np.int32), np.full(3, kappa, np.float32),
+            np.full(3, eps_r, np.float32), r_switch=r_s, r_cutoff=r_c,
+        )  # fmt: skip
+        ctx.compute_forces()
+        f = ctx.forces()[:, :n, :3].astype(np.float64)
+        e = ctx.energies()[:, NB_COL]
+        for r, (pos, _, _, q, excl) in enumerate(systems):
+            e_ref, f_ref = nr.nonbonded_lattice(
+                _f32(pos), _f32(q), all_types[r], topos[r]["lj_table"].astype(np.float64), excl,
+                boxes[r], float(np.float32(kappa)), eps_r, r_s, r_c, 8,
+                electrostatics_only=elec_only,
+            )  # fmt: skip
+            rel_rms = _rms(f[r] - f_ref) / _rms(f_ref)
+            assert rel_rms < 1e-3, (elec_only, r, rel_rms)
+            assert e[r] == pytest.approx(e_ref, rel=1e-3), (elec_only, r)
+            if r == 2:  # L ≥ 2 r_c: Bildsumme = Minimum Image
+                e_mi, _ = nr.nonbonded(
+                    _f32(pos), _f32(q), all_types[r], topos[r]["lj_table"].astype(np.float64),
+                    excl, boxes[r], float(np.float32(kappa)), eps_r, r_s, r_c,
+                )  # fmt: skip
+                assert e_mi == pytest.approx(e_ref, rel=1e-10)
+        assert ctx.status() == 0
+        assert not ctx.forces()[:, n:].any(), "Padding-Atome erhalten Kraft"
+
+
+@pytest.mark.gpu
+def test_image_sum_self_images(core):
+    """Einzelnes geladenes Atom in kleiner Box: Energie = ½ Σ_{n≠0} V_DH(|n|)·S(|n|), Kraft = 0."""
+    kappa, eps_r, r_s, r_c = 0.5, 78.5, 9.8, 10.0
+    for box in ((2.0, 2.0), (1.5, 3.5)):
+        ctx = _context(core, 1, 1, box, [[[0.7, 1.1, 0.4]]], [[1.6]], np.zeros((1, 1), np.int32))
+        _, topo = nonbonded_topology(32, np.zeros(1), np.zeros(1), np.zeros((0, 2), int))
+        ctx.set_nonbonded_tiled(
+            [topo], np.zeros(1, np.int32), np.full(1, kappa, np.float32),
+            np.full(1, eps_r, np.float32), r_switch=r_s, r_cutoff=r_c,
+        )  # fmt: skip
+        ctx.compute_forces()
+        n_max = 12
+        nx, ny = np.meshgrid(np.arange(-n_max, n_max + 1), np.arange(-n_max, n_max + 1))
+        dist = np.hypot(nx * box[0], ny * box[1]).ravel()
+        dist = dist[(dist > 0) & (dist < r_c)]
+        s, _ = nr.switch(dist, r_s, r_c)
+        q = float(np.float32(1.6))
+        e_ref = 0.5 * np.sum(nr.ONE_4PI_EPS0 * q * q * np.exp(-kappa * dist) / (eps_r * dist) * s)
+        assert ctx.energies()[0, NB_COL] == pytest.approx(e_ref, rel=1e-5)
+        assert not ctx.forces().any(), "Eigenbilder dürfen keine Kraft erzeugen"
+
+
+@pytest.mark.gpu
+def test_image_sum_reduces_to_minimum_image(core):
+    """L ≥ 2 r_c: Bildpfad (erzwungen) und Minimum-Image-Pfad liefern bis auf Rundung dieselben
+    Kräfte und Energien (Nonbonded-System aus test_pair_vs_numpy). Beide Pfade summieren dieselben
+    Paare in derselben Reihenfolge; die Template-Instanzen unterscheiden sich nur in der
+    FMA-Kontraktion (gemessen ~1e-6 der RMS-Kraft). Schranke daher die FP32-Genauigkeit des Kernels
+    aus test_pair_vs_numpy (1e-5 der RMS-Kraft, Energie 1e-5 relativ)."""
+    rng = np.random.default_rng(48)
+    n, box = 130, 4.2
+    pos, sigma, eps, q, excl = _random_system(rng, n, box, 60)
+    types, topo = nonbonded_topology(padded_atom_count(n), sigma, eps, excl)
+    results = []
+    for mode in ("auto", "always"):
+        ctx = _context(core, 1, n, (box, box), pos[None], q[None], types[None])
+        ctx.set_nonbonded_tiled(
+            [topo], np.zeros(1, np.int32), np.full(1, KAPPA, np.float32),
+            np.full(1, EPS_R, np.float32), image_sum=mode,
+        )  # fmt: skip
+        ctx.compute_forces()
+        results.append((ctx.forces()[0, :n, :3].astype(np.float64), ctx.energies()[0, NB_COL]))
+    (f_mi, e_mi), (f_img, e_img) = results
+    assert np.abs(f_img - f_mi).max() < 1e-5 * _rms(f_mi)
+    assert e_img == pytest.approx(e_mi, rel=1e-5)
