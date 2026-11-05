@@ -222,6 +222,27 @@ Dokumentation, Verzeichnisstruktur, Agenten-Anweisungen, Build-Entwürfe.
 - `test_phase9_remd.py::test_remd_multiple_ladders`, `::test_remd_explicit_screening_ladders` –
   Entscheidungen, Zähler und Zustandsparameter je Leiter exakt wie unabhängig berechnet.
 
+### Phase 9.5 – ImageChargeForce (ADR 0013, Proposed; vom Projektinhaber am 2026-11-05 gewählt)
+
+**Aufgaben**
+1. NumPy-Referenz `tests/reference/image_charge_ref.py` (Energie, Kräfte, Minimum Image und Gittersumme).
+2. Plugin `src/forces/image_charge.{hpp,cu}`: Tile-Pass mit gespiegelten j-Koordinaten, Vorauswahl in z,
+   Clamping-Zähler, `set_screening`; Bindings `add_image_charges`.
+3. Builder: `image_charges=True` (z_top, κ, ε_r, r_c aus Kontext und Material).
+
+**Abnahmetests (Vorschlag, Bestätigung durch den Projektinhaber offen)**
+- `test_phase9_image.py::test_image_reference_dirichlet` (`reference`) – Potential von Ladungen + Bildern
+  auf der Ebene z_im verschwindet (< 1e-12 relativ, ohne Switching); Eigenbildenergie einer Ladung
+  analytisch; Kräfte der Referenz vs. finite Differenzen rel. < 1e-6.
+- `::test_image_gpu_vs_numpy` (`reference`) – Energie rel. < 1e-5, Kräfte < 1e-4 RMS, mehrere Replicas mit
+  verschiedenem κ/ε_r, Minimum-Image- und Bildsummenpfad, f = 1 und f = −0.5.
+- `::test_image_far_atoms_zero` – Atome mit ζ > r_c erhalten exakt null Bildkraft (Vorauswahl).
+- `::test_image_clamp` – ζ < ζ_c: Energie stetig, Kraft in z null, Zähler zählt.
+- `::test_image_set_screening` – nach `set_screening` gleich einem frischen Kontext (REMD).
+- `::test_image_nve` (`slow`) – DH + Wand + Bilder, NVE-Drift < 1e-4 kJ/mol/ps/Atom wie test_gb_nve.
+- `::test_image_determinism` – zwei Läufe bitidentisch.
+- Messung (kein Kriterium): Kosten des Passes für ein Aptamer auf Gold relativ zu Debye-Hückel.
+
 - Generalized Born OBC2 (ADR 0004)
 - Replica-Exchange-Moves (Temperatur-Austausch auf Host-Seite)
 - `ImageChargeForce` für Metalloberflächen

@@ -26,6 +26,11 @@ Alle PRs #1–#6, #9–#14 am 2026-11-05 nach `main` gemergt (Merge-Commits, Rei
 - Phase 5 (PR #5): HMR, SHAKE/RATTLE auf H-Bindungen, N_dof. Abgenommen 2026-11-03; Nacharbeit nach
   Review siehe unten.
 
+## Phase 9.5 – ImageChargeForce, Entwurf (Branch `phase-9/image-charge`)
+- ADR 0013 (Proposed): abgeschirmte Bildladungen an einer leitfähigen Ebene (im DH-Modell exakt),
+  Bildfaktor f, Bildebene z_im, Plugin mit eigenem Tile-Pass. Abnahmekriterien als Vorschlag in der
+  ROADMAP; neue OQ-18 (Bildebene Au(111), Faktor für Graphen). Implementierung nach Annahme des ADR.
+
 ## Phase 9.4 – Validierung GBn2 + OL21 (OQ-15), in Arbeit
 - OL21 ist in OpenMM 8.6 vorhanden (`amber19/DNA.OL21.xml`), kompatibel mit `implicit/gbn2.xml` und
   `obc2.xml` (frühere Notiz „OL21 nicht verfügbar“ war falsch).
