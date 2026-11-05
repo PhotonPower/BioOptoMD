@@ -2,8 +2,8 @@
 
 > Diese Datei wird am Ende **jeder** Arbeitssitzung aktualisiert (AGENTS.md §2.4).
 
-**Aktive Phase:** 8 – Performance & Benchmark: implementiert (Branch `phase-8/benchmark`, auf PR #10),
-Abnahme durch den Projektinhaber ausstehend.
+**Aktive Phase:** 9+ – Erweiterungen (Reihenfolge nach Forschungsbedarf, Entscheidung des Projektinhabers).
+**Phase 8 abgenommen** am 2026-11-05 durch den Projektinhaber (RTX 3090, PR #11).
 **Phase 7 abgenommen** am 2026-11-05 durch den Projektinhaber (RTX 3090).
 **Nachrüstung (PR #9) abgenommen** am 2026-11-05 durch den Projektinhaber (RTX 3090).
 **Phase 6 abgenommen** am 2026-11-04 durch den Projektinhaber (RTX 3090), vor den neuen Abnahmetests.
@@ -23,7 +23,7 @@ Abnahme durch den Projektinhaber ausstehend.
 - Phase 5 (PR #5): HMR, SHAKE/RATTLE auf H-Bindungen, N_dof. Abgenommen 2026-11-03; Nacharbeit nach
   Review siehe unten.
 
-## Phase 8 – erledigt, Abnahme ausstehend (Branch `phase-8/benchmark`)
+## Phase 8 – erledigt, abgenommen 2026-11-05 (PR #11)
 - `benchmarks/throughput.py`: BioOptoMD vs. OpenMM 8.6.1 (CUDA, mixed) mit gleichem Modell (DH, r_c aus κ
   = 3.92 nm, HMR, H-Constraints 1e-6, 4 fs). Ergebnis (RTX 3090, 3 Läufe, `benchmarks/README.md`):
   1 × 20 k Faktor 0.59, **32 × 2 k Faktor 3.52 (3.46–3.68), Ziel ≥ 3 erfüllt**, 128 × 1 k Faktor 9.7.
@@ -167,6 +167,7 @@ ADR 0007 → **0009** (Mixed Precision), unsere OQ-08…11 → **OQ-11…14**.
 | 2026-11-05 | Claude Opus 5.5 | `origin/main` (PR #7 Review/ADR-Entscheidungen, PR #8 Build-Umgebung RTX 6000 Ada) in den Phasen-Stapel gemergt. Doppelte Nummern aufgelöst: unsere ADR 0006 → **0008** (Kraftschranke/Statusflags), ADR 0007 → **0009** (Mixed Precision), unsere OQ-08…11 → **OQ-11…14**. ADR 0006/0007 auf `main` (Cutoff aus κ, Wandformen) gelten unverändert. |
 | 2026-11-05 | Projektinhaber | Nachrüstung (PR #9) abgenommen; weiter mit Phase 7. |
 | 2026-11-05 | Projektinhaber | Phase 7 (PR #10) abgenommen; weiter mit Phase 8. |
+| 2026-11-05 | Projektinhaber | Phase 8 (PR #11) abgenommen; weiter mit Phase 9+. |
 | 2026-11-05 | Claude Opus 5.5 | Phase 8: Benchmark vs. OpenMM (32×2k Faktor 3.5), Tile-Vorauswahl, M-SHAKE/RATTLE; Review umgesetzt, 94/94 Tests grün. |
 | 2026-11-05 | Claude Opus 5.5 | Phase 7 implementiert (PR #10): Builder, Checkpoints, DCD/HDF5, Analyse, Beispiel + End-to-End-Test; Review umgesetzt. |
 | 2026-11-05 | Claude Opus 5.5 | Nachrüstung Phasen 2/4/6 (PR #9): Wandformen + Mischungsregeln, nichtlineares GC, κ-Cutoff + Bildsumme, Kugelschnitt-Verschmierung, optische Normierung; Review umgesetzt. Offen: zwei `reference`-Tests aus Phase 6 (s. o.). |
