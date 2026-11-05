@@ -22,14 +22,14 @@ def _rms(f):
     return np.sqrt(np.mean(np.asarray(f) ** 2))
 
 
-def _duplex(kappa=KAPPA):
-    """OpenMM-System mit OBC2 (ACE) und Salz, Topologie, Positionen [nm]."""
+def _duplex(kappa=KAPPA, gb_xml="implicit/obc2.xml"):
+    """OpenMM-System mit GB (Default OBC2, ACE) und Salz, Topologie, Positionen [nm]."""
     from openmm import app, unit
 
     pdb = app.PDBFile(str(PDB))
     mod = app.Modeller(pdb.topology, pdb.positions)
     mod.delete([c for c in mod.topology.chains() if c.id not in ("A", "B")])
-    ff = app.ForceField("amber14/DNA.OL15.xml", "implicit/obc2.xml")
+    ff = app.ForceField("amber14/DNA.OL15.xml", gb_xml)
     system = ff.createSystem(
         mod.topology, nonbondedMethod=app.NoCutoff, constraints=None,
         implicitSolventKappa=kappa / unit.nanometer,

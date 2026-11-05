@@ -191,6 +191,22 @@ Dokumentation, Verzeichnisstruktur, Agenten-Anweisungen, Build-Entwürfe.
 - `test_phase9_remd.py::test_set_screening` – set_screening wirkt auf Nonbonded (DH/GB) und Gouy-Chapman, im GB-Modus
   nicht auf die 1-4-Terme.
 
+### Phase 9.3 – GB-neck2 (ADR 0012, Proposed; Reihenfolge vom Projektinhaber am 2026-11-05 festgelegt)
+
+**Aufgaben**
+1. NumPy-Referenz um GBn2 erweitern (Offset, α/β/γ je Atom, Neck-Term).
+2. Kernel: Neck-Term und α/β/γ je Atom im bestehenden GB-Kernel; Bindings.
+3. Builder: Parameter und Neck-Tabellen aus `implicit/gbn2.xml`, `solvent="gb-gbn2"`.
+
+**Abnahmetests (Vorschlag, mit ADR 0012 vom Projektinhaber zu bestätigen)**
+- `test_phase9_gbn2.py::test_gbn2_reference_vs_openmm` (`reference`) – Energie rel. < 1e-6, Kräfte < 1e-5 RMS;
+  Tabellenausrichtung geprüft.
+- `test_phase9_gbn2.py::test_gbn2_reference_forces_fd` – Kräfte inkl. Neck vs. finite Differenzen, rel. < 1e-5.
+- `test_phase9_gbn2.py::test_gbn2_gpu_vs_numpy` (`reference`), `::test_gbn2_cutoff_and_images_vs_numpy` – Born-Radien
+  rel. < 1e-5, Energie rel. < 1e-5, Kräfte < 1e-4 RMS (Minimum-Image- und Bildsummenpfad).
+- `test_phase9_gbn2.py::test_gbn2_vs_openmm` (`reference`) – Builder-Weg gesamt vs. OpenMM, Energie/Kräfte < 1e-4.
+- `test_phase9_gbn2.py::test_gbn2_nve` (`slow`) – NVE wie test_gb_nve (0.5 fs), Drift < 1e-4.
+
 - Generalized Born OBC2 (ADR 0004)
 - Replica-Exchange-Moves (Temperatur-Austausch auf Host-Seite)
 - `ImageChargeForce` für Metalloberflächen

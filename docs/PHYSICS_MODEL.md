@@ -51,7 +51,7 @@ Switching wie OpenMM (`useSwitchingFunction`): `V = (V_LJ + V_el)·S(r)` mit `S 
 `tests/reference/gb_ref.py`. Für r ≫ B geht E_C + E_GB in die Debye-Hückel-Form über, daher gelten
 Cutoff aus κ, Switching des kombinierten Paars und Bildsumme unverändert. Ausgeschlossene Paare tragen
 nur E_GB bei (ohne Switching), Born-Integrale werden bei r_c hart abgeschnitten. Kosten ≈ 3× DH
-(drei Tile-Passes). Grenzen: OBC2 statt GB-neck2 für Nukleinsäuren (OQ-15), keine dielektrische
+(drei Tile-Passes). GB-neck2 (Phase 9.3, ADR 0012, `solvent="gb-gbn2"`): mbondi3, α/β/γ je Atom, Neck-Term aus den OpenMM-Tabellen (Stufe bei ρ_i + ρ_j + 0.68 nm wie AMBER igb = 8). Grenzen: OBC2 statt GB-neck2 für Nukleinsäuren (OQ-15), keine dielektrische
 Grenze an der Oberfläche (OQ-16).
 
 **Exclusions:** 1-2 und 1-3 vollständig ausgeschlossen, 1-4 im Non-Bonded-Kernel ausgeschlossen (werden in der Bonded-Stufe skaliert berechnet). Kodierung als 32-bit-Bitmaske pro (Atom, Tile).

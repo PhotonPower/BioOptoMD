@@ -1,4 +1,14 @@
-"""NumPy-Referenz (FP64) für Generalized Born OBC2 mit Salz (ADR 0010, AMBER igb = 5).
+"""NumPy-Referenz (FP64) für Generalized Born OBC2 (AMBER igb = 5, ADR 0010) und GB-neck2 (igb = 8,
+ADR 0012) mit Salz.
+
+GBn2 (Modell-dict, :func:`gbn2_model`): Offset δ = 0.0195141 nm, α, β, γ je Atom, und zusätzlich zum
+HCT-Integral der Neck-Term
+
+    I_i += s_neck · m0_ij / (1 + 100 (r − d0_ij)² + 3·10⁵ (r − d0_ij)⁶)   für r < ρ_i + ρ_j + 0.68 nm
+
+(s_neck = 0.826836, m0/d0 aus der OpenMM-Tabelle je Radiusindexpaar; die Stufe bei
+ρ_i + ρ_j + 0.68 nm ist Teil des AMBER-Modells).
+
 
 Mit ρ_i (intrinsischer Radius), δ = 0.009 nm, or_i = ρ_i − δ, sr_i = s_i · or_i, C = ONE_4PI_EPS0:
 
@@ -56,10 +66,38 @@ def h_integral(r, o, s):
     return np.where(active, h, 0.0), np.where(active, dh, 0.0)
 
 
-def born_radii(integral, rho):
-    """B_i und dB_i/dI_i (OBC2)."""
-    a, b, g = OBC2
-    o = rho - OFFSET
+NECK_SCALE = 0.826836
+NECK_CUT = 0.68  # nm
+
+
+def obc2_model(n):
+    """Modellparameter OBC2 (igb = 5)."""
+    abg = np.tile(np.array(OBC2), (n, 1))
+    return {"offset": OFFSET, "abg": abg, "neck": None}
+
+
+def gbn2_model(alpha_beta_gamma, neck_index, m0, d0):
+    """Modellparameter GBn2 (igb = 8): α, β, γ (n, 3), Radiusindex (n,), m0 [1/nm], d0 [nm] (U, U)."""
+    return {
+        "offset": 0.0195141,
+        "abg": np.asarray(alpha_beta_gamma, np.float64),
+        "neck": (np.asarray(neck_index), np.asarray(m0, np.float64), np.asarray(d0, np.float64)),
+    }
+
+
+def neck_integral(r, m0, d0):
+    """Neck-Term m0/(1 + 100 x² + 3·10⁵ x⁶), x = r − d0 [nm], und Ableitung nach r."""
+    x = r - d0
+    den = 1.0 + 100.0 * x**2 + 3.0e5 * x**6
+    return m0 / den, -m0 * (200.0 * x + 1.8e6 * x**5) / den**2
+
+
+def born_radii(integral, rho, model=None):
+    """B_i und dB_i/dI_i (OBC2 oder GBn2 mit α, β, γ je Atom)."""
+    if model is None:
+        model = obc2_model(len(rho))
+    a, b, g = model["abg"].T
+    o = rho - model["offset"]
     psi = integral * o
     x = a * psi - b * psi**2 + g * psi**3
     th = np.tanh(x)
@@ -92,21 +130,24 @@ def _image_pairs(pos, box, n_max, r_c):
 
 def gb_nonbonded(
     pos, q, rho, scale, types, table, excluded, kappa, eps_out, eps_in=1.0, box=None, n_max=0,
-    r_s=None, r_c=None, ace=True,
+    r_s=None, r_c=None, ace=True, model=None,
 ):  # fmt: skip
     """Energie [kJ/mol], Kräfte [kJ/mol/nm] (n, 3), Born-Radien [nm] und Energieterme.
 
     Args:
         pos (n, 3) [nm]; q (n,) [e]; rho, scale (n,) GB-Parameter; types/table: LJ wie
         nonbonded_ref; excluded (m, 2); kappa [1/nm]; eps_out, eps_in; box (L_x, L_y) oder None;
-        n_max Bilder je Richtung; r_s, r_c [nm] oder None (kein Cutoff).
+        n_max Bilder je Richtung; r_s, r_c [nm] oder None (kein Cutoff); model: OBC2 (Default)
+        oder :func:`gbn2_model`.
     """
     if box is not None and n_max < 1:
         raise ValueError("gb_nonbonded: periodisch nur mit n_max ≥ 1 (kein Minimum Image)")
     pos = np.asarray(pos, np.float64)
     q = np.asarray(q, np.float64)
     rho = np.asarray(rho, np.float64)
-    o = rho - OFFSET
+    if model is None:
+        model = obc2_model(len(rho))
+    o = rho - model["offset"]
     sr = np.asarray(scale, np.float64) * o
     n = len(pos)
     tab = np.asarray(table, np.float64)
@@ -125,6 +166,15 @@ def gb_nonbonded(
     # Born-Integrale (beide Richtungen; Eigenbild: jede Verschiebung zählt einmal für i)
     h_ij, dh_ij = h_integral(r, o[i], sr[j])  # Beitrag zu I_i durch j
     h_ji, dh_ji = h_integral(r, o[j], sr[i])  # Beitrag zu I_j durch i
+    if model["neck"] is not None:  # GBn2: Neck-Term (Stufe bei ρ_i + ρ_j + 0.68 nm)
+        idx, m0, d0 = model["neck"]
+        inside = r < rho[i] + rho[j] + NECK_CUT
+        n_ij, dn_ij = neck_integral(r, m0[idx[i], idx[j]], d0[idx[i], idx[j]])
+        n_ji, dn_ji = neck_integral(r, m0[idx[j], idx[i]], d0[idx[j], idx[i]])
+        h_ij = h_ij + np.where(inside, NECK_SCALE * n_ij, 0.0)
+        dh_ij = dh_ij + np.where(inside, NECK_SCALE * dn_ij, 0.0)
+        h_ji = h_ji + np.where(inside, NECK_SCALE * n_ji, 0.0)
+        dh_ji = dh_ji + np.where(inside, NECK_SCALE * dn_ji, 0.0)
     if r_c is not None:  # geglätteter Cutoff der Born-Integrale (ADR 0010)
         s_h, ds_h = switch(r, r_s, r_c)
         h_ij, dh_ij = h_ij * s_h, dh_ij * s_h + h_ij * ds_h
@@ -132,7 +182,7 @@ def gb_nonbonded(
     integral = np.zeros(n)
     np.add.at(integral, i, h_ij)
     np.add.at(integral, j, np.where(self_img, 0.0, h_ji))  # Eigenbilder: n und −n je einmal
-    born, dborn = born_radii(integral, rho)
+    born, dborn = born_radii(integral, rho, model)
 
     c = ONE_4PI_EPS0
     ex_b = np.exp(-kappa * born)

@@ -41,8 +41,13 @@ class SystemSpec:
         elements: Elementsymbole (n,), z. B. für H-Erkennung und Typzuweisung.
         positions: Startpositionen [nm] (n, 3) oder None.
         atom_names, residue_names: optionale Namen (n,) für Atomauswahl.
-        gb_radius: intrinsischer GB-Radius ρ [nm] (n,) oder None (ADR 0010, aus ``implicit/obc2.xml``).
+        gb_radius: intrinsischer GB-Radius ρ [nm] (n,) oder None (ADR 0010/0012, aus
+            ``implicit/obc2.xml`` bzw. ``implicit/gbn2.xml``).
         gb_scale: HCT-Skalierungsfaktor s (n,) oder None.
+        gb_model: ``"obc2"`` oder ``"gbn2"`` (None ohne GB).
+        gb_abg: (α, β, γ) je Atom (n, 3) (GBn2; OBC2: 1, 0.8, 4.85).
+        gb_neck_index: Radiusindex je Atom (n,) für die Neck-Tabellen (nur GBn2).
+        gb_neck_m0, gb_neck_d0: Neck-Tabellen (U, U) [1/nm] bzw. [nm], Index (Atom i, Atom j).
     """
 
     masses: np.ndarray
@@ -57,6 +62,11 @@ class SystemSpec:
     residue_names: np.ndarray | None = None
     gb_radius: np.ndarray | None = None
     gb_scale: np.ndarray | None = None
+    gb_model: str | None = None
+    gb_abg: np.ndarray | None = None
+    gb_neck_index: np.ndarray | None = None
+    gb_neck_m0: np.ndarray | None = None
+    gb_neck_d0: np.ndarray | None = None
 
     @property
     def n_atoms(self) -> int:
@@ -174,9 +184,7 @@ def from_openmm(system, topology=None, positions=None) -> SystemSpec:
         psig.append(s.value_in_unit(nm))
         peps.append(ep)
     masses = np.array([system.getParticleMass(i).value_in_unit(unit.dalton) for i in range(n)])
-    gb_radius = gb_scale = None
-    if "CustomGBForce" in forces:
-        gb_radius, gb_scale = _obc2_parameters(forces["CustomGBForce"], q)
+    gb = _gb_parameters(forces["CustomGBForce"], q) if "CustomGBForce" in forces else {}
 
     def idx(x, arity):
         return np.asarray(x, np.int32).reshape(-1, arity)
@@ -212,30 +220,48 @@ def from_openmm(system, topology=None, positions=None) -> SystemSpec:
     return SystemSpec(
         masses=masses, charges=q, sigma=sig, epsilon=eps, bonded=bonded,
         excluded=idx(excluded, 2), elements=elements, positions=positions,
-        atom_names=atom_names, residue_names=residue_names, gb_radius=gb_radius, gb_scale=gb_scale,
+        atom_names=atom_names, residue_names=residue_names, **gb,
     )  # fmt: skip
 
 
-GB_OFFSET = 0.009  # nm, Radius-Offset von OBC (ADR 0010)
+GB_OFFSET = {"obc2": 0.009, "gbn2": 0.0195141}  # nm, Radius-Offset (ADR 0010, ADR 0012)
 
 
-def _obc2_parameters(gb, charges):
-    """(ρ, s) aus einer OpenMM-``CustomGBForce`` von ``implicit/obc2.xml`` (Parameter charge, or, sr).
+def _gb_parameters(gb, charges):
+    """GB-Parameter aus einer OpenMM-``CustomGBForce`` von ``implicit/obc2.xml`` (charge, or, sr)
+    oder ``implicit/gbn2.xml`` (charge, or, sr, alpha, beta, gamma, radindex; Tabellen getm0/getd0).
 
-    Prüft, dass es OBC2 ist (Born-Radius-Ausdruck mit 0.8/4.85) und die Ladungen mit der
-    NonbondedForce übereinstimmen; ρ = or + 0.009 nm, s = sr/or. ε_in, ε_out, κ und der SA-Term des
-    OpenMM-Systems werden nicht übernommen – sie kommen aus :func:`build_context`.
+    Prüft das Modell am Born-Radius-Ausdruck und die Ladungen gegen die NonbondedForce;
+    ρ = or + δ, s = sr/or. ε_in, ε_out, κ und der SA-Term des OpenMM-Systems werden nicht
+    übernommen – sie kommen aus :func:`build_context`. Die Neck-Tabellen werden so übernommen, wie
+    OpenMM sie interpoliert hat (Discrete2DFunction, Wert(x, y) = values[x + U·y]).
     """
     names = [gb.getPerParticleParameterName(k) for k in range(gb.getNumPerParticleParameters())]
-    if names != ["charge", "or", "sr"]:
-        raise ValueError(f"from_openmm: CustomGBForce mit Parametern {names} ist kein OBC2")
     exprs = [gb.getComputedValueParameters(k)[1] for k in range(gb.getNumComputedValues())]
-    if not any("0.8*psi^2+4.85*psi^3" in e for e in exprs):
-        raise ValueError("from_openmm: nur GB-OBC2 (implicit/obc2.xml) wird unterstützt (ADR 0010)")
     par = np.array([gb.getParticleParameters(i) for i in range(gb.getNumParticles())], np.float64)
-    if not np.allclose(par[:, 0], charges, rtol=0, atol=1e-12):
+    if par.size and not np.allclose(par[:, 0], charges, rtol=0, atol=1e-12):
         raise ValueError("from_openmm: Ladungen in CustomGBForce und NonbondedForce verschieden")
-    return par[:, 1] + GB_OFFSET, par[:, 2] / par[:, 1]
+    if names == ["charge", "or", "sr"] and any("0.8*psi^2+4.85*psi^3" in e for e in exprs):
+        n = len(par)
+        return {
+            "gb_model": "obc2", "gb_radius": par[:, 1] + GB_OFFSET["obc2"],
+            "gb_scale": par[:, 2] / par[:, 1], "gb_abg": np.tile([1.0, 0.8, 4.85], (n, 1)),
+        }  # fmt: skip
+    gbn2_names = ["charge", "or", "sr", "alpha", "beta", "gamma", "radindex"]
+    if names == gbn2_names and any("neckScale=0.826836" in e for e in exprs):
+        tables = {}
+        for k in range(gb.getNumTabulatedFunctions()):
+            xs, ys, values = gb.getTabulatedFunction(k).getFunctionParameters()
+            tables[gb.getTabulatedFunctionName(k)] = np.asarray(values).reshape(ys, xs).T
+        return {
+            "gb_model": "gbn2", "gb_radius": par[:, 1] + GB_OFFSET["gbn2"],
+            "gb_scale": par[:, 2] / par[:, 1], "gb_abg": par[:, 3:6].copy(),
+            "gb_neck_index": par[:, 6].astype(np.int32), "gb_neck_m0": tables["getm0"],
+            "gb_neck_d0": tables["getd0"],
+        }  # fmt: skip
+    raise ValueError(
+        f"from_openmm: CustomGBForce {names} ist weder OBC2 noch GBn2 (ADR 0010, ADR 0012)"
+    )
 
 
 def from_parmed(structure) -> SystemSpec:
@@ -296,7 +322,8 @@ def build_context(
             r_s = r_c − ``switch_width`` [nm].
         types: (n,) Oberflächen-/Optik-Typ je Atom (``types[..., 1]``). Default 1 für alle Atome
             (Typ 0 = keine Wand, nur für Anker, ADR 0007); siehe :func:`assign_types`.
-        solvent: ``"debye-huckel"`` (V1) oder ``"gb-obc2"`` (ADR 0010; braucht ``spec.gb_radius``
+        solvent: ``"debye-huckel"`` (V1), ``"gb-obc2"`` oder ``"gb-gbn2"`` (ADR 0010/0012; das Modell
+            muss zu ``spec.gb_model`` passen; braucht ``spec.gb_radius``
             aus einem System mit ``implicit/obc2.xml``). Bei GB ist ε_r das Lösungsmittel-ε_out,
             Coulomb (auch 1-4) wird mit ε_in = 1 unabgeschirmt gerechnet; die Abschirmung steckt im
             GB-Term. ``ace``: unpolarer ACE-Term (nur GB).
@@ -355,19 +382,23 @@ def build_context(
     if solvent == "debye-huckel":
         ctx.add_bonded([bonded], zeros, k32, e32)
         ctx.set_nonbonded_tiled([nbt], zeros, k32, e32, r_switch=r_s, r_cutoff=r_c)
-    elif solvent == "gb-obc2":
-        if spec.gb_radius is None:
-            raise ValueError("build_context: GB-Parameter fehlen (System mit implicit/obc2.xml)")
+    elif solvent in ("gb-obc2", "gb-gbn2"):
+        model = solvent[3:]
+        if spec.gb_model != model:
+            raise ValueError(
+                f"build_context: solvent={solvent!r}, aber GB-Parameter für {spec.gb_model!r} "
+                f"(System mit implicit/{model}.xml erzeugen)"
+            )
         ones = np.ones(n_replicas, np.float32)
         ctx.add_bonded(  # 1-4: ε_in = 1, unabgeschirmt, auch bei Replica Exchange
             [bonded], zeros, np.zeros(n_replicas, np.float32), ones, follow_screening=False
         )
         ctx.set_nonbonded_gb(
             [nbt], zeros, k32, e32, [spec.gb_radius], [spec.gb_scale], r_switch=r_s,
-            r_cutoff=r_c, ace=ace,
+            r_cutoff=r_c, ace=ace, **_gb_model_kwargs(spec),
         )  # fmt: skip
     else:
-        raise ValueError("solvent: 'debye-huckel' oder 'gb-obc2'")
+        raise ValueError("solvent: 'debye-huckel', 'gb-obc2' oder 'gb-gbn2'")
     if cons is not None:
         ctx.set_constraints([cons], zeros)
     info = BuildInfo(
@@ -375,6 +406,17 @@ def build_context(
         lj_table=nbt["lj_table"], masses=masses, constrained=cons is not None,
     )  # fmt: skip
     return ctx, info
+
+
+def _gb_model_kwargs(spec: SystemSpec) -> dict:
+    """Zusatzargumente für ``set_nonbonded_gb`` je Modell."""
+    if spec.gb_model == "obc2":
+        return {}
+    return {
+        "offset": GB_OFFSET["gbn2"], "alpha_beta_gamma": [spec.gb_abg],
+        "neck_index": [spec.gb_neck_index], "neck_m0": [spec.gb_neck_m0],
+        "neck_d0": [spec.gb_neck_d0],
+    }  # fmt: skip
 
 
 # --- Helfer -------------------------------------------------------------------------------------
