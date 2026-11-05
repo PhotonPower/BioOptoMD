@@ -144,7 +144,7 @@ topo = bomd.builder.from_parmed(structure, hmr=True)          # → gepaddete So
 sim  = bomd.Simulation(topo, n_replicas=32, box_xy=(8.0, 8.0),
                        temperatures=bomd.geometric_ladder(290, 400, 32),
                        dt=0.004, friction=1.0, seed=42)
-sim.add_force(bomd.forces.PlanarSurface(z0=0.0, eps_by_type=..., phi0=0.05, kappa=1.04))
+sim.add_force(bomd.forces.PlanarSurface(material="graphene", solvent_scale=..., phi0=0.05, kappa=...))
 sim.add_force(bomd.forces.HarmonicRestraint(atoms=anchor, k=5000.0))
 dip = sim.add_observer(bomd.observers.DipoleAndDistance(atom_a=..., atom_b=..., stride=100))
 nz  = sim.add_observer(bomd.observers.RefractiveIndexProfile(dz=0.05, z_max=10.0,

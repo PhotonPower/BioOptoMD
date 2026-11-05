@@ -4,6 +4,7 @@
 #include <nanobind/nanobind.h>
 #include <nanobind/ndarray.h>
 #include <nanobind/stl/array.h>
+#include <nanobind/stl/optional.h>
 #include <nanobind/stl/string.h>
 
 #include <algorithm>
@@ -12,6 +13,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <set>
 #include <stdexcept>
 #include <string>
@@ -484,8 +486,8 @@ NB_MODULE(_core, m) {
       "Registriert einen EnergyTracker (alle `stride` Schritte, höchstens `capacity` Frames).");
 
   // --- Kraft-Plugins -------------------------------------------------------------------------
-  nb::class_<bomd::PlanarSurfaceForce>(m, "PlanarSurfaceForce",
-                                       "9-3-Wand + Gouy-Chapman, PHYSICS_MODEL.md §4.1.")
+  nb::class_<bomd::PlanarSurfaceForce>(
+      m, "PlanarSurfaceForce", "Wand (9-3/10-4/10-4-3) + Gouy-Chapman, PHYSICS_MODEL.md §4.1.")
       .def("clamp_count", &bomd::PlanarSurfaceForce::clamp_count,
            "Anzahl Auswertungen mit geclamptem Wandabstand.")
       .def("unknown_type_count", &bomd::PlanarSurfaceForce::unknown_type_count,
@@ -495,26 +497,60 @@ NB_MODULE(_core, m) {
           "clamp_distances",
           [](const bomd::PlanarSurfaceForce& f) {
             const auto& z = f.clamp_distances();
-            return vector_to_numpy(z, {z.size()});
+            const std::size_t n_lj = static_cast<std::size_t>(f.params().n_lj_types);
+            return vector_to_numpy(z, {z.size() / n_lj, n_lj});
           },
-          "float32 (n_surface_types,): zeta_c = max(clamp_factor*sigma, zeta_F) [nm], ADR 0008.");
+          "float32 (n_surface_types, n_lj_types): zeta_c = max(clamp_factor*sigma, zeta_F) [nm],\n"
+          "ADR 0008.");
   cls.def(
       "add_planar_surface",
-      [](SimulationContext& c, HostInput<float> epsilon, HostInput<float> sigma, float z0,
-         float clamp_factor, float phi0, float kappa,
-         float max_force) -> bomd::PlanarSurfaceForce& {
-        if (epsilon.ndim() != 1 || sigma.ndim() != 1)
-          throw nb::value_error("epsilon und sigma: 1D-Arrays (n_surface_types,)");
-        bomd::PlanarSurfaceParams p{
-            to_vector(epsilon), to_vector(sigma), z0, clamp_factor, max_force, phi0, kappa};
+      [](SimulationContext& c, HostInput<float> prefactor, HostInput<float> sigma,
+         const std::string& form, float delta, float z0, float clamp_factor, float phi0,
+         std::optional<HostInput<float>> kappa, float max_force,
+         const std::string& gouy_chapman) -> bomd::PlanarSurfaceForce& {
+        if (prefactor.ndim() < 1 || prefactor.ndim() > 2)
+          throw nb::value_error("prefactor: (n_surface_types,) oder (n_surface_types, n_lj_types)");
+        if (sigma.ndim() != prefactor.ndim() || sigma.shape(0) != prefactor.shape(0) ||
+            (sigma.ndim() == 2 && sigma.shape(1) != prefactor.shape(1)))
+          throw nb::value_error("sigma braucht dieselbe Shape wie prefactor");
+        bomd::PlanarSurfaceParams p;
+        if (form == "9-3") {
+          p.form = bomd::WallForm::kWall93;
+        } else if (form == "10-4") {
+          p.form = bomd::WallForm::kWall104;
+        } else if (form == "10-4-3") {
+          p.form = bomd::WallForm::kWall1043;
+        } else {
+          throw nb::value_error("form: '9-3', '10-4' oder '10-4-3'");
+        }
+        if (gouy_chapman != "nonlinear" && gouy_chapman != "linear")
+          throw nb::value_error("gouy_chapman: 'nonlinear' oder 'linear'");
+        p.n_lj_types = prefactor.ndim() == 2 ? static_cast<int>(prefactor.shape(1)) : 1;
+        p.prefactor_kj_mol = to_vector(prefactor);
+        p.sigma_nm = to_vector(sigma);
+        p.delta_nm = delta;
+        p.z0_nm = z0;
+        p.clamp_factor = clamp_factor;
+        p.max_force_kj_mol_nm = max_force;
+        p.phi0_kj_mol_e = phi0;
+        if (kappa) {
+          check_shape(*kappa, {static_cast<std::size_t>(c.n_replicas())}, "kappa");
+          p.kappa_per_nm = to_vector(*kappa);
+        }
+        p.gouy_chapman_linear = gouy_chapman == "linear";
         return static_cast<bomd::PlanarSurfaceForce&>(
             c.add_force(std::make_unique<bomd::PlanarSurfaceForce>(std::move(p))));
       },
-      "epsilon"_a, "sigma"_a, "z0"_a = 0.0f, "clamp_factor"_a = 0.1f, "phi0"_a = 0.0f,
-      "kappa"_a = 0.0f, "max_force"_a = 1.0e6f, nb::rv_policy::reference_internal,
-      "9-3-Wand bei z0 [nm]: epsilon [kJ/mol], sigma [nm] pro Oberflächen-Typ (types[..., 1]);\n"
-      "optional Gouy-Chapman mit phi0 [kJ/(mol e)] und kappa [1/nm]. Clamp bei\n"
-      "zeta_c = max(clamp_factor*sigma, zeta_F) mit |F(zeta_F)| = max_force [kJ/mol/nm].");
+      "prefactor"_a, "sigma"_a, "form"_a = "9-3", "delta"_a = 0.335f, "z0"_a = 0.0f,
+      "clamp_factor"_a = 0.1f, "phi0"_a = 0.0f, "kappa"_a = nb::none(), "max_force"_a = 1.0e6f,
+      "gouy_chapman"_a = "nonlinear", nb::rv_policy::reference_internal,
+      "Wand bei z0 [nm] (ADR 0007): form '9-3' | '10-4' | '10-4-3', Vorfaktor C [kJ/mol] und\n"
+      "sigma [nm] je (Oberflächen-Typ types[..., 1], LJ-Typ types[..., 0]); 1D-Arrays\n"
+      "(n_surface_types,) gelten für alle LJ-Typen. Tabellen baut biooptomd.surface.wall_table.\n"
+      "delta [nm]: Lagenabstand (nur 10-4-3). Clamp bei zeta_c = max(clamp_factor*sigma,\n"
+      "zeta_F) mit |F(zeta_F)| = max_force [kJ/mol/nm]. Optional Gouy-Chapman (OQ-06): phi0 =\n"
+      "Potential der diffusen Schicht [kJ/(mol e)] (nicht das Elektrodenpotential), kappa [1/nm]\n"
+      "je Replica (n_replicas,), T_r aus set_temperatures; gouy_chapman='linear' nur als Test.");
 
   nb::class_<bomd::HarmonicRestraintPullingForce>(
       m, "HarmonicRestraintPullingForce", "Positions-Restraints / Schwerpunkt-Pulling, §4.2.")
