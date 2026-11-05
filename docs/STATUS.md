@@ -32,8 +32,10 @@ Alle PRs #1–#6, #9–#14 am 2026-11-05 nach `main` gemergt (Merge-Commits, Rei
 - (a) `examples/gb_validation/duplex_stability.py`: 1BNA, 4 × 100 ns je Modell, HMR/4 fs, 0.15 M.
   **Bestanden:** GBn2 RMSD 0.215 nm (alle) / 0.150 nm (innen), 94 % Paare intakt; OBC2 0.361 / 0.197 nm,
   84 % (Endpaare dauerhaft offen). Tabelle und Einschränkungen in OPEN_QUESTIONS §OQ-15.
-- (b) Hairpin-Faltung: Wahl des Hairpins und der Referenzstruktur noch offen (nicht verifiziert, welche
-  Systeme Nguyen et al. 2015 nutzen) – mit dem Projektinhaber abzustimmen.
+- (b) Hairpin-Faltung, Projektinhaber 2026-11-05: d(GCGAAGC), PDB 1PQT (NMR, sequenzidentisch;
+  per PDB geprüft). `examples/gb_validation/hairpin_folding.py`: 4 unabhängige REMD-Leitern × 8 T
+  (300–370 K), 2 aus NMR-, 2 aus gestreckter Struktur, 1 µs je Replica (≈ 22 h), gestartet 2026-11-05.
+  Dafür neu: `ReplicaExchange(ladders=L)` (Test `test_remd_multiple_ladders`).
 
 ## Phase 9.3 – GB-neck2: abgenommen 2026-11-05 (Branch `phase-9/gbn2`)
 - ADR 0012 (Accepted 2026-11-05): Modell wie OpenMM `implicit/gbn2.xml`, Parameter und interpolierte Neck-Tabellen
