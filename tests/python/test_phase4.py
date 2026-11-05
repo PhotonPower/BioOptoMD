@@ -507,3 +507,42 @@ def test_image_sum_reduces_to_minimum_image(core):
     (f_mi, e_mi), (f_img, e_img) = results
     assert np.abs(f_img - f_mi).max() < 1e-5 * _rms(f_mi)
     assert e_img == pytest.approx(e_mi, rel=1e-5)
+
+
+@pytest.mark.gpu
+def test_tile_culling_vs_numpy(core):
+    """Tile-Vorauswahl (Phase 8): räumlich sortierte Atome in großer Box, viele Tile-Paare außerhalb
+    r_c, Paare über die Boxgrenze knapp unter r_c. Kräfte/Energie vs. NumPy wie test_pair_vs_numpy
+    (1e-5 der RMS-Kraft) und gleich dem Pfad ohne Vorauswahl (Bildpfad mit L ≥ 2 r_c)."""
+    rng = np.random.default_rng(49)
+    n, box = 600, 12.0
+    pos, sigma, eps, q, excl = _random_system(rng, n, box, 80)
+    order = np.lexsort((pos[:, 1], np.floor(pos[:, 0] / 1.5)))  # kompakte Tiles in x-Streifen
+    inv = np.empty_like(order)
+    inv[order] = np.arange(n)
+    pos, sigma, eps, q = pos[order], sigma[order], eps[order], q[order]
+    excl = inv[excl]
+    # Paar über die Boxgrenze in verschiedenen Tiles, Abstand knapp unter r_c
+    pos[0] = [0.05, 6.0, 1.5]
+    pos[-1] = [box - (R_C - 0.06), 6.0, 1.5]
+    types, topo = nonbonded_topology(padded_atom_count(n), sigma, eps, excl)
+    results = []
+    for mode in ("auto", "always"):
+        ctx = _context(core, 1, n, (box, box), pos[None], q[None], types[None])
+        ctx.set_nonbonded_tiled(
+            [topo], np.zeros(1, np.int32), np.full(1, KAPPA, np.float32),
+            np.full(1, EPS_R, np.float32), image_sum=mode,
+        )  # fmt: skip
+        ctx.compute_forces()
+        results.append((ctx.forces()[0, :n, :3].astype(np.float64), ctx.energies()[0, NB_COL]))
+        assert ctx.status() == 0
+    e_ref, f_ref = nr.nonbonded(
+        _f32(pos), _f32(q), types, topo["lj_table"].astype(np.float64), excl, (box, box),
+        float(np.float32(KAPPA)), float(np.float32(EPS_R)), R_S, R_C,
+    )  # fmt: skip
+    (f_cull, e_cull), (f_all, e_all) = results
+    assert np.abs(f_cull - f_ref).max() < 1e-5 * _rms(f_ref)
+    assert e_cull == pytest.approx(e_ref, rel=1e-5)
+    assert np.abs(f_cull[0]).max() > 0 and np.abs(f_cull[-1]).max() > 0, "Randpaar fehlt"
+    assert np.abs(f_cull - f_all).max() < 1e-5 * _rms(f_ref)
+    assert e_cull == pytest.approx(e_all, rel=1e-5)

@@ -1,5 +1,7 @@
 // BioOptoMD – TiledAllPairs, siehe tiled_all_pairs.hpp. Formeln: PHYSICS_MODEL.md §3 und
 // tests/reference/nonbonded_ref.py (V = (V_LJ + V_el)·S(r), Switching wie OpenMM).
+#include <math_constants.h>
+
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
@@ -26,6 +28,60 @@ struct SwitchParams {
   float r_s, r_c, r_c2, inv_width;  // r_s, r_c [nm], r_c² [nm²], 1/(r_c − r_s) [1/nm]
 };
 
+/// Sicherheitsabstand der Tile-Vorauswahl [nm]: deckt die FP32-Rundung von Mittelpunkt und
+/// Halbbreite ab (|x − c| ≤ h + ulp), viele Größenordnungen über dieser Rundung.
+constexpr float kCullMargin = 1.0e-3f;
+
+/// Achsenparallele Hülle der echten Atome je Tile und Replica (ein Warp pro Tile): (Mittelpunkt,
+/// Halbbreite) als zwei float4; Halbbreite.w = −1 für Tiles ohne echte Atome. Grundlage der
+/// Tile-Vorauswahl im Minimum-Image-Pfad.
+__global__ void k_tile_bounds(DeviceState s, float4* bounds) {
+  const int tile = blockIdx.x;
+  const int r = blockIdx.y;
+  const int i_local = tile * 32 + threadIdx.x;
+  const bool valid = i_local < s.n_atoms;
+  const float4 p = s.d_pos[r * s.n_pad + i_local];
+  float lo_x = valid ? p.x : CUDART_INF_F, lo_y = valid ? p.y : CUDART_INF_F,
+        lo_z = valid ? p.z : CUDART_INF_F;
+  float hi_x = valid ? p.x : -CUDART_INF_F, hi_y = valid ? p.y : -CUDART_INF_F;
+  float hi_z = valid ? p.z : -CUDART_INF_F;
+  for (int off = 16; off > 0; off >>= 1) {
+    lo_x = fminf(lo_x, __shfl_xor_sync(0xffffffffu, lo_x, off));
+    lo_y = fminf(lo_y, __shfl_xor_sync(0xffffffffu, lo_y, off));
+    lo_z = fminf(lo_z, __shfl_xor_sync(0xffffffffu, lo_z, off));
+    hi_x = fmaxf(hi_x, __shfl_xor_sync(0xffffffffu, hi_x, off));
+    hi_y = fmaxf(hi_y, __shfl_xor_sync(0xffffffffu, hi_y, off));
+    hi_z = fmaxf(hi_z, __shfl_xor_sync(0xffffffffu, hi_z, off));
+  }
+  if (threadIdx.x == 0) {
+    const int n_tiles = s.n_pad / 32;
+    float4* out = bounds + 2 * (static_cast<long long>(r) * n_tiles + tile);
+    if (lo_x > hi_x) {  // keine echten Atome
+      out[0] = make_float4(0.0f, 0.0f, 0.0f, 0.0f);
+      out[1] = make_float4(0.0f, 0.0f, 0.0f, -1.0f);
+    } else {
+      out[0] = make_float4(0.5f * (lo_x + hi_x), 0.5f * (lo_y + hi_y), 0.5f * (lo_z + hi_z), 0.0f);
+      out[1] = make_float4(0.5f * (hi_x - lo_x), 0.5f * (hi_y - lo_y), 0.5f * (hi_z - lo_z), 0.0f);
+    }
+  }
+}
+
+/// Untere Schranke des Abstands zweier Hüllen (Mittelpunkte c, Halbbreiten h) mit Minimum Image
+/// in x/y: Auf dem Kreis gilt d(x_i, x_j) ≥ d(c_i, c_j) − h_i − h_j (Dreiecksungleichung), in z
+/// dasselbe auf der Geraden. true ⇔ kein Paar der beiden Tiles kann innerhalb von r_c liegen.
+__device__ __forceinline__ bool tiles_out_of_range(const float4* bounds, int r, int n_tiles,
+                                                   int2 tp, float2 box, float r_c) {
+  const float4* bi = bounds + 2 * (static_cast<long long>(r) * n_tiles + tp.x);
+  const float4* bj = bounds + 2 * (static_cast<long long>(r) * n_tiles + tp.y);
+  const float4 ci = bi[0], hi = bi[1], cj = bj[0], hj = bj[1];
+  if (hi.w < 0.0f || hj.w < 0.0f) return true;  // Tile ohne echte Atome
+  const float gx = fmaxf(0.0f, fabsf(detail::minimum_image_1d(ci.x, cj.x, box.x)) - hi.x - hj.x);
+  const float gy = fmaxf(0.0f, fabsf(detail::minimum_image_1d(ci.y, cj.y, box.y)) - hi.y - hj.y);
+  const float gz = fmaxf(0.0f, fabsf(ci.z - cj.z) - hi.z - hj.z);
+  const float reach = r_c + kCullMargin;
+  return gx * gx + gy * gy + gz * gz >= reach * reach;
+}
+
 /// Anzahl Bildverschiebungen je Richtung (ADR 0006 Rev. 2): 0 für L >= 2 r_c (jedes verschobene
 /// Bild ist dann mindestens L/2 >= r_c entfernt), sonst ⌈r_c/L + ½⌉ (der Minimum-Image-Abstand
 /// selbst kann bis L/2 betragen).
@@ -37,7 +93,9 @@ __device__ __forceinline__ int image_count(float box_length, float r_c) {
 /// 32 j-Atome liegen im Shared Memory und werden rotierend (b = (a + k) mod 32) besucht, sodass
 /// in jedem Schritt jede Lane ein anderes j schreibt (konfliktfreie j-Kraftakkumulation).
 /// Ausgeschlossen: Bit b der Exclusion-Maske, in Diagonal-Tiles b ≤ a (jedes Paar genau einmal),
-/// Padding-Atome (i_local >= n_atoms) und r² < EPS_R2.
+/// Padding-Atome (i_local >= n_atoms) und r² < EPS_R2. Im Minimum-Image-Pfad überspringt der
+/// Warp Tile-Paare, deren Hüllen weiter als r_c auseinander liegen (alle Beiträge wären exakt 0,
+/// das Ergebnis bleibt bitidentisch).
 ///
 /// kImages (ADR 0006 Rev. 2, L < 2 r_c): Für jedes Paar wird über die Gittervektoren
 /// n = (n_x L_x, n_y L_y), |n_x| ≤ image_count(L_x), |n_y| ≤ image_count(L_y), summiert, ausgehend
@@ -48,7 +106,8 @@ template <typename Elec, bool kImages>
 __global__ void __launch_bounds__(kWarpsPerBlock * 32)
     k_tiled_all_pairs(DeviceState s, const int2* tile_pairs, int n_tile_pairs, const float2* lj,
                       const int* mask_index, const std::uint32_t* masks, const int4* replica,
-                      const typename Elec::Params* elec, SwitchParams sw) {
+                      const typename Elec::Params* elec, SwitchParams sw,
+                      const float4* tile_bounds) {
   extern __shared__ float2 sh_lj[];  // T × T (σ, ε)
   __shared__ float4 sh_pos[kWarpsPerBlock][32];
   __shared__ int sh_type[kWarpsPerBlock][32];
@@ -66,6 +125,9 @@ __global__ void __launch_bounds__(kWarpsPerBlock * 32)
   if (p >= n_tile_pairs) return;  // ganzer Warp; danach nur noch __syncwarp
 
   const int2 tp = tile_pairs[p];
+  if constexpr (!kImages) {
+    if (tiles_out_of_range(tile_bounds, r, s.n_pad / 32, tp, s.d_box[r], sw.r_c)) return;
+  }
   const int base = r * s.n_pad;
   const int i_local = tp.x * 32 + a;
   const int j_local = tp.y * 32 + a;
@@ -246,6 +308,7 @@ void TiledAllPairs::initialize(SimulationContext& ctx) {
   d_masks_ = DeviceBuffer<std::uint32_t>(std::max<std::size_t>(masks.size(), 1));
   d_replica_ = DeviceBuffer<int4>(n_rep);
   d_screening_ = DeviceBuffer<float2>(n_rep);
+  d_tile_bounds_ = DeviceBuffer<float4>(static_cast<std::size_t>(n_rep) * n_tiles * 2);
   d_tile_pairs_.upload_async(tps.data(), st);
   d_lj_.upload_async(lj.data(), st);
   d_mask_index_.upload_async(mask_index.data(), st);
@@ -275,14 +338,18 @@ void TiledAllPairs::compute(DeviceState& s, cudaStream_t stream) {
   const auto launch = [&](auto kernel) {
     kernel<<<grid, kWarpsPerBlock * 32, shmem, stream>>>(
         s, d_tile_pairs_.data(), n_tile_pairs_, d_lj_.data(), d_mask_index_.data(), d_masks_.data(),
-        d_replica_.data(), d_screening_.data(), sw);
+        d_replica_.data(), d_screening_.data(), sw, d_tile_bounds_.data());
     BOMD_LAUNCH_CHECK();
   };
-  // Bildsumme nur, wenn eine Box kleiner als 2 r_c ist (ADR 0006 Rev. 2); sonst Minimum Image.
-  if (uses_image_sum())
+  // Bildsumme nur, wenn eine Box kleiner als 2 r_c ist (ADR 0006 Rev. 2); sonst Minimum Image
+  // mit Tile-Vorauswahl.
+  if (uses_image_sum()) {
     launch(k_tiled_all_pairs<detail::DebyeHuckel, true>);
-  else
+  } else {
+    k_tile_bounds<<<dim3(s.n_pad / 32, s.n_replicas), 32, 0, stream>>>(s, d_tile_bounds_.data());
+    BOMD_LAUNCH_CHECK();
     launch(k_tiled_all_pairs<detail::DebyeHuckel, false>);
+  }
 }
 
 }  // namespace bomd

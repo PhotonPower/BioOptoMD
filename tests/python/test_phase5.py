@@ -87,7 +87,9 @@ def core():
     return _core
 
 
-def _context(core, d, n_rep, dt, gamma, seed=1, surface=False, temperature=300.0, anchors=2):
+def _context(
+    core, d, n_rep, dt, gamma, seed=1, surface=False, temperature=300.0, anchors=2, tol=1e-6
+):
     """Duplex-System mit HMR + H-Constraints, kovalent + nicht-kovalent (+ optional Oberfläche)."""
     n = len(d["masses"])
     topo = {k: d[k] for k in BONDED_KEYS}
@@ -107,7 +109,7 @@ def _context(core, d, n_rep, dt, gamma, seed=1, surface=False, temperature=300.0
     k, e = np.full(n_rep, KAPPA, np.float32), np.full(n_rep, EPS_R, np.float32)
     ctx.add_bonded([topo_r], np.zeros(n_rep, np.int32), k, e)
     ctx.set_nonbonded_tiled([nbt], np.zeros(n_rep, np.int32), k, e)
-    ctx.set_constraints([cons], np.zeros(n_rep, np.int32))
+    ctx.set_constraints([cons], np.zeros(n_rep, np.int32), tolerance=tol)
     if surface:
         # 9-3-Wand bei z = 0 (ASSUMPTION(OQ-05): graphenartige Platzhalterwerte) und je Duplex ein
         # Ankeratom (tiefstes Schweratom): z-Restraint + schwacher xy-Restraint (ASSUMPTION(OQ-07)).
@@ -134,10 +136,13 @@ def _context(core, d, n_rep, dt, gamma, seed=1, surface=False, temperature=300.0
 @pytest.mark.gpu
 def test_constraint_step_vs_numpy(core):
     """Ein NVE-Schritt (B, RATTLE, A+SHAKE, RATTLE, A+SHAKE) gegen die NumPy-Referenz mit denselben
-    Kräften: Positionen auf 1e-9 nm gleich, Constraints erfüllt."""
+    Kräften: Positionen auf 1e-9 nm gleich, Constraints erfüllt. Beide Seiten sind auf 1e-12
+    auskonvergiert, sodass der Vergleich die Lösung der Constraint-Gleichungen prüft und nicht das
+    Iterationsverfahren (GPU: M-SHAKE/direktes RATTLE, Referenz: Gauss-Seidel). Mit der Default-
+    Toleranz 1e-6 dürfen beide Lösungen bis ~1e-7 nm abweichen."""
     d = _load()
     n = len(d["masses"])
-    ctx, cons, m = _context(core, d, 1, 0.002, 0.0)
+    ctx, cons, m = _context(core, d, 1, 0.002, 0.0, tol=1e-12)
     rng = np.random.default_rng(50)
     ctx.set_velocities(
         rng.normal(0.0, 1.0, (1, n, 3)) * np.sqrt(core.units.KB * 300.0 / m)[None, :, None]
@@ -149,8 +154,9 @@ def test_constraint_step_vs_numpy(core):
     f0 = ctx.forces()[0, :n, :3].astype(np.float64)
     inv_m = ctx.velocities()[0, :n, 3]
     x_ref, _ = cref.constrained_positions_after_step(
-        x0, v0, f0, inv_m, cons["clusters"], cons["distances"].astype(np.float64), d["box"], 0.002
-    )
+        x0, v0, f0, inv_m, cons["clusters"], cons["distances"].astype(np.float64), d["box"], 0.002,
+        tol=1e-12, tol_v=1e-14,
+    )  # fmt: skip
     ctx.step(1)
     x1 = ctx.positions_precise()[0, :n]
     images = ctx.images()[0, :n]

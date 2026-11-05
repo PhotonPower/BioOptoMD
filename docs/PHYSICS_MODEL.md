@@ -102,7 +102,7 @@ Bei RMS-Feldern ist der Vorfaktor ½ statt ¼; die Lade-Funktion verlangt daher 
 ## 5. Constraints & HMR (Phase 5)
 
 - **HMR:** Wasserstoffmasse auf 3.024 amu, Differenz vom gebundenen Schweratom abgezogen (Gesamtmasse erhalten).
-- **H-Bindungs-Constraints:** SHAKE/RATTLE, parallelisiert über Cluster (Schweratom + seine H-Atome, ≤ 3 H), Toleranz 1e-6 relativ. Ein Thread pro Cluster, FP64 auf dem Mixed-Precision-Zustand (ADR 0009). Ablauf: B, RATTLE, A+SHAKE (Geschwindigkeitskorrektur v += Δx/(Δt/2)), O, RATTLE, A+SHAKE, Kräfte, B, RATTLE. Constrainte Bindungen werden aus dem Bindungsterm entfernt (wie OpenMM `constraints=HBonds`). Nicht-Konvergenz setzt `STATUS_CONSTRAINT_FAILURE`.
+- **H-Bindungs-Constraints:** SHAKE/RATTLE, parallelisiert über Cluster (Schweratom + seine H-Atome, ≤ 3 H), Toleranz 1e-6 relativ. Ein Thread pro Cluster, FP64 auf dem Mixed-Precision-Zustand (ADR 0009). Löser je Cluster (Phase 8): SHAKE als Newton-Iteration auf dem gekoppelten m×m-System (M-SHAKE, m ≤ 3 Constraints, quadratische Konvergenz), RATTLE als direkte Lösung des linearen Systems A λ = b mit A_kl = w_0 r_k·r_l + δ_kl w_k r_k² (ein Schritt, danach Residuumsprüfung); bei singulärem System (unbewegliche Atome) der entkoppelte Gauss-Seidel-Schritt. Ablauf: B, RATTLE, A+SHAKE (Geschwindigkeitskorrektur v += Δx/(Δt/2)), O, RATTLE, A+SHAKE, Kräfte, B, RATTLE. Constrainte Bindungen werden aus dem Bindungsterm entfernt (wie OpenMM `constraints=HBonds`). Nicht-Konvergenz setzt `STATUS_CONSTRAINT_FAILURE`.
 - Ziel: Δt = 4 fs stabil bei 300 K mit implizitem Lösungsmittel.
 
 ## 6. In-situ Optik-Observer (Phase 6)

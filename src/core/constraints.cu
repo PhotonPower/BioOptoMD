@@ -41,6 +41,43 @@ __device__ __forceinline__ double3 delta(double3 a, double3 b, float2 box) {
   return d;
 }
 
+/// Löst A x = b (m ≤ 3, Gauß mit Spaltenpivot, FP64). false, wenn ein Pivot relativ zur
+/// Matrixnorm verschwindet (z. B. unbewegliche Atome, w = 0) – dann rechnet der Aufrufer den
+/// entkoppelten Gauss-Seidel-Schritt.
+__device__ __forceinline__ bool solve_small(double a[kMaxH][kMaxH], double b[kMaxH], int m) {
+  double norm = 0.0;
+  for (int i = 0; i < m; ++i)
+    for (int j = 0; j < m; ++j) norm = fmax(norm, fabs(a[i][j]));
+  if (!(norm > 0.0)) return false;
+  for (int col = 0; col < m; ++col) {
+    int piv = col;
+    for (int i = col + 1; i < m; ++i)
+      if (fabs(a[i][col]) > fabs(a[piv][col])) piv = i;
+    if (fabs(a[piv][col]) <= 1e-12 * norm) return false;
+    if (piv != col) {
+      for (int j = 0; j < m; ++j) {
+        const double t = a[col][j];
+        a[col][j] = a[piv][j];
+        a[piv][j] = t;
+      }
+      const double t = b[col];
+      b[col] = b[piv];
+      b[piv] = t;
+    }
+    for (int i = col + 1; i < m; ++i) {
+      const double f = a[i][col] / a[col][col];
+      for (int j = col; j < m; ++j) a[i][j] -= f * a[col][j];
+      b[i] -= f * b[col];
+    }
+  }
+  for (int i = m - 1; i >= 0; --i) {
+    double sum = b[i];
+    for (int j = i + 1; j < m; ++j) sum -= a[i][j] * b[j];
+    b[i] = sum / a[i][i];
+  }
+  return true;
+}
+
 __device__ __forceinline__ bool load_cluster(const DeviceState& s, const int4* clusters,
                                              const float4* distances, const int2* range, int r,
                                              int t, Cluster& c) {
@@ -93,24 +130,41 @@ __global__ void k_shake(DeviceState s, const int4* clusters, const float4* dista
     }
     x_un[k] = c.x[k];
   }
+  // Newton-Iteration auf allen Constraints des Clusters gemeinsam (M-SHAKE): Korrekturen entlang
+  // der Referenzrichtungen, x_k −= g_k w_k ref_k, x_0 += w_0 Σ_l g_l ref_l. Linearisiert gilt
+  // J g = f mit f_k = |r_k|² − d_k², J_kl = 2 r_k·(w_0 ref_l + δ_kl w_k ref_k); quadratische
+  // Konvergenz statt der linearen des entkoppelten Gauss-Seidel-SHAKE. Ist J singulär, wird der
+  // entkoppelte Schritt g_k = f_k / J_kk (alte Form) verwendet.
   bool converged = false;
   for (int it = 0; it < max_iter && !converged; ++it) {
     converged = true;
+    double3 rk[kMaxH];
+    double f[kMaxH] = {0.0, 0.0, 0.0};
     for (int k = 1; k <= c.n_h; ++k) {
-      const double3 rk = delta(c.x[k], c.x[0], box);
-      const double diff = dot3(rk, rk) - c.d2[k - 1];
-      if (fabs(diff) > 2.0 * tol * c.d2[k - 1]) {
-        converged = false;
-        const double denom = 2.0 * dot3(ref[k - 1], rk) * (c.w[0] + c.w[k]);
-        if (denom == 0.0) continue;  // entartet (Bindung ⟂ Referenz); Nicht-Konvergenz meldet es
-        const double g = diff / denom;
-        c.x[k].x -= g * c.w[k] * ref[k - 1].x;
-        c.x[k].y -= g * c.w[k] * ref[k - 1].y;
-        c.x[k].z -= g * c.w[k] * ref[k - 1].z;
-        c.x[0].x += g * c.w[0] * ref[k - 1].x;
-        c.x[0].y += g * c.w[0] * ref[k - 1].y;
-        c.x[0].z += g * c.w[0] * ref[k - 1].z;
+      rk[k - 1] = delta(c.x[k], c.x[0], box);
+      f[k - 1] = dot3(rk[k - 1], rk[k - 1]) - c.d2[k - 1];
+      if (fabs(f[k - 1]) > 2.0 * tol * c.d2[k - 1]) converged = false;
+    }
+    if (converged) break;
+    double jac[kMaxH][kMaxH];
+    for (int k = 0; k < c.n_h; ++k)
+      for (int l = 0; l < c.n_h; ++l)
+        jac[k][l] = 2.0 * dot3(rk[k], ref[l]) * (c.w[0] + (k == l ? c.w[k + 1] : 0.0));
+    double g[kMaxH] = {f[0], f[1], f[2]};
+    if (!solve_small(jac, g, c.n_h)) {
+      for (int k = 0; k < c.n_h; ++k) {
+        const double denom = 2.0 * dot3(ref[k], rk[k]) * (c.w[0] + c.w[k + 1]);
+        g[k] = denom == 0.0 ? 0.0 : f[k] / denom;  // entartet: Nicht-Konvergenz meldet es
       }
+    }
+    for (int k = 1; k <= c.n_h; ++k) {
+      const double gk = g[k - 1];
+      c.x[k].x -= gk * c.w[k] * ref[k - 1].x;
+      c.x[k].y -= gk * c.w[k] * ref[k - 1].y;
+      c.x[k].z -= gk * c.w[k] * ref[k - 1].z;
+      c.x[0].x += gk * c.w[0] * ref[k - 1].x;
+      c.x[0].y += gk * c.w[0] * ref[k - 1].y;
+      c.x[0].z += gk * c.w[0] * ref[k - 1].z;
     }
   }
   if (!converged) atomicOr(s.d_status, kStatusConstraintFailure);
@@ -139,25 +193,45 @@ __global__ void k_rattle(DeviceState s, const int4* clusters, const float4* dist
     rk[k - 1] = delta(c.x[k], c.x[0], box);
     r2[k - 1] = dot3(rk[k - 1], rk[k - 1]);
   }
+  // Lineares Problem: Δv_k = −λ_k w_k r_k, Δv_0 = w_0 Σ_l λ_l r_l mit A λ = b,
+  // A_kl = w_0 (r_k·r_l) + δ_kl w_k r_k², b_k = r_k·(v_k − v_0). Ein Lösungsschritt ist bis auf
+  // Rundung exakt; die Schleife prüft das Residuum (iterative Verfeinerung). Singuläres A
+  // (unbewegliche Atome): entkoppelter Gauss-Seidel-Schritt wie bisher.
+  double gram[kMaxH][kMaxH];
+  for (int k = 0; k < c.n_h; ++k)
+    for (int l = 0; l < c.n_h; ++l) gram[k][l] = dot3(rk[k], rk[l]);
   bool converged = false;
   for (int it = 0; it < max_iter && !converged; ++it) {
     converged = true;
+    double lambda[kMaxH] = {0.0, 0.0, 0.0};
     for (int k = 1; k <= c.n_h; ++k) {
       const double3 dv =
           make_double3(c.v[k].x - c.v[0].x, c.v[k].y - c.v[0].y, c.v[k].z - c.v[0].z);
-      const double rv = dot3(rk[k - 1], dv);
-      if (fabs(rv) > tol_v * r2[k - 1]) {
-        converged = false;
-        const double denom = r2[k - 1] * (c.w[0] + c.w[k]);
-        if (denom == 0.0) continue;  // beide Atome unbeweglich: nichts zu projizieren
-        const double kappa = rv / denom;
-        c.v[k].x -= kappa * c.w[k] * rk[k - 1].x;
-        c.v[k].y -= kappa * c.w[k] * rk[k - 1].y;
-        c.v[k].z -= kappa * c.w[k] * rk[k - 1].z;
-        c.v[0].x += kappa * c.w[0] * rk[k - 1].x;
-        c.v[0].y += kappa * c.w[0] * rk[k - 1].y;
-        c.v[0].z += kappa * c.w[0] * rk[k - 1].z;
+      lambda[k - 1] = dot3(rk[k - 1], dv);
+      if (fabs(lambda[k - 1]) > tol_v * r2[k - 1]) converged = false;
+    }
+    if (converged) break;
+    double a[kMaxH][kMaxH];
+    for (int k = 0; k < c.n_h; ++k)
+      for (int l = 0; l < c.n_h; ++l)
+        a[k][l] = c.w[0] * gram[k][l] + (k == l ? c.w[k + 1] * r2[k] : 0.0);
+    double rhs[kMaxH] = {lambda[0], lambda[1], lambda[2]};
+    if (solve_small(a, rhs, c.n_h)) {
+      for (int k = 0; k < c.n_h; ++k) lambda[k] = rhs[k];
+    } else {
+      for (int k = 0; k < c.n_h; ++k) {
+        const double denom = r2[k] * (c.w[0] + c.w[k + 1]);
+        lambda[k] = denom == 0.0 ? 0.0 : lambda[k] / denom;  // beide unbeweglich: nichts zu tun
       }
+    }
+    for (int k = 1; k <= c.n_h; ++k) {
+      const double lk = lambda[k - 1];
+      c.v[k].x -= lk * c.w[k] * rk[k - 1].x;
+      c.v[k].y -= lk * c.w[k] * rk[k - 1].y;
+      c.v[k].z -= lk * c.w[k] * rk[k - 1].z;
+      c.v[0].x += lk * c.w[0] * rk[k - 1].x;
+      c.v[0].y += lk * c.w[0] * rk[k - 1].y;
+      c.v[0].z += lk * c.w[0] * rk[k - 1].z;
     }
   }
   if (!converged) atomicOr(s.d_status, kStatusConstraintFailure);
