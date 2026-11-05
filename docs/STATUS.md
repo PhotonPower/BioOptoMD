@@ -3,6 +3,7 @@
 > Diese Datei wird am Ende **jeder** Arbeitssitzung aktualisiert (AGENTS.md §2.4).
 
 **Aktive Phase:** 9+ – nächste Erweiterung nach Entscheidung des Projektinhabers.
+**Phase 9.3 (GB-neck2) abgenommen** am 2026-11-05, ADR 0012 und Abnahmekriterien bestätigt.
 **Phase 9.2 (Replica Exchange) abgenommen** am 2026-11-05, ADR 0011 und Abnahmekriterien bestätigt.
 **Phase 8 abgenommen** am 2026-11-05 durch den Projektinhaber (RTX 3090, PR #11).
 **Phase 7 abgenommen** am 2026-11-05 durch den Projektinhaber (RTX 3090).
@@ -23,6 +24,21 @@
 
 - Phase 5 (PR #5): HMR, SHAKE/RATTLE auf H-Bindungen, N_dof. Abgenommen 2026-11-03; Nacharbeit nach
   Review siehe unten.
+
+## Phase 9.3 – GB-neck2: abgenommen 2026-11-05 (Branch `phase-9/gbn2`)
+- ADR 0012 (Accepted 2026-11-05): Modell wie OpenMM `implicit/gbn2.xml`, Parameter und interpolierte Neck-Tabellen
+  aus der CustomGBForce (asymmetrisch, Ausrichtung geprüft), Neck-Stufe wie AMBER.
+- `gb_ref`: Modell-dict (`obc2_model`, `gbn2_model`), Neck-Term mit Ableitung; vs. OpenMM 2·10⁻⁷.
+- Kernel: α/β/γ je Atom, Offset als Parameter, Neck-Term in Born-Integralen und Kettenregel; OBC2 als
+  Spezialfall (alle OBC2-Tests unverändert grün). Bindings `set_nonbonded_gb(..., offset,
+  alpha_beta_gamma, neck_index, neck_m0, neck_d0)`; Builder `solvent="gb-gbn2"`.
+- Tests `test_phase9_gbn2.py` 10/10 grün (GPU vs. Referenz: Born-Radien 1.7e-6, Energie 5e-8, Kräfte
+  3e-6 RMS); NVE-Drift ≈ 5e-5 (wie OBC2). pytest gesamt 124/124; memcheck/racecheck sauber.
+- Review-Agent: Physik korrekt; umgesetzt: OBC2 wieder mit double-Konstanten (bitgleich zu Phase 9.1),
+  Formprüfungen in `set_nonbonded_gb` (abg (n, 3), quadratische Neck-Tabellen gleicher Shape, Integer-
+  Index, endliche Werte), Neck nur mit α/β/γ, Offset global dokumentiert, Builder akzeptiert
+  handgebaute OBC2-Specs ohne `gb_model`, FD-Schutz am Neck-Cutoff über alle Bilder, Test mit mehreren
+  Topologien (verschiedene U, ACE aus) und Negativtests.
 
 ## Phase 9.2 – Replica Exchange: abgenommen 2026-11-05 (Branch `phase-9/remd`)
 - ADR 0011 (Accepted 2026-11-05): Zustände (T, κ, ε) statt Koordinaten tauschen, Hamiltonian-Kriterium mit
@@ -182,7 +198,8 @@ ADR 0007 → **0009** (Mixed Precision), unsere OQ-08…11 → **OQ-11…14**.
   Structs unterschiedlich aus. Vor dem Push mit beiden prüfen oder Kommentare über die Member setzen.
 
 ## Nächster konkreter Schritt
-1. Projektinhaber: nächste Phase-9-Erweiterung wählen (GBn2, Cell-List, ImageChargeForce, CG, MD↔FEM);
+1. Validierung GBn2 + OL21 (OQ-15: Duplex-Stabilität, Hairpin-Faltung) oder nächste Erweiterung
+   (Cell-List, ImageChargeForce, CG, MD↔FEM) – Entscheidung des Projektinhabers;
    OQ-14/15/16/17 entscheiden; PRs #1 → #6, #9 → #13 nacheinander mergen.
 2. Danach Phase 9+ nach Forschungsbedarf (ROADMAP); offen aus Phase 6: zwei `reference`-Tests
    (dn/dc-Kalibrierung, Clausius-Mossotti-Konsistenz).
@@ -209,7 +226,9 @@ ADR 0007 → **0009** (Mixed Precision), unsere OQ-08…11 → **OQ-11…14**.
 | 2026-11-05 | Projektinhaber | Phase 8 (PR #11) abgenommen; weiter mit Phase 9+. |
 | 2026-11-05 | Projektinhaber | Phase 9: GB-OBC2 zuerst (mbondi2, Salz, ACE optional/Default an, erweiterbar für GBn2). |
 | 2026-11-05 | Projektinhaber | Phase 9.1 (PR #12) abgenommen, ADR 0010 Accepted; nächste Erweiterung: Replica Exchange. |
-| 2026-11-05 | Projektinhaber | Phase 9.2 abgenommen, ADR 0011 und Kriterien bestätigt. |
+| 2026-11-05 | Projektinhaber | Phase 9.2 abgenommen, ADR 0011 und Kriterien bestätigt; nächste Erweiterung: GB-neck2. |
+| 2026-11-05 | Claude Opus 5.5 | Phase 9.3 GB-neck2 implementiert (ADR 0012). |
+| 2026-11-05 | Projektinhaber | Phase 9.3 abgenommen, ADR 0012 und Kriterien bestätigt; Vorschlag zu OQ-15 angenommen (GBn2 Default für Nukleinsäuren, Validierung offen). |
 | 2026-11-05 | Claude Opus 5.5 | Phase 9.2 Replica Exchange implementiert (ADR 0011 Proposed), 113/113 Tests grün. |
 | 2026-11-05 | Claude Opus 5.5 | Phase 9.1 GB-OBC2 implementiert (ADR 0010 Proposed, gb_ref, TiledGeneralizedBorn, Builder), 12/12 Phase-9-Tests grün. |
 | 2026-11-05 | Claude Opus 5.5 | Phase 8: Benchmark vs. OpenMM (32×2k Faktor 3.5), Tile-Vorauswahl, M-SHAKE/RATTLE; Review umgesetzt, 94/94 Tests grün. |

@@ -751,7 +751,9 @@ NB_MODULE(_core, m) {
       "set_nonbonded_gb",
       [](SimulationContext& c, nb::list topologies, HostInput<int32_t> replica_topology,
          HostInput<float> kappa, HostInput<float> eps_out, nb::list radius, nb::list scale,
-         float r_switch, float r_cutoff, float eps_in, bool ace, const std::string& image_sum) {
+         float r_switch, float r_cutoff, float eps_in, bool ace, const std::string& image_sum,
+         float offset, nb::object alpha_beta_gamma, nb::object neck_index, nb::object neck_m0,
+         nb::object neck_d0) {
         if (image_sum != "auto" && image_sum != "always")
           throw nb::value_error("image_sum: 'auto' oder 'always'");
         if (nb::len(radius) != nb::len(topologies) || nb::len(scale) != nb::len(topologies))
@@ -774,17 +776,62 @@ NB_MODULE(_core, m) {
         }
         p.eps_in = eps_in;
         p.ace = ace;
+        p.offset_nm = offset;
+        const std::size_t n_topo = nb::len(topologies);
+        const auto per_topo = [&](nb::object list, const char* name) {
+          if (list.is_none()) return nb::list();
+          nb::list l = nb::cast<nb::list>(list);
+          if (nb::len(l) != n_topo)
+            throw nb::value_error((std::string(name) + ": je Topologie ein Array").c_str());
+          return l;
+        };
+        nb::list abg = per_topo(alpha_beta_gamma, "alpha_beta_gamma");
+        for (nb::handle a : abg) {
+          nb::object arr = np.attr("ascontiguousarray")(a, "dtype"_a = "float32");
+          if (nb::cast<int>(arr.attr("ndim")) != 2 || nb::cast<int>(arr.attr("shape")[1]) != 3)
+            throw nb::value_error("alpha_beta_gamma: Shape (n_atoms, 3) je Topologie");
+          p.alpha_beta_gamma.push_back(to_vector(nb::cast<HostInput<float>>(arr)));
+        }
+        nb::list ni = per_topo(neck_index, "neck_index");
+        nb::list m0 = per_topo(neck_m0, "neck_m0");
+        nb::list d0 = per_topo(neck_d0, "neck_d0");
+        if (nb::len(ni) != nb::len(m0) || nb::len(ni) != nb::len(d0))
+          throw nb::value_error("neck_index, neck_m0, neck_d0 nur gemeinsam");
+        for (std::size_t t = 0; t < nb::len(ni); ++t) {
+          nb::object table = np.attr("ascontiguousarray")(m0[t], "dtype"_a = "float32");
+          nb::object table_d = np.attr("ascontiguousarray")(d0[t], "dtype"_a = "float32");
+          const int nd = nb::cast<int>(table.attr("ndim"));
+          if (nd != 2 || nb::cast<int>(table_d.attr("ndim")) != 2 ||
+              nb::cast<int>(table.attr("shape")[0]) != nb::cast<int>(table.attr("shape")[1]) ||
+              nb::cast<int>(table_d.attr("shape")[0]) != nb::cast<int>(table.attr("shape")[0]) ||
+              nb::cast<int>(table_d.attr("shape")[1]) != nb::cast<int>(table.attr("shape")[1]))
+            throw nb::value_error("neck_m0, neck_d0: quadratische Tabellen (U, U) gleicher Shape");
+          nb::object idx = np.attr("asarray")(ni[t]);
+          const std::string kind = nb::cast<std::string>(idx.attr("dtype").attr("kind"));
+          if (kind != "i" && kind != "u")
+            throw nb::value_error("neck_index: Integer-dtype erwartet");
+          const int u = nb::cast<int>(table.attr("shape")[0]);
+          p.neck_size.push_back(u);
+          p.neck_m0.push_back(to_vector(nb::cast<HostInput<float>>(table)));
+          p.neck_d0.push_back(to_vector(nb::cast<HostInput<float>>(table_d)));
+          p.neck_index.push_back(to_vector(nb::cast<HostInput<int32_t>>(
+              np.attr("ascontiguousarray")(idx, "dtype"_a = "int32"))));
+        }
         c.set_nonbonded(std::make_unique<bomd::TiledGeneralizedBorn>(std::move(p)));
       },
       "topologies"_a, "replica_topology"_a, "kappa"_a, "eps_out"_a, "radius"_a, "scale"_a,
       "r_switch"_a = 1.8f, "r_cutoff"_a = 2.0f, "eps_in"_a = 1.0f, "ace"_a = true,
-      "image_sum"_a = "auto",
-      "Nonbonded mit Generalized Born OBC2 (ADR 0010): LJ + Coulomb (eps_in) + GB mit Salz.\n"
+      "image_sum"_a = "auto", "offset"_a = 0.009f, "alpha_beta_gamma"_a = nb::none(),
+      "neck_index"_a = nb::none(), "neck_m0"_a = nb::none(), "neck_d0"_a = nb::none(),
+      "Nonbonded mit Generalized Born OBC2 (ADR 0010) oder GBn2 (ADR 0012): LJ + Coulomb\n"
+      "(eps_in) + GB mit Salz.\n"
       "topologies wie set_nonbonded_tiled; kappa [1/nm] und eps_out (n_replicas,); radius rho "
       "[nm]\n"
       "und scale s je Topologie (n_atoms,), aus biooptomd.builder (implicit/obc2.xml); r_switch,\n"
       "r_cutoff [nm] (cutoff_from_kappa); ace = unpolarer ACE-Term. 1-4-Coulomb im Bonded-Kernel\n"
-      "unabgeschirmt setzen (kappa = 0, eps_r = eps_in).");
+      "unabgeschirmt setzen (kappa = 0, eps_r = eps_in). GB-neck2 (ADR 0012): offset [nm],\n"
+      "alpha_beta_gamma (n_atoms, 3), neck_index (n_atoms,), neck_m0 [1/nm] und neck_d0 [nm]\n"
+      "(U, U) je Topologie (biooptomd.builder aus implicit/gbn2.xml).");
   cls.def(
       "nonbonded_born_radii",
       [](SimulationContext& c) {
