@@ -1,6 +1,6 @@
 # ADR 0012: GB-neck2 (GBn2) als zweites GB-Modell
 
-- **Status:** Proposed
+- **Status:** Accepted (Projektinhaber 2026-11-05, mit Abnahme Phase 9.3)
 - **Datum:** 2026-11-05
 - **Bezug:** OQ-15, ADR 0010 (GB-OBC2, Kernel und Cutoff-Konzept), ROADMAP Phase 9.3
 

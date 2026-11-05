@@ -2,8 +2,8 @@
 
 > Diese Datei wird am Ende **jeder** Arbeitssitzung aktualisiert (AGENTS.md §2.4).
 
-**Aktive Phase:** 9.3 – GB-neck2 (Branch `phase-9/gbn2`, ADR 0012 Proposed), implementiert, Abnahme
-ausstehend. Reihenfolge vom Projektinhaber am 2026-11-05 festgelegt (OQ-15).
+**Aktive Phase:** 9+ – nächste Erweiterung nach Entscheidung des Projektinhabers.
+**Phase 9.3 (GB-neck2) abgenommen** am 2026-11-05, ADR 0012 und Abnahmekriterien bestätigt.
 **Phase 9.2 (Replica Exchange) abgenommen** am 2026-11-05, ADR 0011 und Abnahmekriterien bestätigt.
 **Phase 8 abgenommen** am 2026-11-05 durch den Projektinhaber (RTX 3090, PR #11).
 **Phase 7 abgenommen** am 2026-11-05 durch den Projektinhaber (RTX 3090).
@@ -25,8 +25,8 @@ ausstehend. Reihenfolge vom Projektinhaber am 2026-11-05 festgelegt (OQ-15).
 - Phase 5 (PR #5): HMR, SHAKE/RATTLE auf H-Bindungen, N_dof. Abgenommen 2026-11-03; Nacharbeit nach
   Review siehe unten.
 
-## Phase 9.3 – GB-neck2: implementiert, Abnahme ausstehend (Branch `phase-9/gbn2`)
-- ADR 0012 (Proposed): Modell wie OpenMM `implicit/gbn2.xml`, Parameter und interpolierte Neck-Tabellen
+## Phase 9.3 – GB-neck2: abgenommen 2026-11-05 (Branch `phase-9/gbn2`)
+- ADR 0012 (Accepted 2026-11-05): Modell wie OpenMM `implicit/gbn2.xml`, Parameter und interpolierte Neck-Tabellen
   aus der CustomGBForce (asymmetrisch, Ausrichtung geprüft), Neck-Stufe wie AMBER.
 - `gb_ref`: Modell-dict (`obc2_model`, `gbn2_model`), Neck-Term mit Ableitung; vs. OpenMM 2·10⁻⁷.
 - Kernel: α/β/γ je Atom, Offset als Parameter, Neck-Term in Born-Integralen und Kettenregel; OBC2 als
@@ -227,7 +227,8 @@ ADR 0007 → **0009** (Mixed Precision), unsere OQ-08…11 → **OQ-11…14**.
 | 2026-11-05 | Projektinhaber | Phase 9: GB-OBC2 zuerst (mbondi2, Salz, ACE optional/Default an, erweiterbar für GBn2). |
 | 2026-11-05 | Projektinhaber | Phase 9.1 (PR #12) abgenommen, ADR 0010 Accepted; nächste Erweiterung: Replica Exchange. |
 | 2026-11-05 | Projektinhaber | Phase 9.2 abgenommen, ADR 0011 und Kriterien bestätigt; nächste Erweiterung: GB-neck2. |
-| 2026-11-05 | Claude Opus 5.5 | Phase 9.3 GB-neck2 implementiert (ADR 0012 Proposed). |
+| 2026-11-05 | Claude Opus 5.5 | Phase 9.3 GB-neck2 implementiert (ADR 0012). |
+| 2026-11-05 | Projektinhaber | Phase 9.3 abgenommen, ADR 0012 und Kriterien bestätigt; Vorschlag zu OQ-15 angefragt. |
 | 2026-11-05 | Claude Opus 5.5 | Phase 9.2 Replica Exchange implementiert (ADR 0011 Proposed), 113/113 Tests grün. |
 | 2026-11-05 | Claude Opus 5.5 | Phase 9.1 GB-OBC2 implementiert (ADR 0010 Proposed, gb_ref, TiledGeneralizedBorn, Builder), 12/12 Phase-9-Tests grün. |
 | 2026-11-05 | Claude Opus 5.5 | Phase 8: Benchmark vs. OpenMM (32×2k Faktor 3.5), Tile-Vorauswahl, M-SHAKE/RATTLE; Review umgesetzt, 94/94 Tests grün. |
