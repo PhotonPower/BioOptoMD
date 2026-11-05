@@ -25,6 +25,19 @@ erweiterbar für GBn2).
 - Phase 5 (PR #5): HMR, SHAKE/RATTLE auf H-Bindungen, N_dof. Abgenommen 2026-11-03; Nacharbeit nach
   Review siehe unten.
 
+## Phase 9.1 – GB-OBC2: implementiert, Abnahme ausstehend (Branch `phase-9/gb-obc2`)
+- ADR 0010 (Proposed): Modell, Kopplung an Cutoff/Switching/Bildsumme, Passes; OQ-15 (OBC2 vs. GBn2),
+  OQ-16 (dielektrische Grenze an der Oberfläche, offen). Abnahmetests als Vorschlag in ROADMAP 9.1.
+- NumPy-Referenz `tests/reference/gb_ref.py` (vs. OpenMM-CustomGBForce 2·10⁻⁷, FD 2·10⁻⁸).
+- `TiledGeneralizedBorn` (`src/nonbonded/generalized_born.*`, abgeleitet von `TiledAllPairs`, gemeinsame
+  Bausteine in `tile_common.cuh`): Born-Integrale, Born-Radien/Selbst-/ACE-Energie, Paarterme,
+  Kettenregel; Fixed-Point, Vorauswahl, Bildsumme. Bindings `set_nonbonded_gb`, `nonbonded_born_radii`.
+- Builder: `from_openmm` liest ρ, s aus `implicit/obc2.xml`; `build_context(solvent="gb-obc2", ace=...)`
+  (1-4 unabgeschirmt mit ε_in = 1).
+- Tests `test_phase9.py`: 12/12 grün (Referenz vs. OpenMM, FD, Born-Radien, GPU vs. OpenMM gesamt,
+  Cutoff/Bildsumme vs. Referenz, Salz-Fernfeld, Batch/Determinismus, NVE 10 ps); compute-sanitizer
+  memcheck 0 Fehler, racecheck 0 Hazards. Kosten ≈ 3× DH (`benchmarks/README.md`).
+
 ## Phase 8 – erledigt, abgenommen 2026-11-05 (PR #11)
 - `benchmarks/throughput.py`: BioOptoMD vs. OpenMM 8.6.1 (CUDA, mixed) mit gleichem Modell (DH, r_c aus κ
   = 3.92 nm, HMR, H-Constraints 1e-6, 4 fs). Ergebnis (RTX 3090, 3 Läufe, `benchmarks/README.md`):
@@ -145,8 +158,8 @@ ADR 0007 → **0009** (Mixed Precision), unsere OQ-08…11 → **OQ-11…14**.
   Structs unterschiedlich aus. Vor dem Push mit beiden prüfen oder Kommentare über die Member setzen.
 
 ## Nächster konkreter Schritt
-1. Projektinhaber: Phase 8 abnehmen (Push/PR auf Anfrage); OQ-14 (Temperaturschätzer) entscheiden;
-   PRs #1 → #6, #9, #10 nacheinander mergen.
+1. Projektinhaber: Phase 9.1 abnehmen, ADR 0010 und die Abnahmekriterien in ROADMAP 9.1 bestätigen
+   (Push/PR auf Anfrage); OQ-14 entscheiden; PRs #1 → #6, #9, #10, #11 nacheinander mergen.
 2. Danach Phase 9+ nach Forschungsbedarf (ROADMAP); offen aus Phase 6: zwei `reference`-Tests
    (dn/dc-Kalibrierung, Clausius-Mossotti-Konsistenz).
 3. Nachholen: Kontrolllauf auf der RTX 6000 Ada; Nsight Compute (Counter-Freigabe).
@@ -170,6 +183,8 @@ ADR 0007 → **0009** (Mixed Precision), unsere OQ-08…11 → **OQ-11…14**.
 | 2026-11-05 | Projektinhaber | Nachrüstung (PR #9) abgenommen; weiter mit Phase 7. |
 | 2026-11-05 | Projektinhaber | Phase 7 (PR #10) abgenommen; weiter mit Phase 8. |
 | 2026-11-05 | Projektinhaber | Phase 8 (PR #11) abgenommen; weiter mit Phase 9+. |
+| 2026-11-05 | Projektinhaber | Phase 9: GB-OBC2 zuerst (mbondi2, Salz, ACE optional/Default an, erweiterbar für GBn2). |
+| 2026-11-05 | Claude Opus 5.5 | Phase 9.1 GB-OBC2 implementiert (ADR 0010 Proposed, gb_ref, TiledGeneralizedBorn, Builder), 12/12 Phase-9-Tests grün. |
 | 2026-11-05 | Claude Opus 5.5 | Phase 8: Benchmark vs. OpenMM (32×2k Faktor 3.5), Tile-Vorauswahl, M-SHAKE/RATTLE; Review umgesetzt, 94/94 Tests grün. |
 | 2026-11-05 | Claude Opus 5.5 | Phase 7 implementiert (PR #10): Builder, Checkpoints, DCD/HDF5, Analyse, Beispiel + End-to-End-Test; Review umgesetzt. |
 | 2026-11-05 | Claude Opus 5.5 | Nachrüstung Phasen 2/4/6 (PR #9): Wandformen + Mischungsregeln, nichtlineares GC, κ-Cutoff + Bildsumme, Kugelschnitt-Verschmierung, optische Normierung; Review umgesetzt. Offen: zwei `reference`-Tests aus Phase 6 (s. o.). |

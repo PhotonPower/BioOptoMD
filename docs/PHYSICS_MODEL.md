@@ -44,12 +44,22 @@ B:  v ← v + (Δt/2) F/m
 **Cutoff:** Beide Terme mit Switching-Funktion zwischen r_s und r_c. Der Cutoff wird aus der Debye-Länge abgeleitet (ADR 0006): `r_c = max(2.0 nm, 5/κ)`, `r_s = r_c − 0.2 nm`. Damit ist DH bei r_c auf exp(−5) ≈ 0,7 % der reinen Coulomb-Wechselwirkung abgefallen. (Der frühere feste Wert r_c = 2,0 nm ließ bei 150 mM noch ≈ 8 % übrig.) Da der Tiled-All-Pairs-Kernel alle Paare rechnet, kostet ein größerer Cutoff keine Rechenzeit. Die Box L_x, L_y ist eine physikalische Eingabe (Bedeckung Γ = 1/(L_x L_y), OQ-09) und wird nie angepasst. Für L ≥ 2 r_c gilt Minimum Image; sonst summiert der Kernel explizit über periodische Bilder in x/y, inklusive Eigenbilder mit Faktor ½; Exclusions gelten nur für das Nullbild (ADR 0006 Rev. 2). Implementierung: Das Nullbild ist das Minimum-Image-Bild (der gebundene Nachbar in seiner nächsten Kopie). Pro Richtung werden |n| ≤ ⌈r_c/L + ½⌉ Verschiebungen geprüft, für L ≥ 2 r_c in dieser Richtung keine. Die Bildsumme läuft nur, wenn eine Box einer Replica kleiner als 2 r_c ist; sonst bleibt es beim Minimum-Image-Kernel. Builder: `biooptomd.nonbonded.cutoff_from_kappa`, κ_r aus `debye_kappa(I, T_r, water_permittivity(T_r))` (OQ-10).
 Switching wie OpenMM (`useSwitchingFunction`): `V = (V_LJ + V_el)·S(r)` mit `S = 1 − 10x³ + 15x⁴ − 6x⁵ = (1−x)³(1 + 3x + 6x²)`, `x = (r − r_s)/(r_c − r_s)` für r_s < r < r_c (S = 1 darunter, 0 darüber); die Kraft enthält den Term −V·dS/dr. Im Kernel faktorisiert ausgewertet (keine Auslöschung für x → 1).
 
+**Elektrostatik V2 – Generalized Born OBC2 mit Salz (Phase 9.1, ADR 0010):** Option
+`solvent="gb-obc2"` im Builder (Nonbonded-Strategie `TiledGeneralizedBorn`). Coulomb mit ε_in = 1
+(auch 1-4), Abschirmung und Desolvatation im GB-Term (AMBER igb = 5, mbondi2-Radien aus
+`implicit/obc2.xml`, Salzkorrektur nach Srinivasan, ACE optional/Default an); Formeln in ADR 0010 und
+`tests/reference/gb_ref.py`. Für r ≫ B geht E_C + E_GB in die Debye-Hückel-Form über, daher gelten
+Cutoff aus κ, Switching des kombinierten Paars und Bildsumme unverändert. Ausgeschlossene Paare tragen
+nur E_GB bei (ohne Switching), Born-Integrale werden bei r_c hart abgeschnitten. Kosten ≈ 3× DH
+(drei Tile-Passes). Grenzen: OBC2 statt GB-neck2 für Nukleinsäuren (OQ-15), keine dielektrische
+Grenze an der Oberfläche (OQ-16).
+
 **Exclusions:** 1-2 und 1-3 vollständig ausgeschlossen, 1-4 im Non-Bonded-Kernel ausgeschlossen (werden in der Bonded-Stufe skaliert berechnet). Kodierung als 32-bit-Bitmaske pro (Atom, Tile).
 
 **Explizite Ionen:** Divalente Ionen (Mg²⁺) können als echte Teilchen mit LJ-Parametern vorhanden sein; die monovalente Salzumgebung steckt in κ. **Achtung (OQ-08):** Ohne Hydrathülle kollabiert Mg²⁺ im impliziten Wasser in direkten Phosphatkontakt und bindet viel zu stark. Bis zur Entscheidung über ein effektives hydratisiertes Ion oder einen Flat-Bottom-Term nur in Tests verwenden.
 
 **Bekannte Grenzen (bewusst akzeptiert für V1):**
-- Keine Desolvatationsenergie → Faltungsgleichgewichte von Aptameren sind qualitativ. V2: Generalized Born (OBC2), siehe ADR 0004.
+- Mit Debye-Hückel (V1) keine Desolvatationsenergie → Faltungsgleichgewichte von Aptameren sind qualitativ. V2: Generalized Born (OBC2), ADR 0004/0010, ab Phase 9.1 verfügbar.
 - Keine Bildladungen an Metalloberflächen → V2: `ImageChargeForce`.
 - Wasserstruktur an der Oberfläche (Hydratationsschichten) fehlt.
 

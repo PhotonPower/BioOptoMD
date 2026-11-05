@@ -273,6 +273,8 @@ def build_context(
     r_cutoff: float | None = None,
     switch_width: float = 0.2,
     types=None,
+    solvent: str = "debye-huckel",
+    ace: bool = True,
     device: int = 0,
 ):
     """Erzeugt und füllt einen ``SimulationContext`` (ohne Integrator, Wand, Restraints, Observer).
@@ -291,6 +293,10 @@ def build_context(
             r_s = r_c − ``switch_width`` [nm].
         types: (n,) Oberflächen-/Optik-Typ je Atom (``types[..., 1]``). Default 1 für alle Atome
             (Typ 0 = keine Wand, nur für Anker, ADR 0007); siehe :func:`assign_types`.
+        solvent: ``"debye-huckel"`` (V1) oder ``"gb-obc2"`` (ADR 0010; braucht ``spec.gb_radius``
+            aus einem System mit ``implicit/obc2.xml``). Bei GB ist ε_r das Lösungsmittel-ε_out,
+            Coulomb (auch 1-4) wird mit ε_in = 1 unabgeschirmt gerechnet; die Abschirmung steckt im
+            GB-Term. ``ace``: unpolarer ACE-Term (nur GB).
 
     Returns:
         (ctx, :class:`BuildInfo`).
@@ -342,8 +348,20 @@ def build_context(
     ctx.set_temperatures(temps.astype(np.float32))
     k32, e32 = kappa.astype(np.float32), eps.astype(np.float32)
     zeros = np.zeros(n_replicas, np.int32)
-    ctx.add_bonded([bonded], zeros, k32, e32)
-    ctx.set_nonbonded_tiled([nbt], zeros, k32, e32, r_switch=r_s, r_cutoff=r_c)
+    if solvent == "debye-huckel":
+        ctx.add_bonded([bonded], zeros, k32, e32)
+        ctx.set_nonbonded_tiled([nbt], zeros, k32, e32, r_switch=r_s, r_cutoff=r_c)
+    elif solvent == "gb-obc2":
+        if spec.gb_radius is None:
+            raise ValueError("build_context: GB-Parameter fehlen (System mit implicit/obc2.xml)")
+        ones = np.ones(n_replicas, np.float32)
+        ctx.add_bonded([bonded], zeros, np.zeros(n_replicas, np.float32), ones)  # 1-4: ε_in = 1
+        ctx.set_nonbonded_gb(
+            [nbt], zeros, k32, e32, [spec.gb_radius], [spec.gb_scale], r_switch=r_s,
+            r_cutoff=r_c, ace=ace,
+        )  # fmt: skip
+    else:
+        raise ValueError("solvent: 'debye-huckel' oder 'gb-obc2'")
     if cons is not None:
         ctx.set_constraints([cons], zeros)
     info = BuildInfo(
