@@ -263,3 +263,54 @@ def test_remd_cutoff_warning():
     ctx.set_integrator(0.001, 1.0, seed=1)
     with pytest.warns(UserWarning):
         ReplicaExchange(ctx, TEMPS, ionic_strength_molar=0.01)
+
+
+def test_remd_multiple_ladders():
+    """ladders=2: zwei unabhängige Leitern in einem Kontext. Jede Entscheidung = Metropolis mit
+    Kreuzenergien aus frischen Kontexten, nur innerhalb eines Blocks; Zustände verlassen ihren Block
+    nie, Paare über die Blockgrenze werden nie versucht; Zufallszahlen Block für Block."""
+    rng = np.random.default_rng(3)
+    spec = _charged_system(rng)
+    temps_all = np.tile(TEMPS, 2)
+    ctx, _ = _remd_context(spec, temps=temps_all)
+    remd = ReplicaExchange(ctx, TEMPS, ionic_strength_molar=IONIC, seed=7, ladders=2)
+    np.testing.assert_array_equal(remd.temperatures, temps_all)
+    mirror = np.random.default_rng(7)
+    beta = 1.0 / (KB * temps_all)
+    m, n = len(TEMPS), len(temps_all)
+    n_acc = np.zeros(2, int)
+    for cycle in range(10):
+        ctx.step(100)
+        x = ctx.positions_precise()[:, : spec.n_atoms, :3]
+        state = remd.state.copy()
+        u_old = ctx.energies()[:, 1:].sum(axis=1)
+        slot = np.empty_like(state)
+        slot[state] = np.arange(n)
+        pairs = [(b * m + k, b * m + k + 1) for b in range(2) for k in range(cycle % 2, m - 1, 2)]
+        trial = state.copy()
+        for i, j in pairs:
+            trial[slot[i]], trial[slot[j]] = j, i
+        u_cross = _fresh_energy(spec, x, temps_all[trial])
+        expected = state.copy()
+        for i, j in pairs:
+            a, b = slot[i], slot[j]
+            delta = (
+                beta[j] * u_cross[a]
+                + beta[i] * u_cross[b]
+                - beta[i] * u_old[a]
+                - beta[j] * u_old[b]
+            )
+            if delta <= 0.0 or mirror.random() < np.exp(-delta):
+                expected[a], expected[b] = j, i
+                n_acc[i // m] += 1
+        remd.attempt()
+        assert np.array_equal(remd.state, expected), cycle
+        assert np.array_equal(remd.state // m, np.arange(n) // m)
+        np.testing.assert_array_equal(ctx.temperatures(), temps_all[remd.state].astype(np.float32))
+    assert remd.attempts[m - 1] == 0 and remd.accepted[m - 1] == 0
+    assert (n_acc > 0).all(), n_acc
+    with pytest.raises(ValueError, match="ladders"):
+        ReplicaExchange(ctx, TEMPS, ionic_strength_molar=IONIC, ladders=3)
+    with pytest.raises(ValueError, match="temperatures_k"):
+        ReplicaExchange(ctx, temps_all, ionic_strength_molar=IONIC, ladders=2)
+    assert ctx.status() == 0
