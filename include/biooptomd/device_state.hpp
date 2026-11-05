@@ -19,7 +19,7 @@ constexpr int padded_atom_count(int n_atoms) {
 
 /// Terme der potentiellen Energie; Spalten von d_energy_fp (pro Replica N_TERMS Einträge).
 /// Interface-Stub: die zugehörigen Kraftterme entstehen in Phase 2–6.
-/// Bits des Geräte-Statusworts DeviceState::d_status (ADR 0006), per atomicOr gesetzt.
+/// Bits des Geräte-Statusworts DeviceState::d_status (ADR 0008), per atomicOr gesetzt.
 enum StatusBit : unsigned int {
   kStatusFixedPointSaturated = 1u,  ///< ein Kraft-/Energiebeitrag wurde auf ±2^30 gesättigt
   kStatusNonFinite = 2u,            ///< ein Beitrag war NaN (als 0 gezählt)
@@ -59,7 +59,7 @@ struct DeviceState {
   float2* d_box = nullptr;           ///< (Lx, Ly) [nm];                     n_replicas
   float* d_temperature = nullptr;    ///< T_r [K];                           n_replicas
   int2* d_image = nullptr;           ///< Box-Imagezähler (nx, ny);          n_replicas·n_pad
-  unsigned int* d_status = nullptr;  ///< Statuswort (StatusBit, ADR 0006);   1
+  unsigned int* d_status = nullptr;  ///< Statuswort (StatusBit, ADR 0008);   1
 
   /// Gesamtzahl Atomplätze n_replicas·n_pad.
   __host__ __device__ int n_total() const { return n_replicas * n_pad; }

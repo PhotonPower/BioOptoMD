@@ -233,7 +233,7 @@ NB_MODULE(_core, m) {
       .def("compute_forces", &SimulationContext::compute_forces,
            "clear_forces → Nonbonded → ForcePlugins → fixed_point_to_float (asynchron).")
       .def("status", &SimulationContext::status,
-           "Geräte-Statuswort (Bits STATUS_*, ADR 0006); 0 = in Ordnung. Synchronisiert.")
+           "Geräte-Statuswort (Bits STATUS_*, ADR 0008); 0 = in Ordnung. Synchronisiert.")
       .def("clear_status", &SimulationContext::clear_status, "Statuswort auf 0 setzen.")
       .def("synchronize", &SimulationContext::synchronize,
            "Wartet auf alle Arbeit im Stream des Kontexts.");
@@ -364,7 +364,7 @@ NB_MODULE(_core, m) {
             const auto& z = f.clamp_distances();
             return vector_to_numpy(z, {z.size()});
           },
-          "float32 (n_surface_types,): zeta_c = max(clamp_factor*sigma, zeta_F) [nm], ADR 0006.");
+          "float32 (n_surface_types,): zeta_c = max(clamp_factor*sigma, zeta_F) [nm], ADR 0008.");
   cls.def(
       "add_planar_surface",
       [](SimulationContext& c, HostInput<float> epsilon, HostInput<float> sigma, float z0,

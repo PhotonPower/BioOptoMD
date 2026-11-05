@@ -305,7 +305,7 @@ def test_philox_kat_on_device():
 
 def test_surface_vs_numpy():
     """9-3-Wand + Gouy-Chapman gegen NumPy: mehrere Typen, ε = 0, Clamp mit Kraftschranke
-    (ADR 0006), unbekannter Typ. Alle Kräfte werden verglichen, auch an der Wand."""
+    (ADR 0008), unbekannter Typ. Alle Kräfte werden verglichen, auch an der Wand."""
     rng = np.random.default_rng(17)
     n = 500
     eps = np.array([2.0, 0.0, 5.0], np.float32)
@@ -508,7 +508,7 @@ def test_pulling_follows_mass_change_and_dt_change():
 
 
 def test_fixed_point_saturation_and_status():
-    """ADR 0006: Beiträge > 2^30 werden gesättigt, NaN zu 0; beides setzt Statusbits."""
+    """ADR 0008: Beiträge > 2^30 werden gesättigt, NaN zu 0; beides setzt Statusbits."""
     ctx = _ctx(1, 4)
     assert ctx.status() == 0
     atom = np.array([0, 0, 1, 2], np.int32)
@@ -521,7 +521,7 @@ def test_fixed_point_saturation_and_status():
     fp = ctx.forces_fixed_point()[:, 0, :4]
     limit = 2**30 * 2**32
     # Ein gesättigter Beitrag + 1e3. (Zwei gesättigte gleichgerichtete Beiträge würden 2^63
-    # erreichen und überlaufen – laut ADR 0006 nicht verhinderbar, aber per Flag erkannt.)
+    # erreichen und überlaufen – laut ADR 0008 nicht verhinderbar, aber per Flag erkannt.)
     assert fp[0, 0] == limit + 1000 * 2**32
     assert fp[1, 0] == -limit and fp[2, 0] == 5 * 2**32
     assert fp[0, 1] == 3 * 2**32
@@ -535,7 +535,7 @@ def test_fixed_point_saturation_and_status():
 
 
 def test_wrap_range_status():
-    """ADR 0006: wrap_xy mit |x/L| >= 2^20 setzt STATUS_WRAP_RANGE (z. B. explodierende Atome)."""
+    """ADR 0008: wrap_xy mit |x/L| >= 2^20 setzt STATUS_WRAP_RANGE (z. B. explodierende Atome)."""
     ctx = _ctx(1, 4, box=2.0)
     ctx.set_positions(np.ones((1, 4, 3), np.float32))
     ctx.wrap_xy()
