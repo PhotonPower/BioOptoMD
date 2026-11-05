@@ -11,6 +11,7 @@ inline constexpr double KB = 0.0083144626;                 // kJ / (mol K)
 inline constexpr double FARADAY = 96.4853321;              // kJ / (mol V)
 inline constexpr double DEBYE_PER_ENM = 48.0320471;        // D / (e nm)
 inline constexpr double AVOGADRO = 6.02214076e23;          // 1 / mol
+inline constexpr double AKMA_TIME_PS = 0.04888821;         // ps, Zeiteinheit von CHARMM/DCD
 inline constexpr double FIXED_POINT_SCALE = 4294967296.0;  // 2^32
 inline constexpr float EPS_R2 = 1.0e-8f;                   // nm^2
 // Untergrenze für |a × b|² (kollineare Winkel/Torsionen, Kraft dort 0), nm^4

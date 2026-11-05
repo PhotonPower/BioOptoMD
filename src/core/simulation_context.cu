@@ -301,6 +301,51 @@ void SimulationContext::set_integrator(const LangevinParams& params) {
   integrator_ = std::make_unique<LangevinIntegrator>(params);
 }
 
+const LangevinParams& SimulationContext::integrator_params() const {
+  if (!integrator_) throw std::logic_error("integrator_params: kein Integrator gesetzt");
+  return integrator_->params();
+}
+
+DynamicState SimulationContext::save_dynamic_state() {
+  activate();
+  const std::size_t n = static_cast<std::size_t>(state_.n_total());
+  DynamicState out;
+  out.pos.resize(n);
+  out.pos_corr.resize(n);
+  out.vel.resize(n);
+  out.image.resize(n);
+  pos_.download_async(out.pos.data(), stream_.get());
+  pos_corr_.download_async(out.pos_corr.data(), stream_.get());
+  vel_.download_async(out.vel.data(), stream_.get());
+  image_.download_async(out.image.data(), stream_.get());
+  synchronize();
+  out.step = step_;
+  out.time_ps = time_ps_;
+  out.previous_time_ps = previous_time_ps_;
+  return out;
+}
+
+void SimulationContext::restore_dynamic_state(const DynamicState& state) {
+  const std::size_t n = static_cast<std::size_t>(state_.n_total());
+  require(state.pos.size() == n && state.pos_corr.size() == n && state.vel.size() == n &&
+              state.image.size() == n,
+          "restore_dynamic_state: Größe passt nicht zum Kontext (n_replicas·n_pad)");
+  require(state.step >= 0 && std::isfinite(state.time_ps) && std::isfinite(state.previous_time_ps),
+          "restore_dynamic_state: step >= 0, Zeiten endlich");
+  activate();
+  pos_.upload_async(state.pos.data(), stream_.get());
+  pos_corr_.upload_async(state.pos_corr.data(), stream_.get());
+  vel_.upload_async(state.vel.data(), stream_.get());
+  image_.upload_async(state.image.data(), stream_.get());
+  synchronize();
+  step_ = state.step;
+  time_ps_ = state.time_ps;
+  previous_time_ps_ = state.previous_time_ps;
+  forces_valid_ = false;
+  constraints_dirty_ = false;
+  for (auto& force : forces_) force->on_state_restored();
+}
+
 void SimulationContext::step(std::int64_t n) {
   require(n >= 0, "step: n muss >= 0 sein");
   if (!integrator_) throw std::logic_error("step: kein Integrator gesetzt (set_integrator)");

@@ -45,6 +45,9 @@ class HarmonicRestraintPullingForce final : public ForcePlugin {
   /// Kräfte in d_force_fp, Energie in Term kEnergyRestraint. Pulling: Ist seit dem letzten
   /// Aufruf genau ein Schritt vergangen, wird ΔW = V(x, t) − V(x, t − Δt) pro Replica addiert.
   void compute(DeviceState& s, cudaStream_t stream) override;
+  /// Nach einem Restore beginnt die Arbeitsakkumulation neu ab dem wiederhergestellten Schritt
+  /// (die akkumulierte Arbeit W selbst ist nicht Teil des Checkpoints).
+  void on_state_restored() override { has_last_step_ = false; }
 
   bool is_pulling() const { return pulling_; }
   /// Akkumulierte Arbeit W [kJ/mol] pro Replica (nur Pulling; synchronisiert).

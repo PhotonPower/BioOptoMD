@@ -12,6 +12,7 @@
 #include <climits>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <memory>
 #include <optional>
 #include <set>
@@ -427,6 +428,73 @@ NB_MODULE(_core, m) {
       .def_prop_ro("has_integrator", &SimulationContext::has_integrator)
       .def_prop_ro("dt", &SimulationContext::dt_ps, "Zeitschritt [ps] (0 ohne Integrator).")
       .def_prop_ro("current_step", &SimulationContext::current_step)
+      .def_prop_ro(
+          "integrator_params",
+          [](const SimulationContext& c) {
+            const auto& p = c.integrator_params();
+            nb::dict d;
+            d["dt"] = p.dt_ps;
+            d["friction"] = p.friction_per_ps;
+            d["seed"] = p.seed;
+            return d;
+          },
+          "dict dt [ps], friction [1/ps], seed; RuntimeError ohne Integrator.")
+      .def(
+          "save_state",
+          [](SimulationContext& c) {
+            const bomd::DynamicState st = c.save_dynamic_state();
+            const std::size_t r = static_cast<std::size_t>(c.n_replicas());
+            const std::size_t n = static_cast<std::size_t>(c.n_pad());
+            std::vector<float> pos(4 * st.pos.size()), corr(4 * st.pos.size());
+            std::vector<double> vel(4 * st.vel.size());
+            std::vector<int32_t> image(2 * st.image.size());
+            std::memcpy(pos.data(), st.pos.data(), pos.size() * sizeof(float));
+            std::memcpy(corr.data(), st.pos_corr.data(), corr.size() * sizeof(float));
+            std::memcpy(vel.data(), st.vel.data(), vel.size() * sizeof(double));
+            std::memcpy(image.data(), st.image.data(), image.size() * sizeof(int32_t));
+            nb::dict d;
+            d["pos"] = vector_to_numpy(pos, {r, n, 4});
+            d["pos_corr"] = vector_to_numpy(corr, {r, n, 4});
+            d["vel"] = vector_to_numpy(vel, {r, n, 4});
+            d["image"] = vector_to_numpy(image, {r, n, 2});
+            d["step"] = st.step;
+            d["time"] = st.time_ps;
+            d["previous_time"] = st.previous_time_ps;
+            return d;
+          },
+          "Dynamischer Zustand (bitgenau, inkl. Padding): pos float32 (n_replicas, n_pad, 4) =\n"
+          "(x, y, z [nm], q [e]), pos_corr float32 (…, 4) [nm], vel float64 (…, 4) = (v [nm/ps],\n"
+          "1/m [1/amu]), image int32 (…, 2), step, time [ps], previous_time [ps]. Für Checkpoints\n"
+          "siehe biooptomd.io.")
+      .def(
+          "restore_state",
+          [](SimulationContext& c, HostInput<float> pos, HostInput<float> pos_corr,
+             HostInput<double> vel, HostInput<int32_t> image, std::int64_t step, double time,
+             double previous_time) {
+            const std::size_t r = static_cast<std::size_t>(c.n_replicas());
+            const std::size_t n = static_cast<std::size_t>(c.n_pad());
+            check_shape(pos, {r, n, 4}, "pos");
+            check_shape(pos_corr, {r, n, 4}, "pos_corr");
+            check_shape(vel, {r, n, 4}, "vel");
+            check_shape(image, {r, n, 2}, "image");
+            bomd::DynamicState st;
+            st.pos.resize(r * n);
+            st.pos_corr.resize(r * n);
+            st.vel.resize(r * n);
+            st.image.resize(r * n);
+            std::memcpy(st.pos.data(), pos.data(), pos.size() * sizeof(float));
+            std::memcpy(st.pos_corr.data(), pos_corr.data(), pos_corr.size() * sizeof(float));
+            std::memcpy(st.vel.data(), vel.data(), vel.size() * sizeof(double));
+            std::memcpy(st.image.data(), image.data(), image.size() * sizeof(int32_t));
+            st.step = step;
+            st.time_ps = time;
+            st.previous_time_ps = previous_time;
+            c.restore_dynamic_state(st);
+          },
+          "pos"_a, "pos_corr"_a, "vel"_a, "image"_a, "step"_a, "time"_a, "previous_time"_a,
+          "Stellt einen mit save_state gesicherten Zustand bitgenau wieder her (Box, "
+          "Temperaturen,\n"
+          "Integrator und Plugins vorher setzen; set_box setzt die Imagezähler zurück).")
       .def_prop_ro("time", &SimulationContext::time_ps, "Simulationszeit [ps].")
       .def("step", &SimulationContext::step, "n"_a,
            "n BAOAB-Schritte (asynchron). Benötigt Integrator und Box.")

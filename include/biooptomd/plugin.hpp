@@ -40,6 +40,9 @@ class ForcePlugin {
   /// Kräfte [kJ/mol/nm] und Energien [kJ/mol] in Fixed-Point addieren.
   virtual void compute(DeviceState& s, cudaStream_t stream) = 0;
   virtual bool contributes_energy() const { return true; }
+  /// Host-seitig nach SimulationContext::restore_dynamic_state: schrittabhängigen Zustand
+  /// verwerfen (z. B. „letzter Schritt“ für Arbeitsinkremente).
+  virtual void on_state_restored() {}
 };
 
 /// In-situ-Messung; akkumuliert auf dem Gerät, Download nur auf Anfrage (AGENTS.md Regel 12).
