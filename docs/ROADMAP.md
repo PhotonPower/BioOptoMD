@@ -222,7 +222,7 @@ Dokumentation, Verzeichnisstruktur, Agenten-Anweisungen, Build-Entwürfe.
 - `test_phase9_remd.py::test_remd_multiple_ladders`, `::test_remd_explicit_screening_ladders` –
   Entscheidungen, Zähler und Zustandsparameter je Leiter exakt wie unabhängig berechnet.
 
-### Phase 9.5 – ImageChargeForce (ADR 0013, Accepted 2026-11-05; Implementierung abgeschlossen, Abnahme offen)
+### Phase 9.5 – ImageChargeForce (ADR 0013, Accepted; abgenommen 2026-11-06)
 
 **Aufgaben**
 1. NumPy-Referenz `tests/reference/image_charge_ref.py` (Energie, Kräfte, Minimum Image und Gittersumme).

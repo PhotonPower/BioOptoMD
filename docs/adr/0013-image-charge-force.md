@@ -1,6 +1,6 @@
 # ADR 0013: ImageChargeForce – abgeschirmte Bildladungen an leitfähigen Oberflächen
 
-- **Status:** Accepted (Projektinhaber 2026-11-05, Kriterien ROADMAP 9.5 und Defaults OQ-18 bestätigt)
+- **Status:** Accepted (Projektinhaber 2026-11-05, Kriterien ROADMAP 9.5 und Defaults OQ-18 bestätigt; Präzisierungen der Punkte 6, 7, 9 bestätigt und Phase 9.5 abgenommen 2026-11-06)
 - **Datum:** 2026-11-05
 - **Bezug:** OQ-16 (dielektrische Grenze), OQ-18 (Bildebene, Graphen), ADR 0003 (x/y-Periodizität),
   ADR 0006 (Cutoff aus κ, Bildsumme), ADR 0007 (Wandformen), ADR 0008 (Kraftschranken),
@@ -64,7 +64,7 @@ Antwort des Metalls auf das Molekül. PHYSICS_MODEL §3 führt `ImageChargeForce
 
 6. **Schutz bei ζ → 0 (ADR 0008).** ζ wird auf ζ_c = 0.1 nm geclampt (Energie stetig, Kraft in z dann 0),
    jedes Clamping zählt ein Device-Zähler wie bei der Wand; ζ_c >= 0.02 nm wird erzwungen.
-   *Präzisierung nach der Implementierung (Bestätigung durch den Projektinhaber offen):* An Gold
+   *Präzisierung nach der Implementierung (vom Projektinhaber am 2026-11-06 bestätigt):* An Gold
    mit d_im = 0 erreichen H-Atome ζ < ζ_c regelmäßig (σ_iw(H) ≈ 0.19 nm); ζ_c ist dort ein
    Modellparameter und keine reine Schutzgrenze, ASSUMPTION(OQ-18) Punkt (d). Für q = 1 und ε_r = 78.5 ist die Eigenbild-
    kraft bei ζ_c ≈ 45 kJ/mol/nm, weit unter F_max. Ankeratome (Oberflächen-Typ 0, OQ-07) nehmen teil,
@@ -76,7 +76,7 @@ Antwort des Metalls auf das Molekül. PHYSICS_MODEL §3 führt `ImageChargeForce
    Replica, `set_screening` für Replica Exchange (ADR 0011). Python: `ctx.add_image_charges(z_image,
    factor, kappa, eps_r, r_switch, r_cutoff)`; Builder-Funktion `builder.add_image_charges(ctx, info,
    material)` (statt der zuerst genannten Option `image_charges=True`, weil `build_context` keine
-   Wand anlegt; Bestätigung offen) übernimmt z_top aus dem Material, κ, ε_r und r_c aus `BuildInfo`.
+   Wand anlegt; bestätigt 2026-11-06) übernimmt z_top aus dem Material, κ, ε_r und r_c aus `BuildInfo`.
 
 8. **Kombination mit GB (OQ-16).** Mit `solvent="gb-*"` nutzt der Bildterm ε_r = ε_out und κ des
    GB-Modells, also das Fernfeld von GB (das in Debye-Hückel übergeht). Die Desolvatation an der Wand
