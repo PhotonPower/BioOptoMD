@@ -2,8 +2,8 @@
 
 > Diese Datei wird am Ende **jeder** Arbeitssitzung aktualisiert (AGENTS.md §2.4).
 
-**Aktive Phase:** 7 – Python-Builder, I/O & End-to-End: implementiert (PR #10 auf PR #9), Abnahme
-durch den Projektinhaber ausstehend.
+**Aktive Phase:** 8 – Performance & Benchmark (Branch `phase-8/benchmark`, auf PR #10).
+**Phase 7 abgenommen** am 2026-11-05 durch den Projektinhaber (RTX 3090).
 **Nachrüstung (PR #9) abgenommen** am 2026-11-05 durch den Projektinhaber (RTX 3090).
 **Phase 6 abgenommen** am 2026-11-04 durch den Projektinhaber (RTX 3090), vor den neuen Abnahmetests.
 **Referenz-Hardware:** RTX 6000 Ada 48 GB (CC 8.9), Host 1 TB RAM
@@ -22,7 +22,7 @@ durch den Projektinhaber ausstehend.
 - Phase 5 (PR #5): HMR, SHAKE/RATTLE auf H-Bindungen, N_dof. Abgenommen 2026-11-03; Nacharbeit nach
   Review siehe unten.
 
-## Phase 7 – erledigt, Abnahme ausstehend (Branch `phase-7/builder-io`, PR #10)
+## Phase 7 – erledigt, abgenommen 2026-11-05 (Branch `phase-7/builder-io`, PR #10)
 1. `biooptomd.builder`: `from_openmm`/`from_parmed` → `SystemSpec`; `build_context` (LJ-Typen,
    Exclusion-Tiles, HMR, H-Constraints, κ_r/ε_r(T_r), Cutoff aus κ, Box unverändert, Typ-Default 1).
    Lehnt mehrfache Kräfte gleichen Typs, Parameter-Offsets und virtuelle Sites ab.
@@ -144,5 +144,6 @@ ADR 0007 → **0009** (Mixed Precision), unsere OQ-08…11 → **OQ-11…14**.
 | 2026-11-04 | Claude (Build) | Env angelegt (CUDA 12.6), Build + leeres `_core`-Modul laufen, 2 Tests grün. Keine Quelländerungen außer dieser Datei. |
 | 2026-11-05 | Claude Opus 5.5 | `origin/main` (PR #7 Review/ADR-Entscheidungen, PR #8 Build-Umgebung RTX 6000 Ada) in den Phasen-Stapel gemergt. Doppelte Nummern aufgelöst: unsere ADR 0006 → **0008** (Kraftschranke/Statusflags), ADR 0007 → **0009** (Mixed Precision), unsere OQ-08…11 → **OQ-11…14**. ADR 0006/0007 auf `main` (Cutoff aus κ, Wandformen) gelten unverändert. |
 | 2026-11-05 | Projektinhaber | Nachrüstung (PR #9) abgenommen; weiter mit Phase 7. |
+| 2026-11-05 | Projektinhaber | Phase 7 (PR #10) abgenommen; weiter mit Phase 8. |
 | 2026-11-05 | Claude Opus 5.5 | Phase 7 implementiert (PR #10): Builder, Checkpoints, DCD/HDF5, Analyse, Beispiel + End-to-End-Test; Review umgesetzt. |
 | 2026-11-05 | Claude Opus 5.5 | Nachrüstung Phasen 2/4/6 (PR #9): Wandformen + Mischungsregeln, nichtlineares GC, κ-Cutoff + Bildsumme, Kugelschnitt-Verschmierung, optische Normierung; Review umgesetzt. Offen: zwei `reference`-Tests aus Phase 6 (s. o.). |
