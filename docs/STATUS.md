@@ -26,10 +26,22 @@ Alle PRs #1–#6, #9–#14 am 2026-11-05 nach `main` gemergt (Merge-Commits, Rei
 - Phase 5 (PR #5): HMR, SHAKE/RATTLE auf H-Bindungen, N_dof. Abgenommen 2026-11-03; Nacharbeit nach
   Review siehe unten.
 
-## Phase 9.5 – ImageChargeForce, Entwurf (Branch `phase-9/image-charge`)
-- ADR 0013 (Proposed): abgeschirmte Bildladungen an einer leitfähigen Ebene (im DH-Modell exakt),
-  Bildfaktor f, Bildebene z_im, Plugin mit eigenem Tile-Pass. Abnahmekriterien als Vorschlag in der
-  ROADMAP; neue OQ-18 (Bildebene Au(111), Faktor für Graphen). Implementierung nach Annahme des ADR.
+## Phase 9.5 – ImageChargeForce, implementiert, Abnahme offen (Branch `phase-9/image-charge`)
+- ADR 0013 Accepted (Projektinhaber 2026-11-05, Kriterien und Defaults OQ-18 bestätigt).
+- `src/forces/image_charge.{hpp,cu}` (Tile-Pass, Vorauswahl in z und lateral, Bildsumme, Clamping-
+  Zähler, `set_screening`), neuer Energie-Term `image`, Binding `add_image_charges`, Builder
+  `add_image_charges(ctx, info, "gold")`, Referenz `tests/reference/image_charge_ref.py`.
+- `tests/python/test_phase9_image.py`: 15 Tests grün (inkl. NVE: Drift 1–2·10⁻⁵ kJ/mol/ps/Atom, laterale
+  Vorauswahl über die periodische Grenze); volle Suite 140/140 (vor Review-Fixes), danach Phase 7 + 9.5 grün;
+  memcheck und racecheck ohne Befund.
+- Kosten: +4 % (DH) / +7 % (GBn2) je Schritt, Duplex aufrecht auf Gold, 8 Replicas (GPU dabei mit
+  dem Hairpin-Lauf geteilt, Verhältnis indikativ).
+- Review (unabhängiger Agent): kein kritischer Befund; umgesetzt: Test der lateralen Vorauswahl,
+  Padding-Prüfung, periodische Energieprüfung der Referenz, schärferer Stetigkeitstest, ζ_c als
+  ASSUMPTION(OQ-18) mit Untergrenze 0.02 nm, `add_anchors(z0_nm=…)`, Doku (ADR 0013 Punkte 6/7/9 –
+  Präzisierungen, Bestätigung durch den Projektinhaber offen).
+- Beobachtung: H-Atome erreichen an Gold ζ < ζ_c = 0.1 nm (σ_iw(H) ≈ 0.19 nm), Clamping ist dort
+  der Normalfall – passt zu OQ-18 (Lage der Bildebene).
 
 ## Phase 9.4 – Validierung GBn2 + OL21 (OQ-15), in Arbeit
 - OL21 ist in OpenMM 8.6 vorhanden (`amber19/DNA.OL21.xml`), kompatibel mit `implicit/gbn2.xml` und

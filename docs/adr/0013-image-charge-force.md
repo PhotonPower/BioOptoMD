@@ -1,6 +1,6 @@
 # ADR 0013: ImageChargeForce – abgeschirmte Bildladungen an leitfähigen Oberflächen
 
-- **Status:** Proposed
+- **Status:** Accepted (Projektinhaber 2026-11-05, Kriterien ROADMAP 9.5 und Defaults OQ-18 bestätigt)
 - **Datum:** 2026-11-05
 - **Bezug:** OQ-16 (dielektrische Grenze), OQ-18 (Bildebene, Graphen), ADR 0003 (x/y-Periodizität),
   ADR 0006 (Cutoff aus κ, Bildsumme), ADR 0007 (Wandformen), ADR 0008 (Kraftschranken),
@@ -16,7 +16,7 @@ Abschätzung für ε_r = 78.5 und 0.15 M (κ = 1.28 nm⁻¹):
 | Situation | Bildenergie |
 |---|---|
 | eine Elementarladung, 0.2 / 0.3 / 0.5 nm über der Bildebene | −1.3 / −0.7 / −0.25 kJ/mol |
-| 12 Phosphate (−1 e, Abstand 0.7 nm) in 0.6 nm Höhe | ≈ −5.6 kJ/mol ≈ −2.2 k_BT |
+| 12 Phosphate (−1 e, Abstand 0.7 nm) in 0.6 nm Höhe | ≈ −5.6 kJ/mol ≈ −2.2 k_BT (ohne Cutoff; mit r_c = 2 nm −5.1) |
 
 Der Gouy-Chapman-Term (PHYSICS_MODEL §4.1) beschreibt nur das Feld der Oberflächenladung, nicht die
 Antwort des Metalls auf das Molekül. PHYSICS_MODEL §3 führt `ImageChargeForce` deshalb als V2 auf.
@@ -63,7 +63,10 @@ Antwort des Metalls auf das Molekül. PHYSICS_MODEL §3 führt `ImageChargeForce
    Tile-Hüllen (`tile_common.cuh`).
 
 6. **Schutz bei ζ → 0 (ADR 0008).** ζ wird auf ζ_c = 0.1 nm geclampt (Energie stetig, Kraft in z dann 0),
-   jedes Clamping zählt ein Device-Zähler wie bei der Wand. Für q = 1 und ε_r = 78.5 ist die Eigenbild-
+   jedes Clamping zählt ein Device-Zähler wie bei der Wand; ζ_c >= 0.02 nm wird erzwungen.
+   *Präzisierung nach der Implementierung (Bestätigung durch den Projektinhaber offen):* An Gold
+   mit d_im = 0 erreichen H-Atome ζ < ζ_c regelmäßig (σ_iw(H) ≈ 0.19 nm); ζ_c ist dort ein
+   Modellparameter und keine reine Schutzgrenze, ASSUMPTION(OQ-18) Punkt (d). Für q = 1 und ε_r = 78.5 ist die Eigenbild-
    kraft bei ζ_c ≈ 45 kJ/mol/nm, weit unter F_max. Ankeratome (Oberflächen-Typ 0, OQ-07) nehmen teil,
    sofern sie geladen sind; liegt ihre Höhe unter z_im + ζ_c, greift das Clamping.
 
@@ -71,8 +74,9 @@ Antwort des Metalls auf das Molekül. PHYSICS_MODEL §3 führt `ImageChargeForce
    alle Paare (i ≤ j). j-Koordinaten werden beim Laden in den Shared Memory gespiegelt, sonst wie
    `TiledAllPairs` (Fixed-Point-Akkumulation, ADR 0002; Kernel deterministisch). κ_r und ε_r je
    Replica, `set_screening` für Replica Exchange (ADR 0011). Python: `ctx.add_image_charges(z_image,
-   factor, kappa, eps_r, r_switch, r_cutoff)`; Builder-Option `image_charges=True` übernimmt z_top aus
-   dem Material, κ, ε_r und r_c aus dem Kontext.
+   factor, kappa, eps_r, r_switch, r_cutoff)`; Builder-Funktion `builder.add_image_charges(ctx, info,
+   material)` (statt der zuerst genannten Option `image_charges=True`, weil `build_context` keine
+   Wand anlegt; Bestätigung offen) übernimmt z_top aus dem Material, κ, ε_r und r_c aus `BuildInfo`.
 
 8. **Kombination mit GB (OQ-16).** Mit `solvent="gb-*"` nutzt der Bildterm ε_r = ε_out und κ des
    GB-Modells, also das Fernfeld von GB (das in Debye-Hückel übergeht). Die Desolvatation an der Wand
@@ -80,7 +84,9 @@ Antwort des Metalls auf das Molekül. PHYSICS_MODEL §3 führt `ImageChargeForce
 
 9. **Kombination mit Gouy-Chapman.** Im linearen Modell überlagern sich die Felder: Gouy-Chapman setzt
    das Potential der diffusen Schicht Φ₀, die Bilder halten das Potential des Moleküls auf der Ebene
-   bei 0. Das entspricht einer Elektrode auf konstantem Potential. Mit nichtlinearem Gouy-Chapman ist
+   bei 0. Das entspricht einer Elektrode auf konstantem Potential, streng nur, wenn beide Ebenen
+   zusammenfallen: Gouy-Chapman hat seinen Ursprung bei z0, die Bildebene liegt bei
+   z0 + z_top + d_im (Gold: 0.118 nm darüber). Mit nichtlinearem Gouy-Chapman ist
    die Überlagerung eine Näherung (gültig, solange die Ladungen des Moleküls das Profil nur linear
    stören).
 

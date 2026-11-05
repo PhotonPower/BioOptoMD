@@ -222,19 +222,19 @@ Dokumentation, Verzeichnisstruktur, Agenten-Anweisungen, Build-Entwürfe.
 - `test_phase9_remd.py::test_remd_multiple_ladders`, `::test_remd_explicit_screening_ladders` –
   Entscheidungen, Zähler und Zustandsparameter je Leiter exakt wie unabhängig berechnet.
 
-### Phase 9.5 – ImageChargeForce (ADR 0013, Proposed; vom Projektinhaber am 2026-11-05 gewählt)
+### Phase 9.5 – ImageChargeForce (ADR 0013, Accepted 2026-11-05; Implementierung abgeschlossen, Abnahme offen)
 
 **Aufgaben**
 1. NumPy-Referenz `tests/reference/image_charge_ref.py` (Energie, Kräfte, Minimum Image und Gittersumme).
 2. Plugin `src/forces/image_charge.{hpp,cu}`: Tile-Pass mit gespiegelten j-Koordinaten, Vorauswahl in z,
    Clamping-Zähler, `set_screening`; Bindings `add_image_charges`.
-3. Builder: `image_charges=True` (z_top, κ, ε_r, r_c aus Kontext und Material).
+3. Builder: `builder.add_image_charges(ctx, info, material)` (z_top, κ, ε_r, r_c aus BuildInfo und Material).
 
-**Abnahmetests (Vorschlag, Bestätigung durch den Projektinhaber offen)**
-- `test_phase9_image.py::test_image_reference_dirichlet` (`reference`) – Potential von Ladungen + Bildern
+**Abnahmetests (vom Projektinhaber am 2026-11-05 bestätigt)**
+- `test_phase9_image.py::test_image_reference_dirichlet` (reines NumPy) – Potential von Ladungen + Bildern
   auf der Ebene z_im verschwindet (< 1e-12 relativ, ohne Switching); Eigenbildenergie einer Ladung
   analytisch; Kräfte der Referenz vs. finite Differenzen rel. < 1e-6.
-- `::test_image_gpu_vs_numpy` (`reference`) – Energie rel. < 1e-5, Kräfte < 1e-4 RMS, mehrere Replicas mit
+- `::test_image_gpu_vs_numpy`, `::test_image_lateral_culling` – Energie rel. < 1e-5, Kräfte < 1e-4 RMS, mehrere Replicas mit
   verschiedenem κ/ε_r, Minimum-Image- und Bildsummenpfad, f = 1 und f = −0.5.
 - `::test_image_far_atoms_zero` – Atome mit ζ > r_c erhalten exakt null Bildkraft (Vorauswahl).
 - `::test_image_clamp` – ζ < ζ_c: Energie stetig, Kraft in z null, Zähler zählt.

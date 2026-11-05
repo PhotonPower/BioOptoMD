@@ -28,6 +28,7 @@
 #include "core/testing.hpp"
 #include "forces/bonded.hpp"
 #include "forces/harmonic_restraint.hpp"
+#include "forces/image_charge.hpp"
 #include "forces/planar_surface.hpp"
 #include "forces/voxel_grid.hpp"
 #include "nonbonded/generalized_born.hpp"
@@ -414,8 +415,8 @@ NB_MODULE(_core, m) {
 
   // --- Integration und Energien ------------------------------------------------------------
   nb::list term_names;
-  for (const char* name :
-       {"bond", "angle", "torsion", "pair14", "nonbonded", "surface", "restraint", "external"})
+  for (const char* name : {"bond", "angle", "torsion", "pair14", "nonbonded", "surface",
+                           "restraint", "external", "image"})
     term_names.append(name);
   m.attr("ENERGY_TERMS") = nb::tuple(term_names);
 
@@ -620,6 +621,42 @@ NB_MODULE(_core, m) {
       "zeta_F) mit |F(zeta_F)| = max_force [kJ/mol/nm]. Optional Gouy-Chapman (OQ-06): phi0 =\n"
       "Potential der diffusen Schicht [kJ/(mol e)] (nicht das Elektrodenpotential), kappa [1/nm]\n"
       "je Replica (n_replicas,), T_r aus set_temperatures; gouy_chapman='linear' nur als Test.");
+
+  nb::class_<bomd::ImageChargeForce>(m, "ImageChargeForce",
+                                     "Abgeschirmte Bildladungen an z = z_image (ADR 0013).")
+      .def_prop_ro("uses_image_sum", &bomd::ImageChargeForce::uses_image_sum,
+                   "True, wenn über periodische Bilder summiert wird (Box < 2 r_c).")
+      .def("clamp_count", &bomd::ImageChargeForce::clamp_count,
+           "Anzahl geladener Atome mit z - z_image <= zeta_clamp, summiert über Replicas und\n"
+           "Kraftauswertungen.")
+      .def("reset_counters", &bomd::ImageChargeForce::reset_counters);
+  cls.def(
+      "add_image_charges",
+      [](SimulationContext& c, float z_image, float factor, HostInput<float> kappa,
+         HostInput<float> eps_r, float r_switch, float r_cutoff, float zeta_clamp,
+         bool image_sum) -> bomd::ImageChargeForce& {
+        const std::size_t n_rep = static_cast<std::size_t>(c.n_replicas());
+        check_shape(kappa, {n_rep}, "kappa");
+        check_shape(eps_r, {n_rep}, "eps_r");
+        bomd::ImageChargeParams p;
+        p.z_image_nm = z_image;
+        p.factor = factor;
+        p.kappa_per_nm = to_vector(kappa);
+        p.eps_r = to_vector(eps_r);
+        p.r_switch_nm = r_switch;
+        p.r_cutoff_nm = r_cutoff;
+        p.zeta_clamp_nm = zeta_clamp;
+        p.always_image_sum = image_sum;
+        return static_cast<bomd::ImageChargeForce&>(
+            c.add_force(std::make_unique<bomd::ImageChargeForce>(std::move(p))));
+      },
+      "z_image"_a, "factor"_a, "kappa"_a, "eps_r"_a, "r_switch"_a, "r_cutoff"_a,
+      "zeta_clamp"_a = 0.1f, "image_sum"_a = false, nb::rv_policy::reference_internal,
+      "Bildladungen an der Ebene z_image [nm] (ADR 0013): U = -f [sum_{i<j} q_i q_j phi(s_ij)\n"
+      "+ 1/2 sum_i q_i^2 phi(2 zeta_i)], phi = Debye-Hückel mit kappa [1/nm], eps_r je Replica\n"
+      "(n_replicas,) und Switching r_switch..r_cutoff [nm] (Werte der Nonbonded-Strategie).\n"
+      "factor f: 1 = idealer Leiter, sonst Näherung (OQ-18). zeta = max(z - z_image,\n"
+      "zeta_clamp). image_sum=True erzwingt den Bildsummenpfad (Tests). Energie-Term 'image'.");
 
   nb::class_<bomd::HarmonicRestraintPullingForce>(
       m, "HarmonicRestraintPullingForce", "Positions-Restraints / Schwerpunkt-Pulling, §4.2.")
