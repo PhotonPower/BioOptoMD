@@ -2,7 +2,7 @@
 
 BioOptoMD ist ein modulares C++/CUDA-Molekulardynamik-Framework mit Python-API, das die Dynamik von Biorezeptoren (Aptamere, Peptide, später Antikörper) an nanostrukturierten Sensoroberflächen simuliert und **in-situ** optische Kopplungsparameter (Übergangsdipole, FRET-Geometrie, Brechungsindexprofile n(z)) als direkten Input für elektromagnetische Optik-Solver (Transfer-Matrix, FEM, BEM) berechnet.
 
-> **Status:** Planungsphase / Phase 0 (Repository-Gerüst). Siehe [`docs/STATUS.md`](docs/STATUS.md).
+> **Status:** Phase 1 (Build-System, DeviceState, Python-Bindings) in Arbeit. Siehe [`docs/STATUS.md`](docs/STATUS.md).
 
 ## Warum eine eigene Engine?
 
@@ -37,13 +37,24 @@ Begründung und Abgrenzung: [`docs/adr/0001-eigene-engine.md`](docs/adr/0001-eig
 
 Beide Karten haben schwache FP64-Leistung → Kernels rechnen in FP32, Kräfte werden in 64-bit-Fixed-Point akkumuliert (siehe ADR 0002).
 
-## Build (Zielzustand ab Phase 1)
+## Build
+
+Linux (Referenz, Conda):
 
 ```bash
 conda env create -f environment.yml
 conda activate biooptomd
 pip install -v -e . --no-build-isolation
 pytest -m "not slow"
+```
+
+Windows (ohne Conda; VS Build Tools 2022, CUDA Toolkit 12.x):
+
+```bat
+python -m venv .venv
+.venv\Scripts\pip install numpy scipy pytest ruff nanobind scikit-build-core ninja cupy-cuda12x
+toolsuild_windows.bat
+.venv\Scripts\python -m pytest -m "not slow"
 ```
 
 ## Lizenz

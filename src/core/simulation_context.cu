@@ -1,0 +1,257 @@
+// BioOptoMD – SimulationContext: Allokation, Host-Setter, Kernel-Aufrufe, Plugin-Pipeline.
+#include <climits>
+#include <cmath>
+#include <stdexcept>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include "biooptomd/cuda_check.hpp"
+#include "biooptomd/simulation_context.hpp"
+#include "core/core_kernels.cuh"
+
+namespace bomd {
+namespace {
+
+/// Obergrenze aus gridDim.y (Kernels mit blockIdx.y = Replica).
+constexpr int kMaxReplicas = 65535;
+
+void require(bool condition, const std::string& message) {
+  if (!condition) throw std::invalid_argument(message);
+}
+
+}  // namespace
+
+SimulationContext::SimulationContext(int n_replicas, int n_atoms, int device) : device_(device) {
+  require(n_replicas > 0 && n_replicas <= kMaxReplicas,
+          "n_replicas muss in [1, " + std::to_string(kMaxReplicas) + "] liegen");
+  require(n_atoms > 0 && n_atoms <= INT_MAX - kTileSize, "n_atoms muss in [1, 2^31 - 33] liegen");
+  // n_replicas·n_pad·3 muss in int-Indizes der Kernels passen.
+  require(static_cast<long long>(n_replicas) * padded_atom_count(n_atoms) * 3 < (1LL << 31),
+          "System zu groß: n_replicas * n_pad * 3 >= 2^31");
+
+  activate();
+  const int n_pad = padded_atom_count(n_atoms);
+  const std::size_t n_total = static_cast<std::size_t>(n_replicas) * n_pad;
+
+  pos_ = DeviceBuffer<float4>(n_total);
+  vel_ = DeviceBuffer<float4>(n_total);
+  force_fp_ = DeviceBuffer<long long>(3 * n_total);
+  force_ = DeviceBuffer<float4>(n_total);
+  energy_fp_ = DeviceBuffer<long long>(static_cast<std::size_t>(n_replicas) * kNumEnergyTerms);
+  types_ = DeviceBuffer<int2>(n_total);
+  box_ = DeviceBuffer<float2>(n_replicas);
+  temperature_ = DeviceBuffer<float>(n_replicas);
+  image_ = DeviceBuffer<int2>(n_total);
+  // Blockierender Stream ⇒ implizit geordnet mit dem Legacy-Default-Stream (z. B. von CuPy).
+  stream_ = CudaStream::create();
+
+  // Alles 0: insbesondere Padding-Atome mit q = 0, inv_mass = 0, LJ-Typ 0 (AGENTS.md Regel 6).
+  pos_.zero_async(stream_.get());
+  vel_.zero_async(stream_.get());
+  force_fp_.zero_async(stream_.get());
+  force_.zero_async(stream_.get());
+  energy_fp_.zero_async(stream_.get());
+  types_.zero_async(stream_.get());
+  box_.zero_async(stream_.get());
+  temperature_.zero_async(stream_.get());
+  image_.zero_async(stream_.get());
+
+  state_.n_replicas = n_replicas;
+  state_.n_atoms = n_atoms;
+  state_.n_pad = n_pad;
+  state_.d_pos = pos_.data();
+  state_.d_vel = vel_.data();
+  state_.d_force_fp = force_fp_.data();
+  state_.d_force = force_.data();
+  state_.d_energy_fp = energy_fp_.data();
+  state_.d_types = types_.data();
+  state_.d_box = box_.data();
+  state_.d_temperature = temperature_.data();
+  state_.d_image = image_.data();
+
+  synchronize();
+}
+
+SimulationContext::~SimulationContext() {
+  // Plugins zuerst freigeben (sie dürfen eigene Puffer besitzen); danach geben die
+  // Member-Destruktoren die Puffer und zuletzt den Stream frei.
+  cudaSetDevice(device_);
+  if (stream_.get() != nullptr) cudaStreamSynchronize(stream_.get());
+  observers_.clear();
+  forces_.clear();
+  nonbonded_.reset();
+}
+
+void SimulationContext::activate() const {
+  BOMD_CUDA_CHECK(cudaSetDevice(device_));
+}
+
+void SimulationContext::synchronize() {
+  activate();
+  BOMD_CUDA_CHECK(cudaStreamSynchronize(stream_.get()));
+}
+
+// --- Host-Setter -------------------------------------------------------------------------
+
+void SimulationContext::scatter_xyz(float4* dst, const float* src) {
+  activate();
+  const std::size_t n = static_cast<std::size_t>(n_replicas()) * n_atoms() * 3;
+  for (std::size_t k = 0; k < n; ++k) require(std::isfinite(src[k]), "Wert nicht endlich");
+  DeviceBuffer<float> staging(n);
+  staging.upload_async(src, stream_.get());
+  detail::launch_scatter_xyz(state_, dst, staging.data(), stream_.get());
+  synchronize();  // staging lebt bis hier.
+}
+
+void SimulationContext::scatter_w(float4* dst, const float* src) {
+  activate();
+  const std::size_t n = static_cast<std::size_t>(n_replicas()) * n_atoms();
+  DeviceBuffer<float> staging(n);
+  staging.upload_async(src, stream_.get());
+  detail::launch_scatter_w(state_, dst, staging.data(), stream_.get());
+  synchronize();
+}
+
+void SimulationContext::check_wrap_range(const float* xyz, int atom_stride, int components) const {
+  if (!box_set_) return;
+  for (int r = 0; r < n_replicas(); ++r) {
+    for (int i = 0; i < n_atoms(); ++i) {
+      const float* p = xyz + (static_cast<std::size_t>(r) * atom_stride + i) * components;
+      require(std::fabs(p[0]) < kMaxBoxImages * h_box_[r].x &&
+                  std::fabs(p[1]) < kMaxBoxImages * h_box_[r].y,
+              "Position ausserhalb des wrap-faehigen Bereichs |x/L| < 2^20");
+    }
+  }
+}
+
+void SimulationContext::set_positions(const float* xyz_nm) {
+  const std::size_t n = static_cast<std::size_t>(n_replicas()) * n_atoms() * 3;
+  for (std::size_t k = 0; k < n; ++k) require(std::isfinite(xyz_nm[k]), "Wert nicht endlich");
+  check_wrap_range(xyz_nm, n_atoms(), 3);
+  scatter_xyz(pos_.data(), xyz_nm);
+  image_.zero_async(stream_.get());  // neue Positionen = neuer ungewrappter Ursprung
+  synchronize();
+}
+
+void SimulationContext::set_velocities(const float* v_nm_ps) {
+  scatter_xyz(vel_.data(), v_nm_ps);
+}
+
+void SimulationContext::set_charges(const float* q_e) {
+  const std::size_t n = static_cast<std::size_t>(n_replicas()) * n_atoms();
+  for (std::size_t k = 0; k < n; ++k) require(std::isfinite(q_e[k]), "Ladung nicht endlich");
+  scatter_w(pos_.data(), q_e);
+}
+
+void SimulationContext::set_masses(const float* m_amu) {
+  const std::size_t n = static_cast<std::size_t>(n_replicas()) * n_atoms();
+  std::vector<float> inv_mass(n);
+  for (std::size_t k = 0; k < n; ++k) {
+    require(std::isfinite(m_amu[k]) && m_amu[k] > 0.0f, "Massen müssen endlich und > 0 sein");
+    inv_mass[k] = static_cast<float>(1.0 / static_cast<double>(m_amu[k]));
+  }
+  scatter_w(vel_.data(), inv_mass.data());
+}
+
+void SimulationContext::set_types(const int* types) {
+  activate();
+  std::vector<int2> padded(static_cast<std::size_t>(n_replicas()) * n_pad(), int2{0, 0});
+  for (int r = 0; r < n_replicas(); ++r) {
+    for (int i = 0; i < n_atoms(); ++i) {
+      const std::size_t k = (static_cast<std::size_t>(r) * n_atoms() + i) * 2;
+      require(types[k] >= 0 && types[k + 1] >= 0, "Typen müssen >= 0 sein");
+      padded[static_cast<std::size_t>(r) * n_pad() + i] = int2{types[k], types[k + 1]};
+    }
+  }
+  types_.upload_async(padded.data(), stream_.get());
+  synchronize();
+}
+
+void SimulationContext::set_box(const float* box_nm) {
+  activate();
+  std::vector<float2> box(n_replicas());
+  for (int r = 0; r < n_replicas(); ++r) {
+    const float lx = box_nm[2 * r];
+    const float ly = box_nm[2 * r + 1];
+    require(std::isfinite(lx) && std::isfinite(ly) && lx > 0.0f && ly > 0.0f,
+            "Boxlängen müssen endlich und > 0 sein");
+    box[r] = float2{lx, ly};
+  }
+  // Aktuelle Positionen gegen die neue Box prüfen, bevor etwas geändert wird.
+  std::vector<float4> pos(pos_.size());
+  pos_.download_async(pos.data(), stream_.get());
+  synchronize();
+  std::swap(h_box_, box);
+  const bool was_set = std::exchange(box_set_, true);
+  try {
+    check_wrap_range(&pos[0].x, n_pad(), 4);
+  } catch (...) {
+    std::swap(h_box_, box);
+    box_set_ = was_set;
+    throw;
+  }
+  box_.upload_async(h_box_.data(), stream_.get());
+  image_.zero_async(stream_.get());  // neue Box = neuer ungewrappter Ursprung
+  synchronize();
+}
+
+void SimulationContext::set_temperatures(const float* t_k) {
+  activate();
+  for (int r = 0; r < n_replicas(); ++r)
+    require(std::isfinite(t_k[r]) && t_k[r] >= 0.0f, "Temperaturen müssen endlich und >= 0 sein");
+  temperature_.upload_async(t_k, stream_.get());
+  synchronize();
+}
+
+// --- Kernels ----------------------------------------------------------------------------
+
+void SimulationContext::clear_forces() {
+  activate();
+  detail::launch_clear_forces(state_, stream_.get());
+}
+
+void SimulationContext::fixed_point_to_float() {
+  activate();
+  detail::launch_fixed_point_to_float(state_, stream_.get());
+}
+
+void SimulationContext::wrap_xy() {
+  if (!box_set_) throw std::logic_error("wrap_xy: Box nicht gesetzt (set_box aufrufen)");
+  activate();
+  detail::launch_wrap_xy(state_, stream_.get());
+}
+
+void SimulationContext::compute_forces() {
+  clear_forces();
+  if (nonbonded_) nonbonded_->compute(state_, stream_.get());
+  for (auto& force : forces_) force->compute(state_, stream_.get());
+  fixed_point_to_float();
+}
+
+// --- Plugins ----------------------------------------------------------------------------
+
+ForcePlugin& SimulationContext::add_force(std::unique_ptr<ForcePlugin> plugin) {
+  require(plugin != nullptr, "add_force: Plugin ist null");
+  activate();
+  plugin->initialize(*this);
+  forces_.push_back(std::move(plugin));
+  return *forces_.back();
+}
+
+ObserverPlugin& SimulationContext::add_observer(std::unique_ptr<ObserverPlugin> plugin) {
+  require(plugin != nullptr, "add_observer: Plugin ist null");
+  require(plugin->stride() > 0, "add_observer: stride muss > 0 sein");
+  activate();
+  plugin->initialize(*this);
+  observers_.push_back(std::move(plugin));
+  return *observers_.back();
+}
+
+void SimulationContext::set_nonbonded(std::unique_ptr<NonbondedStrategy> strategy) {
+  activate();
+  if (strategy) strategy->initialize(*this);
+  nonbonded_ = std::move(strategy);
+}
+
+}  // namespace bomd

@@ -78,7 +78,7 @@ public:
   virtual std::string_view name() const = 0;
   virtual int  stride() const = 0;                        // alle n Schritte
   virtual void initialize(SimulationContext&) {}
-  virtual void observe(const DeviceState& s, long step, cudaStream_t st) = 0;
+  virtual void observe(const DeviceState& s, std::int64_t step, cudaStream_t st) = 0;  // long ist unter Windows 32 bit
   virtual void reset() = 0;                                // Akkumulatoren leeren
   virtual ObserverResult download() const = 0;             // Device → Host, nur auf Anfrage
 };
@@ -86,6 +86,7 @@ public:
 class NonbondedStrategy {   // Strategy-Pattern: TiledAllPairs (V1), CellList (V2)
 public:
   virtual ~NonbondedStrategy() = default;
+  virtual void initialize(SimulationContext&) {}
   virtual void compute(DeviceState&, cudaStream_t) = 0;
 };
 
@@ -95,6 +96,24 @@ class ElectrostaticsModel;  // DebyeHuckel (V1), GeneralizedBornOBC (V2) – als
 ```
 
 Virtuelle Funktionen existieren **nur** auf dem Host. Jedes Plugin startet eigene Kernels.
+
+Implementierung (Phase 1): `include/biooptomd/plugin.hpp`, `simulation_context.hpp`, `device_state.hpp`.
+`SimulationContext::compute_forces()` führt `clear_forces → Nonbonded → ForcePlugins → fixed_point_to_float` aus.
+Die Spalten von `d_energy_fp` sind das Enum `bomd::EnergyTerm` (`kNumEnergyTerms` = N_TERMS).
+
+### 3.1 Python-Export der Zustandsarrays (Phase 1)
+
+`biooptomd._core.SimulationContext` exportiert jeden Puffer im **rohen, gepaddeten Layout** aus §2.2
+(z. B. `positions()` → `float32 (n_replicas, n_pad, 4)`, `forces_fixed_point()` → `int64 (3, n_replicas, n_pad)`):
+
+- `x()` bzw. `x(dlpack=False)`: NumPy-Kopie (synchronisiert den Stream).
+- `x(dlpack=True)`: Zero-Copy-Sicht auf den Gerätespeicher (`__dlpack__`, z. B. `cupy.from_dlpack`). Der Stream wird
+  vorher synchronisiert; die Sicht hält den Kontext am Leben. Spätere Kernels des Kontexts verändern die Daten, und
+  fremde Streams sind nicht automatisch geordnet (der Kontext-Stream ist blockierend, also mit dem Legacy-Default-Stream
+  geordnet). Bei Bedarf `ctx.synchronize()`.
+
+Setter (`set_positions`, `set_charges`, `set_masses`, …) nehmen nur echte Atome (`(n_replicas, n_atoms, …)`) und
+lassen Padding-Atome unverändert. Test-Hooks ohne Produktionsphysik liegen in `biooptomd._core.testing`.
 
 ## 4. Module
 
