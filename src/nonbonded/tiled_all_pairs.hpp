@@ -37,7 +37,8 @@ struct TiledAllPairsParams {
   bool always_image_sum = false;
 };
 
-class TiledAllPairs final : public NonbondedStrategy {
+/// Nicht final: TiledGeneralizedBorn (ADR 0010) nutzt Topologie-, Masken- und Hüllenpuffer.
+class TiledAllPairs : public NonbondedStrategy {
  public:
   explicit TiledAllPairs(TiledAllPairsParams params);
 
@@ -50,7 +51,7 @@ class TiledAllPairs final : public NonbondedStrategy {
   int n_tile_pairs() const { return n_tile_pairs_; }
   const TiledAllPairsParams& params() const { return params_; }
 
- private:
+ protected:
   TiledAllPairsParams params_;
   SimulationContext* ctx_ = nullptr;
   int n_tile_pairs_ = 0;

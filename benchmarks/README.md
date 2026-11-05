@@ -83,3 +83,8 @@ Torsionen 40 µs, übrige Kernels < 20 µs.
 **Grenzen:** Ohne Zellliste wächst der Aufwand je Replica mit N²; für ein einzelnes großes System
 (1 × 20 k) ist OpenMM mit Nachbarliste schneller. Zellliste/Nachbarliste: Phase 9+ (ARCHITECTURE §6).
 Nsight Compute (Counter-Rechte) weiterhin ausstehend.
+
+## Phase 9.1 – Kosten von GB-OBC2 (2026-11-05)
+RTX 3090, 32 × 1558 Atome, gleiche Einstellungen wie Phase 8 (r_c = 3.92 nm, HMR, Constraints, 4 fs):
+Debye-Hückel 13 447 ns/Tag, **GB-OBC2 mit ACE 4 565 ns/Tag** (≈ 2.9× langsamer, drei Tile-Passes:
+Born-Integrale, Paarterme, Kettenregel). Ein Vergleich mit OpenMM-GB wurde nicht gemessen.

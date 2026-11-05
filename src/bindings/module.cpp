@@ -30,6 +30,7 @@
 #include "forces/harmonic_restraint.hpp"
 #include "forces/planar_surface.hpp"
 #include "forces/voxel_grid.hpp"
+#include "nonbonded/generalized_born.hpp"
 #include "nonbonded/tiled_all_pairs.hpp"
 #include "observers/energy_tracker.hpp"
 #include "observers/optics.hpp"
@@ -721,6 +722,54 @@ NB_MODULE(_core, m) {
       "cutoff_from_kappa, ADR 0006). LJ-Typen aus types[..., 0]. Bei L_x oder L_y < 2 r_c\n"
       "Summe über periodische Bilder; image_sum='always' erzwingt sie (Test).\n"
       "Ersetzt eine zuvor gesetzte Nonbonded-Strategie (daher kein zurückgegebenes Handle).");
+
+  cls.def(
+      "set_nonbonded_gb",
+      [](SimulationContext& c, nb::list topologies, HostInput<int32_t> replica_topology,
+         HostInput<float> kappa, HostInput<float> eps_out, nb::list radius, nb::list scale,
+         float r_switch, float r_cutoff, float eps_in, bool ace, const std::string& image_sum) {
+        if (image_sum != "auto" && image_sum != "always")
+          throw nb::value_error("image_sum: 'auto' oder 'always'");
+        if (nb::len(radius) != nb::len(topologies) || nb::len(scale) != nb::len(topologies))
+          throw nb::value_error("radius und scale: je Topologie ein Array (n_atoms,)");
+        bomd::GeneralizedBornParams p;
+        for (nb::handle h : topologies)
+          p.base.topologies.push_back(nonbonded_topology_from_dict(nb::cast<nb::dict>(h)));
+        p.base.replica_topology = to_vector(replica_topology);
+        p.base.kappa_per_nm = to_vector(kappa);
+        p.base.eps_r = to_vector(eps_out);
+        p.base.r_switch_nm = r_switch;
+        p.base.r_cutoff_nm = r_cutoff;
+        p.base.always_image_sum = image_sum == "always";
+        nb::module_ np = nb::module_::import_("numpy");
+        for (std::size_t t = 0; t < nb::len(radius); ++t) {
+          p.radius_nm.push_back(to_vector(nb::cast<HostInput<float>>(
+              np.attr("ascontiguousarray")(radius[t], "dtype"_a = "float32"))));
+          p.scale.push_back(to_vector(nb::cast<HostInput<float>>(
+              np.attr("ascontiguousarray")(scale[t], "dtype"_a = "float32"))));
+        }
+        p.eps_in = eps_in;
+        p.ace = ace;
+        c.set_nonbonded(std::make_unique<bomd::TiledGeneralizedBorn>(std::move(p)));
+      },
+      "topologies"_a, "replica_topology"_a, "kappa"_a, "eps_out"_a, "radius"_a, "scale"_a,
+      "r_switch"_a = 1.8f, "r_cutoff"_a = 2.0f, "eps_in"_a = 1.0f, "ace"_a = true,
+      "image_sum"_a = "auto",
+      "Nonbonded mit Generalized Born OBC2 (ADR 0010): LJ + Coulomb (eps_in) + GB mit Salz.\n"
+      "topologies wie set_nonbonded_tiled; kappa [1/nm] und eps_out (n_replicas,); radius rho "
+      "[nm]\n"
+      "und scale s je Topologie (n_atoms,), aus biooptomd.builder (implicit/obc2.xml); r_switch,\n"
+      "r_cutoff [nm] (cutoff_from_kappa); ace = unpolarer ACE-Term. 1-4-Coulomb im Bonded-Kernel\n"
+      "unabgeschirmt setzen (kappa = 0, eps_r = eps_in).");
+  cls.def(
+      "nonbonded_born_radii",
+      [](SimulationContext& c) {
+        auto* gb = dynamic_cast<bomd::TiledGeneralizedBorn*>(c.nonbonded());
+        if (gb == nullptr) throw nb::value_error("keine GB-Nonbonded-Strategie gesetzt");
+        return vector_to_numpy(gb->born_radii(), {static_cast<std::size_t>(c.n_replicas()),
+                                                  static_cast<std::size_t>(c.n_pad())});
+      },
+      "Born-Radien B [nm] der letzten Kraftberechnung, float32 (n_replicas, n_pad), Padding 0.");
 
   cls.def(
          "set_constraints",

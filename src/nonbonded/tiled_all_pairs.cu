@@ -14,29 +14,19 @@
 #include "core/fixed_point.cuh"
 #include "core/pbc.cuh"
 #include "nonbonded/electrostatics.cuh"
+#include "nonbonded/tile_common.cuh"
 #include "nonbonded/tiled_all_pairs.hpp"
 
 namespace bomd {
 namespace {
 
-/// Warps pro Block; jeder Warp bearbeitet ein Tile-Paar. 4 Warps = 128 Threads: genug Warps
-/// pro SM für Latenzverdeckung bei kleinem Shared-Memory-Bedarf (Tabelle + 4 × 32 j-Atome).
-constexpr int kWarpsPerBlock = 4;
 constexpr int kMaxTypes = 64;
+using detail::image_count;
+using detail::kWarpsPerBlock;
+using detail::SwitchParams;
+using detail::tiles_out_of_range;
 
-struct SwitchParams {
-  float r_s, r_c, r_c2, inv_width;  // r_s, r_c [nm], r_c² [nm²], 1/(r_c − r_s) [1/nm]
-};
-
-/// Sicherheitsabstand der Tile-Vorauswahl: absolut [nm] plus relativ zur Koordinatengröße
-/// (≈ 8 ulp in FP32), deckt die Rundung von Mittelpunkt und Halbbreite (|x − c| ≤ h + ulp) und
-/// des Kernel-Abstands auch für große Koordinaten ab.
-constexpr float kCullMargin = 1.0e-3f;
-constexpr float kCullMarginRel = 1.0e-6f;
-
-/// Achsenparallele Hülle der echten Atome je Tile und Replica (ein Warp pro Tile): (Mittelpunkt,
-/// Halbbreite) als zwei float4; Halbbreite.w = −1 für Tiles ohne echte Atome. Grundlage der
-/// Tile-Vorauswahl im Minimum-Image-Pfad.
+/// Hülle je (Replica, Tile), siehe detail::launch_tile_bounds (ein Warp pro Tile).
 __global__ void k_tile_bounds(DeviceState s, float4* bounds) {
   const int tile = blockIdx.x;
   const int r = blockIdx.y;
@@ -66,31 +56,6 @@ __global__ void k_tile_bounds(DeviceState s, float4* bounds) {
       out[1] = make_float4(0.5f * (hi_x - lo_x), 0.5f * (hi_y - lo_y), 0.5f * (hi_z - lo_z), 0.0f);
     }
   }
-}
-
-/// Untere Schranke des Abstands zweier Hüllen (Mittelpunkte c, Halbbreiten h) mit Minimum Image
-/// in x/y: Auf dem Kreis gilt d(x_i, x_j) ≥ d(c_i, c_j) − h_i − h_j (Dreiecksungleichung), in z
-/// dasselbe auf der Geraden. true ⇔ kein Paar der beiden Tiles kann innerhalb von r_c liegen.
-__device__ __forceinline__ bool tiles_out_of_range(const float4* bounds, int r, int n_tiles,
-                                                   int2 tp, float2 box, float r_c) {
-  const float4* bi = bounds + 2 * (static_cast<long long>(r) * n_tiles + tp.x);
-  const float4* bj = bounds + 2 * (static_cast<long long>(r) * n_tiles + tp.y);
-  const float4 ci = bi[0], hi = bi[1], cj = bj[0], hj = bj[1];
-  if (hi.w < 0.0f || hj.w < 0.0f) return true;  // Tile ohne echte Atome
-  const float gx = fmaxf(0.0f, fabsf(detail::minimum_image_1d(ci.x, cj.x, box.x)) - hi.x - hj.x);
-  const float gy = fmaxf(0.0f, fabsf(detail::minimum_image_1d(ci.y, cj.y, box.y)) - hi.y - hj.y);
-  const float gz = fmaxf(0.0f, fabsf(ci.z - cj.z) - hi.z - hj.z);
-  const float extent = fmaxf(fmaxf(fabsf(ci.x) + hi.x, fabsf(ci.y) + hi.y), fabsf(ci.z) + hi.z) +
-                       fmaxf(fmaxf(fabsf(cj.x) + hj.x, fabsf(cj.y) + hj.y), fabsf(cj.z) + hj.z);
-  const float reach = r_c + kCullMargin + kCullMarginRel * extent;
-  return gx * gx + gy * gy + gz * gz >= reach * reach;
-}
-
-/// Anzahl Bildverschiebungen je Richtung (ADR 0006 Rev. 2): 0 für L >= 2 r_c (jedes verschobene
-/// Bild ist dann mindestens L/2 >= r_c entfernt), sonst ⌈r_c/L + ½⌉ (der Minimum-Image-Abstand
-/// selbst kann bis L/2 betragen).
-__device__ __forceinline__ int image_count(float box_length, float r_c) {
-  return box_length >= 2.0f * r_c ? 0 : static_cast<int>(ceilf(r_c / box_length + 0.5f));
 }
 
 /// Ein Warp pro Tile-Paar (I ≤ J), blockIdx.y = Replica. Lane a hält Atom i = I·32 + a; die
@@ -245,6 +210,13 @@ void require(bool condition, const std::string& message) {
 
 }  // namespace
 
+namespace detail {
+void launch_tile_bounds(const DeviceState& s, float4* bounds, cudaStream_t stream) {
+  k_tile_bounds<<<dim3(s.n_pad / 32, s.n_replicas), 32, 0, stream>>>(s, bounds);
+  BOMD_LAUNCH_CHECK();
+}
+}  // namespace detail
+
 TiledAllPairs::TiledAllPairs(TiledAllPairsParams params) : params_(std::move(params)) {
   require(!params_.topologies.empty(), "mindestens eine Topologie nötig");
   require(std::isfinite(params_.r_switch_nm) && std::isfinite(params_.r_cutoff_nm) &&
@@ -336,7 +308,7 @@ bool TiledAllPairs::uses_image_sum() const {
 void TiledAllPairs::compute(DeviceState& s, cudaStream_t stream) {
   if (ctx_->host_box().empty()) throw std::logic_error("TiledAllPairs: Box nicht gesetzt");
   const float r_s = params_.r_switch_nm, r_c = params_.r_cutoff_nm;
-  const SwitchParams sw{r_s, r_c, r_c * r_c, 1.0f / (r_c - r_s)};
+  const SwitchParams sw = detail::make_switch(r_s, r_c);
   const dim3 grid((n_tile_pairs_ + kWarpsPerBlock - 1) / kWarpsPerBlock, s.n_replicas);
   const std::size_t shmem = static_cast<std::size_t>(max_types_) * max_types_ * sizeof(float2);
   const auto launch = [&](auto kernel) {
@@ -350,8 +322,7 @@ void TiledAllPairs::compute(DeviceState& s, cudaStream_t stream) {
   if (uses_image_sum()) {
     launch(k_tiled_all_pairs<detail::DebyeHuckel, true>);
   } else {
-    k_tile_bounds<<<dim3(s.n_pad / 32, s.n_replicas), 32, 0, stream>>>(s, d_tile_bounds_.data());
-    BOMD_LAUNCH_CHECK();
+    detail::launch_tile_bounds(s, d_tile_bounds_.data(), stream);
     launch(k_tiled_all_pairs<detail::DebyeHuckel, false>);
   }
 }

@@ -41,6 +41,8 @@ class SystemSpec:
         elements: Elementsymbole (n,), z. B. für H-Erkennung und Typzuweisung.
         positions: Startpositionen [nm] (n, 3) oder None.
         atom_names, residue_names: optionale Namen (n,) für Atomauswahl.
+        gb_radius: intrinsischer GB-Radius ρ [nm] (n,) oder None (ADR 0010, aus ``implicit/obc2.xml``).
+        gb_scale: HCT-Skalierungsfaktor s (n,) oder None.
     """
 
     masses: np.ndarray
@@ -53,6 +55,8 @@ class SystemSpec:
     positions: np.ndarray | None = None
     atom_names: np.ndarray | None = None
     residue_names: np.ndarray | None = None
+    gb_radius: np.ndarray | None = None
+    gb_scale: np.ndarray | None = None
 
     @property
     def n_atoms(self) -> int:
@@ -106,7 +110,8 @@ def from_openmm(system, topology=None, positions=None) -> SystemSpec:
     n = system.getNumParticles()
     if any(system.isVirtualSite(i) for i in range(n)):
         raise ValueError("from_openmm: virtuelle Sites werden nicht unterstützt")
-    known = {"HarmonicBondForce", "HarmonicAngleForce", "PeriodicTorsionForce", "NonbondedForce"}
+    known = {"HarmonicBondForce", "HarmonicAngleForce", "PeriodicTorsionForce", "NonbondedForce",
+             "CustomGBForce"}  # fmt: skip
     forces = {}
     for f in system.getForces():
         name = type(f).__name__
@@ -169,6 +174,9 @@ def from_openmm(system, topology=None, positions=None) -> SystemSpec:
         psig.append(s.value_in_unit(nm))
         peps.append(ep)
     masses = np.array([system.getParticleMass(i).value_in_unit(unit.dalton) for i in range(n)])
+    gb_radius = gb_scale = None
+    if "CustomGBForce" in forces:
+        gb_radius, gb_scale = _obc2_parameters(forces["CustomGBForce"], q)
 
     def idx(x, arity):
         return np.asarray(x, np.int32).reshape(-1, arity)
@@ -204,8 +212,30 @@ def from_openmm(system, topology=None, positions=None) -> SystemSpec:
     return SystemSpec(
         masses=masses, charges=q, sigma=sig, epsilon=eps, bonded=bonded,
         excluded=idx(excluded, 2), elements=elements, positions=positions,
-        atom_names=atom_names, residue_names=residue_names,
+        atom_names=atom_names, residue_names=residue_names, gb_radius=gb_radius, gb_scale=gb_scale,
     )  # fmt: skip
+
+
+GB_OFFSET = 0.009  # nm, Radius-Offset von OBC (ADR 0010)
+
+
+def _obc2_parameters(gb, charges):
+    """(ρ, s) aus einer OpenMM-``CustomGBForce`` von ``implicit/obc2.xml`` (Parameter charge, or, sr).
+
+    Prüft, dass es OBC2 ist (Born-Radius-Ausdruck mit 0.8/4.85) und die Ladungen mit der
+    NonbondedForce übereinstimmen; ρ = or + 0.009 nm, s = sr/or. ε_in, ε_out, κ und der SA-Term des
+    OpenMM-Systems werden nicht übernommen – sie kommen aus :func:`build_context`.
+    """
+    names = [gb.getPerParticleParameterName(k) for k in range(gb.getNumPerParticleParameters())]
+    if names != ["charge", "or", "sr"]:
+        raise ValueError(f"from_openmm: CustomGBForce mit Parametern {names} ist kein OBC2")
+    exprs = [gb.getComputedValueParameters(k)[1] for k in range(gb.getNumComputedValues())]
+    if not any("0.8*psi^2+4.85*psi^3" in e for e in exprs):
+        raise ValueError("from_openmm: nur GB-OBC2 (implicit/obc2.xml) wird unterstützt (ADR 0010)")
+    par = np.array([gb.getParticleParameters(i) for i in range(gb.getNumParticles())], np.float64)
+    if not np.allclose(par[:, 0], charges, rtol=0, atol=1e-12):
+        raise ValueError("from_openmm: Ladungen in CustomGBForce und NonbondedForce verschieden")
+    return par[:, 1] + GB_OFFSET, par[:, 2] / par[:, 1]
 
 
 def from_parmed(structure) -> SystemSpec:
@@ -244,6 +274,8 @@ def build_context(
     r_cutoff: float | None = None,
     switch_width: float = 0.2,
     types=None,
+    solvent: str = "debye-huckel",
+    ace: bool = True,
     device: int = 0,
 ):
     """Erzeugt und füllt einen ``SimulationContext`` (ohne Integrator, Wand, Restraints, Observer).
@@ -262,6 +294,10 @@ def build_context(
             r_s = r_c − ``switch_width`` [nm].
         types: (n,) Oberflächen-/Optik-Typ je Atom (``types[..., 1]``). Default 1 für alle Atome
             (Typ 0 = keine Wand, nur für Anker, ADR 0007); siehe :func:`assign_types`.
+        solvent: ``"debye-huckel"`` (V1) oder ``"gb-obc2"`` (ADR 0010; braucht ``spec.gb_radius``
+            aus einem System mit ``implicit/obc2.xml``). Bei GB ist ε_r das Lösungsmittel-ε_out,
+            Coulomb (auch 1-4) wird mit ε_in = 1 unabgeschirmt gerechnet; die Abschirmung steckt im
+            GB-Term. ``ace``: unpolarer ACE-Term (nur GB).
 
     Returns:
         (ctx, :class:`BuildInfo`).
@@ -313,8 +349,20 @@ def build_context(
     ctx.set_temperatures(temps.astype(np.float32))
     k32, e32 = kappa.astype(np.float32), eps.astype(np.float32)
     zeros = np.zeros(n_replicas, np.int32)
-    ctx.add_bonded([bonded], zeros, k32, e32)
-    ctx.set_nonbonded_tiled([nbt], zeros, k32, e32, r_switch=r_s, r_cutoff=r_c)
+    if solvent == "debye-huckel":
+        ctx.add_bonded([bonded], zeros, k32, e32)
+        ctx.set_nonbonded_tiled([nbt], zeros, k32, e32, r_switch=r_s, r_cutoff=r_c)
+    elif solvent == "gb-obc2":
+        if spec.gb_radius is None:
+            raise ValueError("build_context: GB-Parameter fehlen (System mit implicit/obc2.xml)")
+        ones = np.ones(n_replicas, np.float32)
+        ctx.add_bonded([bonded], zeros, np.zeros(n_replicas, np.float32), ones)  # 1-4: ε_in = 1
+        ctx.set_nonbonded_gb(
+            [nbt], zeros, k32, e32, [spec.gb_radius], [spec.gb_scale], r_switch=r_s,
+            r_cutoff=r_c, ace=ace,
+        )  # fmt: skip
+    else:
+        raise ValueError("solvent: 'debye-huckel' oder 'gb-obc2'")
     if cons is not None:
         ctx.set_constraints([cons], zeros)
     info = BuildInfo(

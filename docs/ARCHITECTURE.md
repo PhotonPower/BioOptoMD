@@ -126,7 +126,7 @@ lassen Padding-Atome unverändert. Test-Hooks ohne Produktionsphysik liegen in `
 | `include/biooptomd/` | Öffentliche Header: `units.hpp`, `device_state.hpp`, `plugin.hpp`, `cuda_check.hpp` | 1 |
 | `src/core/` | `SimulationContext`, Speicherverwaltung, Fixed-Point-Konvertierung, Integrator, Constraints | 1, 2, 5 |
 | `src/forces/` | Bonded-Kernels; Plugins `PlanarSurfaceForce`, `HarmonicRestraintPullingForce`, `VoxelGridForce3D`, später `ImageChargeForce` | 2, 3, 6, 9 |
-| `src/nonbonded/` | `TiledAllPairs` (LJ + Debye-Hückel, Exclusion-Bitmasken), später `CellList`, GB-OBC | 4, 9 |
+| `src/nonbonded/` | `TiledAllPairs` (LJ + Debye-Hückel, Exclusion-Bitmasken, Tile-Vorauswahl), `TiledGeneralizedBorn` (LJ + Coulomb + GB-OBC2, ADR 0010), gemeinsame Bausteine `tile_common.cuh`; später `CellList` | 4, 8, 9 |
 | `src/observers/` | `DipoleAndDistanceTracker`, `FRETTracker`, `RefractiveIndexProfiler` | 6 |
 | `src/bindings/` | nanobind-Modul `_core`, DLPack-Export | 1 ff. |
 | `python/biooptomd/` | `units`, `builder`, `simulation`, `observers`, `io`, `analysis` | 1 ff. |
