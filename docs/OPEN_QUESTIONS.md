@@ -23,7 +23,7 @@ Die Vorschläge aus den Reviews vom 2026-11-04 (inklusive der Nachträge aus Rev
 | OQ-12 | assumption | Gouy-Chapman-Term für Atome hinter der Wand (ζ < 0): wie fortsetzen? | – | V = q Φ0 konstant, F = 0 (energiekonsistent; die 9-3-Wand verhindert ζ < 0 praktisch). | – (Bestätigung offen) |
 | OQ-13 | resolved | Widerspruch PHYSICS_MODEL §4.1 ↔ ADR 0002: Clamp bei 0.1 σ erzeugte Kräfte ≫ 2³¹, Fixed-Point-Summen konnten überlaufen. | – | Entschieden 2026-11-03 (Projektinhaber): Kraftschranke für ζ_c + Sättigung pro Beitrag + Geräte-Statusflags, siehe ADR 0008. | Projektinhaber (2026-11-03) |
 | OQ-14 | open | Welcher Temperaturschätzer soll gemeldet werden? Die kinetische Temperatur am vollen BAOAB-Schritt ist bei Δt = 4 fs um ~10 % zu niedrig (PHYSICS_MODEL §1), obwohl die Konfigurationen korrekt bei 300 K gesampelt werden. Alternativen: Geschwindigkeiten nach dem O-Schritt (Halbschritt), konfigurationelle Temperatur, oder nur dokumentieren. | – | Unverändert: E_kin am vollen Schritt, Bias dokumentiert. | – (Bestätigung offen) |
-| OQ-15 | assumption | GB-Modell und Radiensatz für Nukleinsäuren: OBC2 (mbondi2, ADR 0004) oder GB-neck2 (GBn2, mbondi3, Nguyen et al. 2014), das für DNA/RNA-Strukturen als deutlich besser gilt? | – | Projektinhaber 2026-11-05: zuerst OBC2 mit mbondi2 und Salzkorrektur (ADR 0010); GBn2 mit mbondi3 und Nukleinsäure-Parametern als zweites Modell ergänzt (ADR 0012, Phase 9.3). **Vorschlag (2026-11-05, siehe §OQ-15):** GBn2 als Default für Nukleinsäure-Systeme, Validierung mit OL21 vor Produktionsläufen. | Projektinhaber (2026-11-05) |
+| OQ-15 | assumption | GB-Modell und Radiensatz für Nukleinsäuren: OBC2 (mbondi2, ADR 0004) oder GB-neck2 (GBn2, mbondi3, Nguyen et al. 2014), das für DNA/RNA-Strukturen als deutlich besser gilt? | – | Projektinhaber 2026-11-05: zuerst OBC2 mit mbondi2 und Salzkorrektur (ADR 0010); GBn2 mit mbondi3 und Nukleinsäure-Parametern als zweites Modell ergänzt (ADR 0012, Phase 9.3). **Entschieden 2026-11-05 (§OQ-15):** GBn2 als Default für Nukleinsäure-Systeme; Validierung mit OL21 vor Produktionsläufen offen. | Projektinhaber (2026-11-05) |
 | OQ-16 | open | GB nahe der Oberfläche: Die Wand (Graphen/Gold) ist im GB-Modell Lösungsmittel; die dielektrische Grenze (Desolvatation an der Oberfläche, Bildladungen) fehlt. Wie modellieren (Wand als Niedrig-ε-Halbraum in den Born-Integralen, ImageChargeForce)? Folgen: Desolvatation an der Wand fehlt, ACE überschätzt die zugängliche Fläche an der Wand, der Gouy-Chapman-Wandterm arbeitet weiter mit κ (konsistent, aber nicht aus GB abgeleitet). | – | Vorerst nicht modelliert, in ADR 0010 dokumentiert. | – (offen) |
 | OQ-17 | open | Replica Exchange mit Gouy-Chapman: Ist Φ0 der diffusen Schicht über die Temperaturleiter konstant (fest vorgegebenes Potential) oder folgt es bei fester Oberflächenladung der Grahame-Gleichung Φ0(T, κ)? | – | Φ0 fest über alle Zustände; κ folgt dem Zustand (ADR 0011). | – (offen) |
 
@@ -169,7 +169,7 @@ Gouy-Chapman berechnet γ bereits pro Replica aus T_r (OQ-06). κ hängt aber eb
 
 ---
 
-### OQ-15 · GB-Modell für Aptamer-Produktionsläufe – Vorschlag (2026-11-05, Entscheidung offen)
+### OQ-15 · GB-Modell für Aptamer-Produktionsläufe – angenommen vom Projektinhaber (2026-11-05)
 
 **Vorschlag:** GB-neck2 (`solvent="gb-gbn2"`, ADR 0012) mit den Nukleinsäure-Parametern aus
 `implicit/gbn2.xml` als **Default für alle Systeme mit Nukleinsäuren** (Aptamere, Duplexe, Komplexe);

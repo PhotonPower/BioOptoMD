@@ -198,8 +198,8 @@ ADR 0007 → **0009** (Mixed Precision), unsere OQ-08…11 → **OQ-11…14**.
   Structs unterschiedlich aus. Vor dem Push mit beiden prüfen oder Kommentare über die Member setzen.
 
 ## Nächster konkreter Schritt
-1. Projektinhaber: Phase 9.3 abnehmen, ADR 0012 und Kriterien in ROADMAP 9.3 bestätigen (Push/PR auf
-   Anfrage); danach nächste Erweiterung (Cell-List, ImageChargeForce, CG, MD↔FEM);
+1. Validierung GBn2 + OL21 (OQ-15: Duplex-Stabilität, Hairpin-Faltung) oder nächste Erweiterung
+   (Cell-List, ImageChargeForce, CG, MD↔FEM) – Entscheidung des Projektinhabers;
    OQ-14/15/16/17 entscheiden; PRs #1 → #6, #9 → #13 nacheinander mergen.
 2. Danach Phase 9+ nach Forschungsbedarf (ROADMAP); offen aus Phase 6: zwei `reference`-Tests
    (dn/dc-Kalibrierung, Clausius-Mossotti-Konsistenz).
@@ -228,7 +228,7 @@ ADR 0007 → **0009** (Mixed Precision), unsere OQ-08…11 → **OQ-11…14**.
 | 2026-11-05 | Projektinhaber | Phase 9.1 (PR #12) abgenommen, ADR 0010 Accepted; nächste Erweiterung: Replica Exchange. |
 | 2026-11-05 | Projektinhaber | Phase 9.2 abgenommen, ADR 0011 und Kriterien bestätigt; nächste Erweiterung: GB-neck2. |
 | 2026-11-05 | Claude Opus 5.5 | Phase 9.3 GB-neck2 implementiert (ADR 0012). |
-| 2026-11-05 | Projektinhaber | Phase 9.3 abgenommen, ADR 0012 und Kriterien bestätigt; Vorschlag zu OQ-15 angefragt. |
+| 2026-11-05 | Projektinhaber | Phase 9.3 abgenommen, ADR 0012 und Kriterien bestätigt; Vorschlag zu OQ-15 angenommen (GBn2 Default für Nukleinsäuren, Validierung offen). |
 | 2026-11-05 | Claude Opus 5.5 | Phase 9.2 Replica Exchange implementiert (ADR 0011 Proposed), 113/113 Tests grün. |
 | 2026-11-05 | Claude Opus 5.5 | Phase 9.1 GB-OBC2 implementiert (ADR 0010 Proposed, gb_ref, TiledGeneralizedBorn, Builder), 12/12 Phase-9-Tests grün. |
 | 2026-11-05 | Claude Opus 5.5 | Phase 8: Benchmark vs. OpenMM (32×2k Faktor 3.5), Tile-Vorauswahl, M-SHAKE/RATTLE; Review umgesetzt, 94/94 Tests grün. |
