@@ -166,4 +166,23 @@ void launch_scatter_w(const DeviceState& s, Vec4d* dst, const double* src, cudaS
   BOMD_LAUNCH_CHECK();
 }
 
+namespace {
+__global__ void k_scale_velocities(DeviceState s, const double* factor) {
+  const int i_local = blockIdx.x * blockDim.x + threadIdx.x;
+  const int r = blockIdx.y;
+  if (i_local >= s.n_atoms) return;  // Padding bleibt (v = 0)
+  Vec4d& v = s.d_vel[r * s.n_pad + i_local];
+  const double f = factor[r];
+  v.x *= f;
+  v.y *= f;
+  v.z *= f;
+}
+}  // namespace
+
+void launch_scale_velocities(const DeviceState& s, const double* factor, cudaStream_t stream) {
+  k_scale_velocities<<<dim3(elementwise_grid(s.n_atoms), s.n_replicas), kElementwiseBlock, 0,
+                       stream>>>(s, factor);
+  BOMD_LAUNCH_CHECK();
+}
+
 }  // namespace bomd::detail

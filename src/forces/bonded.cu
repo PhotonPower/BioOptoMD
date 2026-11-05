@@ -291,6 +291,7 @@ void BondedForce::initialize(SimulationContext& ctx) {
     screening[r] = make_float2(params_.kappa_per_nm[r], params_.eps_r[r]);
   d_screening_ = DeviceBuffer<float2>(n_rep);
   d_screening_.upload_async(screening.data(), ctx.stream());
+  h_screening_ = screening;
   ctx.synchronize();
 }
 
@@ -323,6 +324,18 @@ void BondedForce::compute(DeviceState& s, cudaStream_t stream) {
 std::vector<int> BondedForce::term_counts(int replica) const {
   return {bonds_.h_range.at(replica).y, angles_.h_range.at(replica).y,
           torsions_.h_range.at(replica).y, pairs_.h_range.at(replica).y};
+}
+
+void BondedForce::set_screening(const std::vector<float>& kappa, const std::vector<float>& eps_r,
+                                cudaStream_t stream) {
+  if (!params_.follow_screening) return;
+  for (std::size_t r = 0; r < h_screening_.size(); ++r) {
+    params_.kappa_per_nm[r] = kappa[r];
+    params_.eps_r[r] = eps_r[r];
+    h_screening_[r] = make_float2(kappa[r], eps_r[r]);
+  }
+  d_screening_.upload_async(h_screening_.data(), stream);
+  BOMD_CUDA_CHECK(cudaStreamSynchronize(stream));  // h_screening_ darf danach geändert werden
 }
 
 }  // namespace bomd

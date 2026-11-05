@@ -34,6 +34,9 @@ struct BondedParams {
   std::vector<int> replica_topology;  ///< Topologie-Index je Replica, (n_replicas,)
   std::vector<float> kappa_per_nm;    ///< κ der 1-4-Debye-Hückel-Abschirmung je Replica, >= 0
   std::vector<float> eps_r;           ///< relative Permittivität je Replica, > 0
+  /// true: 1-4-Abschirmung folgt set_screening (Debye-Hückel); false: fest (z. B. GB, κ = 0, ε =
+  /// 1).
+  bool follow_screening = true;
 };
 
 /// Alle Paarvektoren mit Minimum Image in x/y (ADR 0003). Energien in kEnergyBond, kEnergyAngle,
@@ -46,6 +49,9 @@ class BondedForce final : public ForcePlugin {
   /// Prüft Indizes und lädt die Topologien hoch.
   void initialize(SimulationContext& ctx) override;
   void compute(DeviceState& s, cudaStream_t stream) override;
+
+  void set_screening(const std::vector<float>& kappa, const std::vector<float>& eps_r,
+                     cudaStream_t stream) override;
 
   /// Anzahl der Terme (Bonds, Angles, Torsionen, 1-4) einer Replica.
   std::vector<int> term_counts(int replica) const;
@@ -63,6 +69,7 @@ class BondedForce final : public ForcePlugin {
   BondedParams params_;
   TermBuffers bonds_, angles_, torsions_, pairs_;
   DeviceBuffer<float2> d_screening_;  // (κ, ε_r) je Replica
+  std::vector<float2> h_screening_;   // Host-Kopie
 };
 
 }  // namespace bomd

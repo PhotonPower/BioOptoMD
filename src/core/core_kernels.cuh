@@ -24,6 +24,9 @@ void launch_fixed_point_to_float(const DeviceState& s, cudaStream_t stream);
 /// x/y echter Atome nach [0, L) wrappen (in FP64, ADR 0009); d_image fortschreiben. Box > 0.
 void launch_wrap_xy(const DeviceState& s, cudaStream_t stream);
 
+/// v *= factor[r] (FP64) für alle echten Atome; inv_mass bleibt.
+void launch_scale_velocities(const DeviceState& s, const double* factor, cudaStream_t stream);
+
 /// dst[r·n_pad + i].xyz = src[(r·n_atoms + i)·3 + 0..2] für i < n_atoms; w unverändert.
 void launch_scatter_xyz(const DeviceState& s, float4* dst, const float* src, cudaStream_t stream);
 

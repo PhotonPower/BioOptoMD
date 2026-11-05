@@ -676,8 +676,10 @@ NB_MODULE(_core, m) {
   cls.def(
       "add_bonded",
       [](SimulationContext& c, nb::list topologies, HostInput<int32_t> replica_topology,
-         HostInput<float> kappa, HostInput<float> eps_r) -> bomd::BondedForce& {
+         HostInput<float> kappa, HostInput<float> eps_r,
+         bool follow_screening) -> bomd::BondedForce& {
         bomd::BondedParams p;
+        p.follow_screening = follow_screening;
         for (nb::handle h : topologies)
           p.topologies.push_back(topology_from_dict(nb::cast<nb::dict>(h)));
         p.replica_topology = to_vector(replica_topology);
@@ -686,12 +688,14 @@ NB_MODULE(_core, m) {
         return static_cast<bomd::BondedForce&>(
             c.add_force(std::make_unique<bomd::BondedForce>(std::move(p))));
       },
-      "topologies"_a, "replica_topology"_a, "kappa"_a, "eps_r"_a, nb::rv_policy::reference_internal,
+      "topologies"_a, "replica_topology"_a, "kappa"_a, "eps_r"_a, "follow_screening"_a = true,
+      nb::rv_policy::reference_internal,
       "Kovalente Terme. topologies: Liste von dicts mit bonds (n,2), bond_k [kJ/mol/nm^2],\n"
       "bond_r0 [nm], angles (n,3), angle_k [kJ/mol/rad^2], angle_theta0 [rad], torsions (n,4),\n"
       "torsion_k [kJ/mol], torsion_n, torsion_phase [rad], pairs14 (n,2), pair_qq [e^2],\n"
       "pair_sigma [nm], pair_eps [kJ/mol] (lokale Atomindizes). replica_topology int32\n"
-      "(n_replicas,), kappa [1/nm] und eps_r (n_replicas,) für die 1-4-Debye-Hückel-Abschirmung.");
+      "(n_replicas,), kappa [1/nm] und eps_r (n_replicas,) für die 1-4-Debye-Hückel-Abschirmung;\n"
+      "follow_screening=False hält sie bei set_screening fest (GB: kappa = 0, eps_r = 1).");
 
   nb::class_<bomd::TiledAllPairs>(m, "TiledAllPairs",
                                   "LJ + Debye-Hückel über alle Tile-Paare, PHYSICS_MODEL.md §3.")
@@ -723,6 +727,26 @@ NB_MODULE(_core, m) {
       "Summe über periodische Bilder; image_sum='always' erzwingt sie (Test).\n"
       "Ersetzt eine zuvor gesetzte Nonbonded-Strategie (daher kein zurückgegebenes Handle).");
 
+  cls.def(
+      "set_screening",
+      [](SimulationContext& c, HostInput<float> kappa, HostInput<float> eps_r) {
+        const std::size_t n = static_cast<std::size_t>(c.n_replicas());
+        check_shape(kappa, {n}, "kappa");
+        check_shape(eps_r, {n}, "eps_r");
+        c.set_screening(kappa.data(), eps_r.data());
+      },
+      "kappa"_a, "eps_r"_a,
+      "Lösungsmittel-Abschirmung je Replica neu setzen (Replica Exchange, ADR 0011): kappa "
+      "[1/nm],\n"
+      "eps_r (bei GB eps_out), float32 (n_replicas,). Wirkt auf Nonbonded, 1-4 (falls\n"
+      "follow_screening) und Gouy-Chapman; r_c bleibt.");
+  cls.def(
+      "scale_velocities",
+      [](SimulationContext& c, HostInput<double> factor) {
+        check_shape(factor, {static_cast<std::size_t>(c.n_replicas())}, "factor");
+        c.scale_velocities(factor.data());
+      },
+      "factor"_a, "v *= factor[r] für alle echten Atome der Replica r, float64 (n_replicas,) > 0.");
   cls.def(
       "set_nonbonded_gb",
       [](SimulationContext& c, nb::list topologies, HostInput<int32_t> replica_topology,
@@ -808,7 +832,16 @@ NB_MODULE(_core, m) {
          "biooptomd.constraints.constraint_topology(); tolerance = relative Längentoleranz.")
       .def("apply_constraints", &SimulationContext::apply_constraints,
            "Projiziert Positionen und Geschwindigkeiten sofort auf die Constraints.")
-      .def_prop_ro("has_constraints", &SimulationContext::has_constraints);
+      .def_prop_ro("has_constraints", &SimulationContext::has_constraints)
+      .def_prop_ro("forces_valid", &SimulationContext::forces_valid,
+                   "true, wenn Kräfte und Energien zum aktuellen Zustand gehören.")
+      .def_prop_ro(
+          "nonbonded_cutoff",
+          [](SimulationContext& c) {
+            auto* t = dynamic_cast<bomd::TiledAllPairs*>(c.nonbonded());
+            return t == nullptr ? 0.0f : t->params().r_cutoff_nm;
+          },
+          "r_c [nm] der Tile-Nonbonded-Strategie (0 ohne).");
 
   // --- Optik-Observer (Phase 6) ---------------------------------------------------------------
   cls.def("observe_now", &SimulationContext::observe_now,

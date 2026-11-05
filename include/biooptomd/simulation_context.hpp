@@ -85,6 +85,13 @@ class SimulationContext {
   void set_box(const float* box_nm);
   /// Temperaturen [K] pro Replica, Shape (n_replicas,), endlich und >= 0.
   void set_temperatures(const float* t_k);
+  /// Lösungsmittel-Abschirmung je Replica (κ_r [1/nm] >= 0, ε_r > 0, Shape (n_replicas,)) an alle
+  /// Plugins und die Nonbonded-Strategie (Replica Exchange, ADR 0011). Kräfte gelten danach als
+  /// veraltet.
+  void set_screening(const float* kappa_per_nm, const float* eps_r);
+  /// v_i *= factor_r für alle echten Atome der Replica r (Shape (n_replicas,), endlich, > 0).
+  /// Für den Temperaturtausch: factor = sqrt(T_neu/T_alt). Synchronisiert.
+  void scale_velocities(const double* factor);
   bool box_is_set() const { return box_set_; }
   /// Host-Kopie der Box (Lx, Ly) [nm] je Replica; leer, solange keine Box gesetzt ist.
   const std::vector<float2>& host_box() const { return h_box_; }
@@ -135,6 +142,8 @@ class SimulationContext {
   /// Markiert d_force als veraltet (z. B. nach Schreibzugriff über eine DLPack-Sicht);
   /// step() berechnet die Kräfte dann vor dem ersten B neu.
   void invalidate_forces() { forces_valid_ = false; }
+  /// true, wenn d_force und die Energien dem aktuellen Zustand entsprechen.
+  bool forces_valid() const { return forces_valid_; }
   /// Wird bei jedem set_masses erhöht; Plugins mit massenabhängigen Daten prüfen ihn.
   std::uint64_t masses_version() const { return masses_version_; }
   /// Wird bei jedem set_box erhöht; Plugins mit boxabhängigen Daten prüfen ihn.

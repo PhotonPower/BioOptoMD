@@ -45,6 +45,10 @@ class TiledAllPairs : public NonbondedStrategy {
   void initialize(SimulationContext& ctx) override;
   /// Kräfte in d_force_fp, Energie in kEnergyNonbonded. Wirft std::logic_error ohne Box.
   void compute(DeviceState& s, cudaStream_t stream) override;
+  /// κ_r und ε_r (bei GB: ε_out) je Replica neu setzen; r_c bleibt (ADR 0006: Maximum über alle
+  /// Zustände bereits beim Aufbau, ADR 0011).
+  void set_screening(const std::vector<float>& kappa, const std::vector<float>& eps_r,
+                     cudaStream_t stream) override;
   /// true, wenn compute() über periodische Bilder summiert (eine Box < 2 r_c oder erzwungen).
   bool uses_image_sum() const;
 

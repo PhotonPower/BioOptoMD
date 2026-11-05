@@ -270,4 +270,11 @@ void PlanarSurfaceForce::reset_counters() {
   counters_.zero_async(ctx_->stream());
 }
 
+void PlanarSurfaceForce::set_screening(const std::vector<float>& kappa,
+                                       const std::vector<float>& /*eps_r*/, cudaStream_t stream) {
+  params_.kappa_per_nm = kappa;
+  kappa_.upload_async(params_.kappa_per_nm.data(), stream);
+  BOMD_CUDA_CHECK(cudaStreamSynchronize(stream));
+}
+
 }  // namespace bomd

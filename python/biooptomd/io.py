@@ -32,8 +32,9 @@ _STATE_KEYS = ("pos", "pos_corr", "vel", "image")
 # --- Checkpoints ------------------------------------------------------------------------------
 
 
-def save_checkpoint(ctx, path) -> None:
-    """Schreibt den Zustand von ``ctx`` nach ``path`` (NumPy-``.npz``, keine Pickles)."""
+def save_checkpoint(ctx, path, remd=None) -> None:
+    """Schreibt den Zustand von ``ctx`` nach ``path`` (NumPy-``.npz``, keine Pickles); optional den
+    Austauschzustand eines :class:`biooptomd.remd.ReplicaExchange`."""
     st = ctx.save_state()
     meta = {
         "version": np.int64(CHECKPOINT_VERSION),
@@ -50,17 +51,21 @@ def save_checkpoint(ctx, path) -> None:
         meta["dt"] = np.float64(p["dt"])
         meta["friction"] = np.float64(p["friction"])
         meta["seed"] = np.uint64(p["seed"])
+    if remd is not None:
+        meta.update(remd.to_arrays())
     with open(path, "wb") as f:
         np.savez(f, **{k: st[k] for k in _STATE_KEYS}, **meta)
 
 
-def load_checkpoint(ctx, path, restore_integrator: bool = True) -> int:
+def load_checkpoint(ctx, path, restore_integrator: bool = True, remd=None) -> int:
     """Stellt einen Checkpoint in einem gleich aufgebauten ``ctx`` wieder her.
 
     Reihenfolge: Box (setzt die Imagezähler zurück), Temperaturen, Integrator, dann der dynamische
     Zustand. Danach liefert ``ctx.step(n)`` bitgenau dieselbe Trajektorie wie der ursprüngliche Lauf.
     Ladungen und Massen (``pos.w``, ``vel.w``) müssen mit dem Kontext übereinstimmen (z. B. HMR
-    gleich), sonst ValueError. Pulling-Plugins beginnen die Arbeitsakkumulation neu.
+    gleich), sonst ValueError. Pulling-Plugins beginnen die Arbeitsakkumulation neu. Mit ``remd``
+    wird zuerst der Austauschzustand wiederhergestellt (Zustandsparameter je Slot); ein Checkpoint
+    mit REMD-Daten ohne ``remd`` ist ein Fehler.
 
     Returns:
         Schrittzähler des Checkpoints.
@@ -75,6 +80,11 @@ def load_checkpoint(ctx, path, restore_integrator: bool = True) -> int:
             current["vel"][..., 3], d["vel"][..., 3]
         ):
             raise ValueError("Checkpoint: Ladungen oder Massen weichen vom Kontext ab")
+        has_remd = "remd_state" in d.files
+        if has_remd != (remd is not None):
+            raise ValueError("Checkpoint und Aufruf: REMD-Zustand nur gemeinsam (remd=…)")
+        if remd is not None:
+            remd.from_arrays(d)
         ctx.set_box(np.ascontiguousarray(d["box"], np.float32))
         ctx.set_temperatures(np.ascontiguousarray(d["temperatures"], np.float32))
         if restore_integrator and "dt" in d:
