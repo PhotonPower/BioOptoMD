@@ -41,7 +41,8 @@ Alles läuft auf **einem** `cudaStream_t`; die Reihenfolge der Kernel-Launches i
 | Array | Typ | Inhalt | Größe |
 |---|---|---|---|
 | `d_pos` | `float4` | x, y, z [nm], q [e] | `N_replicas·N_pad` |
-| `d_vel` | `float4` | vx, vy, vz [nm/ps], 1/m [1/amu] | `N_replicas·N_pad` |
+| `d_pos_corr` | `float4` | Positionskorrektur: x = d_pos.xyz + d_pos_corr.xyz (ADR 0009) | `N_replicas·N_pad` |
+| `d_vel` | `double4` | vx, vy, vz [nm/ps], 1/m [1/amu] (FP64, ADR 0009) | `N_replicas·N_pad` |
 | `d_force_fp` | `long long` ×3 (SoA: fx, fy, fz) | Fixed-Point-Kraft, Skala 2³² | `3·N_replicas·N_pad` |
 | `d_force` | `float4` | Fx, Fy, Fz [kJ/mol/nm], frei | `N_replicas·N_pad` |
 | `d_energy_fp` | `long long` | Potentielle Energie pro Replica und Term | `N_replicas·N_TERMS` |

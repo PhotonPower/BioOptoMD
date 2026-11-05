@@ -12,6 +12,8 @@ inline constexpr double FARADAY = 96.4853321;              // kJ / (mol V)
 inline constexpr double DEBYE_PER_ENM = 48.0320471;        // D / (e nm)
 inline constexpr double FIXED_POINT_SCALE = 4294967296.0;  // 2^32
 inline constexpr float EPS_R2 = 1.0e-8f;                   // nm^2
+// Untergrenze für |a × b|² (kollineare Winkel/Torsionen, Kraft dort 0), nm^4
+inline constexpr float EPS_CROSS2 = 1.0e-12f;
 
 inline constexpr float ONE_4PI_EPS0_F = static_cast<float>(ONE_4PI_EPS0);
 inline constexpr float KB_F = static_cast<float>(KB);

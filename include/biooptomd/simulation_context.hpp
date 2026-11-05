@@ -59,7 +59,7 @@ class SimulationContext {
   /// Positionen [nm], Shape (n_replicas, n_atoms, 3). Setzt die Imagezähler auf 0 zurück.
   void set_positions(const float* xyz_nm);
   /// Geschwindigkeiten [nm/ps], Shape (n_replicas, n_atoms, 3).
-  void set_velocities(const float* v_nm_ps);
+  void set_velocities(const double* v_nm_ps);
   /// Partialladungen [e], Shape (n_replicas, n_atoms).
   void set_charges(const float* q_e);
   /// Massen [amu], Shape (n_replicas, n_atoms), jede Masse endlich und > 0. Gespeichert als 1/m.
@@ -120,6 +120,8 @@ class SimulationContext {
   /// [E_kin, E_pot je Term] zum aktuellen Zustand (E_pot aus dem letzten compute_forces).
   /// Synchronisiert.
   std::vector<double> energy_frame();
+  /// Positionen x = d_pos + d_pos_corr in FP64 [nm], Shape (n_replicas, n_pad, 3). Synchronisiert.
+  std::vector<double> positions_precise();
   /// N_dof = 3·N_mobile pro Replica (Atome mit inv_mass > 0; PHYSICS_MODEL.md §1). Synchronisiert.
   std::vector<int> degrees_of_freedom();
   /// Wartet, bis alle Arbeit auf stream() abgeschlossen ist.
@@ -141,6 +143,8 @@ class SimulationContext {
  private:
   void scatter_xyz(float4* dst, const float* src);
   void scatter_w(float4* dst, const float* src);
+  void scatter_vel_xyz(const double* src);
+  void scatter_vel_w(const double* src);
   /// Wirft, wenn ein echtes Atom |x| >= kMaxBoxImages·Lx oder |y| >= kMaxBoxImages·Ly hat.
   void check_wrap_range(const float* xyz, int atom_stride, int components) const;
 
@@ -155,7 +159,8 @@ class SimulationContext {
   std::vector<float2> h_box_;  // Host-Kopie der Box für Eingabeprüfungen
 
   DeviceBuffer<float4> pos_;
-  DeviceBuffer<float4> vel_;
+  DeviceBuffer<float4> pos_corr_;
+  DeviceBuffer<Vec4d> vel_;
   DeviceBuffer<long long> force_fp_;
   DeviceBuffer<float4> force_;
   DeviceBuffer<long long> energy_fp_;

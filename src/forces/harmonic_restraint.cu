@@ -7,6 +7,8 @@
 #include "biooptomd/simulation_context.hpp"
 #include "core/core_kernels.cuh"
 #include "core/fixed_point.cuh"
+#include "core/mixed.cuh"
+#include "core/pbc.cuh"
 #include "forces/harmonic_restraint.hpp"
 
 namespace bomd {
@@ -29,10 +31,8 @@ __global__ void k_position_restraints(DeviceState s, const int2* atom, const flo
   const float4 p = s.d_pos[i];
   const float4 q = ref[k];
   const float2 box = s.d_box[r];
-  float dx = p.x - q.x, dy = p.y - q.y;
-  dx -= box.x * rintf(dx / box.x);  // Minimum Image (ADR 0003); Box > 0 garantiert
-  dy -= box.y * rintf(dy / box.y);
-  const float dz = p.z - q.z;
+  const float3 d = detail::minimum_image_delta(p, q, box);  // ADR 0003; Box > 0 garantiert
+  const float dx = d.x, dy = d.y, dz = d.z;
   const float kk = q.w;
   const float energy = 0.5f * kk * (mx * dx * dx + my * dy * dy + mz * dz * dz);
   detail::add_force(s, i, -kk * mx * dx, -kk * my * dy, -kk * mz * dz);
@@ -57,12 +57,12 @@ __global__ void k_com_pulling(DeviceState s, const int* offsets, const int* atom
   double ax = 0.0, ay = 0.0, az = 0.0;
   for (int g = begin + threadIdx.x; g < end; g += blockDim.x) {
     const int i = r * s.n_pad + atoms[g];
-    const float4 p = s.d_pos[i];
+    const double3 p = detail::load_position(s, i);  // FP64-Position (ADR 0009)
     const int2 img = s.d_image[i];
     const double w = weights[g];
-    ax += w * (static_cast<double>(p.x) + static_cast<double>(img.x) * box.x);
-    ay += w * (static_cast<double>(p.y) + static_cast<double>(img.y) * box.y);
-    az += w * static_cast<double>(p.z);
+    ax += w * (p.x + static_cast<double>(img.x) * box.x);
+    ay += w * (p.y + static_cast<double>(img.y) * box.y);
+    az += w * p.z;
   }
   sx[threadIdx.x] = ax;
   sy[threadIdx.x] = ay;
@@ -192,21 +192,21 @@ void HarmonicRestraintPullingForce::initialize(SimulationContext& ctx) {
 void HarmonicRestraintPullingForce::update_weights() {
   const SimulationContext& ctx = *ctx_;
   const auto& off = pull_.group_offsets;
-  std::vector<float4> vel(static_cast<std::size_t>(ctx.n_replicas()) * ctx.n_pad());
+  std::vector<Vec4d> vel(static_cast<std::size_t>(ctx.n_replicas()) * ctx.n_pad());
   ctx.activate();
-  BOMD_CUDA_CHECK(cudaMemcpyAsync(vel.data(), ctx.state().d_vel, vel.size() * sizeof(float4),
+  BOMD_CUDA_CHECK(cudaMemcpyAsync(vel.data(), ctx.state().d_vel, vel.size() * sizeof(Vec4d),
                                   cudaMemcpyDeviceToHost, ctx.stream()));
   BOMD_CUDA_CHECK(cudaStreamSynchronize(ctx.stream()));
   std::vector<float> weights(pull_.group_atoms.size());
   for (int r = 0; r < ctx.n_replicas(); ++r) {
     double total = 0.0;
     for (int g = off[r]; g < off[r + 1]; ++g) {
-      const float inv_m = vel[static_cast<std::size_t>(r) * ctx.n_pad() + pull_.group_atoms[g]].w;
-      require(inv_m > 0.0f, "ComPulling: Gruppenatome brauchen gesetzte Massen > 0");
+      const double inv_m = vel[static_cast<std::size_t>(r) * ctx.n_pad() + pull_.group_atoms[g]].w;
+      require(inv_m > 0.0, "ComPulling: Gruppenatome brauchen gesetzte Massen > 0");
       total += 1.0 / inv_m;
     }
     for (int g = off[r]; g < off[r + 1]; ++g) {
-      const float inv_m = vel[static_cast<std::size_t>(r) * ctx.n_pad() + pull_.group_atoms[g]].w;
+      const double inv_m = vel[static_cast<std::size_t>(r) * ctx.n_pad() + pull_.group_atoms[g]].w;
       weights[g] = static_cast<float>((1.0 / inv_m) / total);
     }
   }

@@ -21,6 +21,7 @@ struct LangevinParams {
 ///   second_half: B
 /// mit c1 = exp(−γΔt), c2 = sqrt((1 − c1²) k_B T_r / m_i), ξ ~ N(0,1) aus
 /// Philox(seed, replica, step, atom). Atome mit inv_mass = 0 (inkl. Padding) bleiben unverändert.
+/// Zustand (Position, Geschwindigkeit) in FP64 (ADR 0009); Kräfte FP32.
 class LangevinIntegrator {
  public:
   explicit LangevinIntegrator(const LangevinParams& params);
@@ -35,9 +36,9 @@ class LangevinIntegrator {
 
  private:
   LangevinParams params_;
-  float half_dt_;      // Δt/2 [ps]
-  float c1_;           // exp(−γΔt)
-  float noise_coeff_;  // (1 − c1²)·k_B [kJ/(mol K)]
+  double half_dt_;      // Δt/2 [ps]
+  double c1_;           // exp(−γΔt)
+  double noise_coeff_;  // (1 − c1²)·k_B [kJ/(mol K)]
 };
 
 }  // namespace bomd

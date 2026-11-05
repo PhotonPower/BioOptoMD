@@ -6,7 +6,7 @@ Siehe docs/ROADMAP.md, Phase 1. Alle Tests benötigen ein CUDA-Gerät.
 import numpy as np
 import pytest
 
-from core_ref import accumulate_fixed_point, wrap_coordinate
+from core_ref import accumulate_fixed_point, wrap_coordinate_mixed
 
 pytestmark = pytest.mark.gpu
 
@@ -38,7 +38,8 @@ def test_allocate_batch():
     r, p, nt = 4, 512, _core.N_ENERGY_TERMS
     expected = {
         "positions": ((r, p, 4), np.float32),
-        "velocities": ((r, p, 4), np.float32),
+        "velocities": ((r, p, 4), np.float64),  # ADR 0009
+        "position_corrections": ((r, p, 4), np.float32),
         "forces": ((r, p, 4), np.float32),
         "forces_fixed_point": ((3, r, p), np.int64),
         "energies_fixed_point": ((r, nt), np.int64),
@@ -59,7 +60,7 @@ def test_allocate_batch():
     m = rng.uniform(1.0, 200.0, (r, N_ATOMS)).astype(np.float32)
     types = rng.integers(1, 10, (r, N_ATOMS, 2)).astype(np.int32)
     xyz = _random_positions(rng, r, N_ATOMS)
-    v = rng.normal(0.0, 1.0, (r, N_ATOMS, 3)).astype(np.float32)
+    v = rng.normal(0.0, 1.0, (r, N_ATOMS, 3))  # FP64
     ctx.set_positions(xyz)
     ctx.set_charges(q)
     ctx.set_masses(m)
@@ -70,9 +71,8 @@ def test_allocate_batch():
     np.testing.assert_array_equal(pos[:, :N_ATOMS, :3], xyz)
     np.testing.assert_array_equal(pos[:, :N_ATOMS, 3], q)
     np.testing.assert_array_equal(vel[:, :N_ATOMS, :3], v)
-    np.testing.assert_array_equal(
-        vel[:, :N_ATOMS, 3], (1.0 / m.astype(np.float64)).astype(np.float32)
-    )
+    np.testing.assert_array_equal(vel[:, :N_ATOMS, 3], 1.0 / m.astype(np.float64))
+    assert not ctx.position_corrections().any(), "FP32-Eingabe ⇒ Korrektur 0"
     np.testing.assert_array_equal(typ[:, :N_ATOMS], types)
 
     pad = slice(N_ATOMS, None)
@@ -161,11 +161,11 @@ def test_fixed_point_roundtrip():
 
 
 def test_wrap_xy():
-    """Wrap nach [0, L), Imagezähler und ungewrappte Rekonstruktion (exakt, siehe Docstring).
+    """Wrap nach [0, L), Imagezähler und exakte ungewrappte Rekonstruktion (ADR 0009, OQ-11).
 
-    Die gewrappten Koordinaten und Imagezähler müssen bitgenau der NumPy-Referenz entsprechen.
-    Die Rekonstruktion x_w + n·L ist exakt, wenn |x| ≥ L (x − n·L in float32 darstellbar);
-    für x ∈ (−L, 0) ist x + L genau einmal gerundet (Fehler ≤ ½ ulp(L)).
+    Der Wrap rechnet mit der FP64-Position x = positions + position_corrections. Gewrappte Teile
+    und Imagezähler müssen bitgenau der NumPy-Referenz entsprechen; x_w + n·L = x gilt exakt.
+    Die FP32-Komponente liegt in [0, L] (Rundung kann genau L ergeben), die FP64-Position in [0, L).
     """
     rng = np.random.default_rng(4)
     n_atoms = 200
@@ -174,6 +174,7 @@ def test_wrap_xy():
     ctx = _ctx(n_rep, n_atoms)
     ctx.set_box(box)
     big_l = box[:, None, :]  # (r, 1, 2)
+    big_l64 = big_l.astype(np.float64)
 
     xyz = rng.uniform(-3.0, 4.0, (n_rep, n_atoms, 3)).astype(np.float32)
     xyz[..., :2] *= big_l
@@ -187,37 +188,47 @@ def test_wrap_xy():
     ctx.set_positions(xyz)
     ctx.set_charges(q)
 
-    ctx.wrap_xy()
-    pos, img = ctx.positions(), ctx.images()
-    ref_x, ref_n = wrap_coordinate(xyz[..., :2], big_l)
+    def state():
+        pos, corr, img = ctx.positions(), ctx.position_corrections(), ctx.images()
+        return pos[:, :n_atoms], corr[:, :n_atoms], img[:, :n_atoms], pos, img
 
-    w = pos[:, :n_atoms, :2]
-    n = img[:, :n_atoms]
-    np.testing.assert_array_equal(w, ref_x)
+    ctx.wrap_xy()
+    hi, lo, n, pos, img = state()
+    ref_hi, ref_lo, ref_n = wrap_coordinate_mixed(xyz[..., :2], np.zeros_like(xyz[..., :2]), big_l)
+    np.testing.assert_array_equal(hi[..., :2], ref_hi)
+    np.testing.assert_array_equal(lo[..., :2], ref_lo)
     np.testing.assert_array_equal(n, ref_n)
-    assert (w >= 0).all() and (w < big_l).all(), "nicht in [0, L)"
-    np.testing.assert_array_equal(pos[:, :n_atoms, 2], xyz[..., 2])  # z nie gewrappt
-    np.testing.assert_array_equal(pos[:, :n_atoms, 3], q)
+    x_w = hi[..., :2].astype(np.float64) + lo[..., :2]
+    assert (x_w >= 0).all() and (x_w < big_l64).all(), "FP64-Position nicht in [0, L)"
+    assert (hi[..., :2] >= 0).all() and (hi[..., :2] <= big_l).all()
+    np.testing.assert_array_equal(x_w + n * big_l64, xyz[..., :2].astype(np.float64))  # exakt
+    np.testing.assert_array_equal(hi[..., 2], xyz[..., 2])  # z nie gewrappt
+    assert not lo[..., 2].any()
+    np.testing.assert_array_equal(hi[..., 3], q)
     assert not pos[:, n_atoms:].any() and not img[:, n_atoms:].any(), "Padding verändert"
 
-    recon = w.astype(np.float64) + n * big_l.astype(np.float64)
-    err = np.abs(recon - xyz[..., :2].astype(np.float64))
-    exact = np.abs(xyz[..., :2]) >= big_l
-    assert (err[exact] == 0).all(), "Rekonstruktion für |x| >= L nicht exakt"
-    half_ulp = 0.5 * np.spacing(np.broadcast_to(big_l, err.shape))
-    assert (err <= half_ulp).all()
-
-    # Mehrschrittig: wiederholt verschieben und wrappen → Imagezähler akkumulieren.
-    x_ref, n_ref = ref_x[..., 0].copy(), ref_n[..., 0].copy()
+    # Mehrschrittig: wiederholt verschieben (FP64) und wrappen → Imagezähler akkumulieren;
+    # die Rekonstruktion bleibt exakt gleich x0 + Σ dx (in FP64).
+    x_hi, x_lo, n_ref = ref_hi[..., 0], ref_lo[..., 0], ref_n[..., 0].copy()
+    unwrapped = xyz[..., 0].astype(np.float64)
+    dx = np.float64(np.float32(0.7))
     for _ in range(50):
         _core.testing.shift_x(ctx, 0.7)
         ctx.wrap_xy()
-        x_ref, dn = wrap_coordinate(x_ref + np.float32(0.7), big_l[..., 0])
+        shifted = x_hi.astype(np.float64) + x_lo + dx
+        s_hi = shifted.astype(np.float32)
+        x_hi, x_lo, dn = wrap_coordinate_mixed(
+            s_hi, (shifted - s_hi).astype(np.float32), big_l[..., 0]
+        )
         n_ref = n_ref + dn
-    pos, img = ctx.positions(), ctx.images()
-    np.testing.assert_array_equal(pos[:, :n_atoms, 0], x_ref)
-    np.testing.assert_array_equal(img[:, :n_atoms, 0], n_ref)
-    np.testing.assert_array_equal(img[:, :n_atoms, 1], ref_n[..., 1])
+        unwrapped = unwrapped + dx
+    hi, lo, n, _, _ = state()
+    np.testing.assert_array_equal(hi[..., 0], x_hi)
+    np.testing.assert_array_equal(lo[..., 0], x_lo)
+    np.testing.assert_array_equal(n[..., 0], n_ref)
+    np.testing.assert_array_equal(n[..., 1], ref_n[..., 1])
+    recon = hi[..., 0].astype(np.float64) + lo[..., 0] + n[..., 0] * big_l64[..., 0]
+    np.testing.assert_allclose(recon, unwrapped, rtol=0, atol=1e-12)
 
 
 # --- Zusätzliche Tests der Infrastruktur ------------------------------------------------------

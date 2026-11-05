@@ -5,6 +5,7 @@
 #include "biooptomd/cuda_check.hpp"
 #include "core/core_kernels.cuh"
 #include "core/fixed_point.cuh"
+#include "core/mixed.cuh"
 #include "core/philox.cuh"
 #include "core/testing.hpp"
 
@@ -18,7 +19,10 @@ __global__ void k_shift_x(DeviceState s, float dx) {
   const int i_local = blockIdx.x * blockDim.x + threadIdx.x;
   const int r = blockIdx.y;
   if (i_local >= s.n_atoms) return;
-  s.d_pos[r * s.n_pad + i_local].x += dx;
+  const int i = r * s.n_pad + i_local;
+  double3 x = detail::load_position(s, i);  // FP64-Zustand (ADR 0009)
+  x.x += dx;
+  detail::store_position(s, i, x);
 }
 
 __global__ void k_accumulate_forces(DeviceState s, const int* atom, const float* f, int m) {

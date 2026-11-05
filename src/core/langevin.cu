@@ -6,6 +6,7 @@
 #include "biooptomd/langevin.hpp"
 #include "biooptomd/units.hpp"
 #include "core/core_kernels.cuh"
+#include "core/mixed.cuh"
 #include "core/philox.cuh"
 
 namespace bomd {
@@ -14,17 +15,17 @@ namespace {
 using detail::elementwise_grid;
 using detail::kElementwiseBlock;
 
-/// B A O A (PHYSICS_MODEL.md §1). Ein Thread pro Atom, blockIdx.y = Replica.
-__global__ void k_baoa(DeviceState s, float half_dt, float c1, float noise_coeff, uint2 key,
+/// B A O A (PHYSICS_MODEL.md §1) in FP64 (ADR 0009). Ein Thread pro Atom, blockIdx.y = Replica.
+__global__ void k_baoa(DeviceState s, double half_dt, double c1, double noise_coeff, uint2 key,
                        std::int64_t step) {
   const int i_local = blockIdx.x * blockDim.x + threadIdx.x;
   const int r = blockIdx.y;
   if (i_local >= s.n_atoms) return;
   const int i = r * s.n_pad + i_local;
-  float4 v = s.d_vel[i];
-  const float inv_m = v.w;
-  if (inv_m == 0.0f) return;  // unbeweglich: kein Rauschen, keine Bewegung (§1)
-  float4 p = s.d_pos[i];
+  Vec4d v = s.d_vel[i];
+  const double inv_m = v.w;
+  if (inv_m == 0.0) return;  // unbeweglich: kein Rauschen, keine Bewegung (§1)
+  double3 x = detail::load_position(s, i);
   const float4 f = s.d_force[i];
 
   // B
@@ -32,11 +33,11 @@ __global__ void k_baoa(DeviceState s, float half_dt, float c1, float noise_coeff
   v.y += half_dt * f.y * inv_m;
   v.z += half_dt * f.z * inv_m;
   // A
-  p.x += half_dt * v.x;
-  p.y += half_dt * v.y;
-  p.z += half_dt * v.z;
+  x.x += half_dt * v.x;
+  x.y += half_dt * v.y;
+  x.z += half_dt * v.z;
   // O: c2 = sqrt((1 − c1²) k_B T_r / m)
-  const float c2 = sqrtf(noise_coeff * s.d_temperature[r] * inv_m);
+  const double c2 = sqrt(noise_coeff * s.d_temperature[r] * inv_m);
   const uint4 bits = detail::philox4x32_10(
       detail::philox_counter(static_cast<unsigned int>(i_local), static_cast<unsigned int>(r), step,
                              detail::kPhiloxLangevin),
@@ -47,22 +48,22 @@ __global__ void k_baoa(DeviceState s, float half_dt, float c1, float noise_coeff
   v.y = c1 * v.y + c2 * n01.y;
   v.z = c1 * v.z + c2 * n23.x;
   // A
-  p.x += half_dt * v.x;
-  p.y += half_dt * v.y;
-  p.z += half_dt * v.z;
+  x.x += half_dt * v.x;
+  x.y += half_dt * v.y;
+  x.z += half_dt * v.z;
 
-  s.d_pos[i] = p;  // q (w) unverändert
-  s.d_vel[i] = v;  // inv_mass (w) unverändert
+  detail::store_position(s, i, x);  // q unverändert
+  s.d_vel[i] = v;                   // inv_mass (w) unverändert
 }
 
-/// Abschließendes B: v += Δt/2·F/m.
-__global__ void k_b(DeviceState s, float half_dt) {
+/// Abschließendes B: v += Δt/2·F/m (FP64).
+__global__ void k_b(DeviceState s, double half_dt) {
   const int i_local = blockIdx.x * blockDim.x + threadIdx.x;
   const int r = blockIdx.y;
   if (i_local >= s.n_atoms) return;
   const int i = r * s.n_pad + i_local;
-  float4 v = s.d_vel[i];
-  if (v.w == 0.0f) return;
+  Vec4d v = s.d_vel[i];
+  if (v.w == 0.0) return;
   const float4 f = s.d_force[i];
   v.x += half_dt * f.x * v.w;
   v.y += half_dt * f.y * v.w;
@@ -78,9 +79,9 @@ LangevinIntegrator::LangevinIntegrator(const LangevinParams& params) : params_(p
   if (!(std::isfinite(params.friction_per_ps) && params.friction_per_ps >= 0.0))
     throw std::invalid_argument("LangevinIntegrator: friction_per_ps muss endlich und >= 0 sein");
   const double gdt = params.friction_per_ps * params.dt_ps;
-  half_dt_ = static_cast<float>(0.5 * params.dt_ps);
-  c1_ = static_cast<float>(std::exp(-gdt));
-  noise_coeff_ = static_cast<float>(-std::expm1(-2.0 * gdt) * units::KB);  // (1 − c1²)·k_B
+  half_dt_ = 0.5 * params.dt_ps;
+  c1_ = std::exp(-gdt);
+  noise_coeff_ = -std::expm1(-2.0 * gdt) * units::KB;  // (1 − c1²)·k_B
 }
 
 void LangevinIntegrator::first_half(const DeviceState& s, std::int64_t step,
