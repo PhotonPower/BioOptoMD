@@ -16,7 +16,7 @@ from pathlib import Path
 
 import numpy as np
 
-FRET_REGIMES = ("dynamic", "static", "static_isotropic")
+FRET_REGIMES = ("dynamic", "static", "static_isotropic", "static_distance")
 
 
 def fret_efficiency(r_da, kappa2, r0_nm: float, regime: str = "dynamic", axis: int = -1):
@@ -27,8 +27,10 @@ def fret_efficiency(r_da, kappa2, r0_nm: float, regime: str = "dynamic", axis: i
     - ``"dynamic"``: Orientierung und Abstand mitteln während der Lebensdauer (schnell):
       E = ⟨k⟩/(1 + ⟨k⟩) mit k = (3/2) κ² (R₀/R)⁶.
     - ``"static"``: beide eingefroren während der Lebensdauer: E = ⟨k/(1 + k)⟩.
-    - ``"static_isotropic"``: Orientierung schnell (κ² → 2/3), Abstand eingefroren:
+    - ``"static_isotropic"``: Orientierung schnell und isotrop (κ² → 2/3), Abstand eingefroren:
       E = ⟨1/(1 + (R/R₀)⁶)⟩ (κ² wird ignoriert).
+    - ``"static_distance"``: Orientierung schnell, aber anisotrop (z. B. nahe der Oberfläche),
+      Abstand eingefroren: E = ⟨k̄/(1 + k̄)⟩ mit k̄ = (3/2) ⟨κ²⟩ (R₀/R)⁶, ⟨κ²⟩ über alle Frames.
 
     Args:
         r_da: R_DA [nm] (…, n_frames); kappa2: κ² (gleiche Shape); r0_nm: Förster-Radius [nm].
@@ -41,6 +43,9 @@ def fret_efficiency(r_da, kappa2, r0_nm: float, regime: str = "dynamic", axis: i
     q6 = (r0_nm / r) ** 6
     if regime == "static_isotropic":
         return np.mean(q6 / (1.0 + q6), axis=axis)
+    if regime == "static_distance":
+        kbar = 1.5 * np.mean(np.asarray(kappa2, np.float64), axis=axis, keepdims=True) * q6
+        return np.mean(kbar / (1.0 + kbar), axis=axis)
     k = 1.5 * np.asarray(kappa2, np.float64) * q6
     if regime == "static":
         return np.mean(k / (1.0 + k), axis=axis)
@@ -70,8 +75,9 @@ def block_analysis(x):
 
     Returns:
         dict mit ``block_size`` (Werte je Block), ``sem`` und ``sem_error`` (Fehler der Schätzung,
-        σ_k/sqrt(2(n_k − 1))) je Stufe, sowie ``sem_plateau``: größtes σ_k, dessen Stufe noch
-        mindestens 32 Blöcke hat (konservative Schätzung).
+        σ_k/sqrt(2(n_k − 1))) je Stufe, sowie ``sem_plateau``: σ_k der ersten Stufe (mit noch
+        mindestens 32 Blöcken), ab der σ_{k+1} innerhalb des Schätzfehlers nicht mehr steigt;
+        ohne Plateau das größte σ_k dieser Stufen (und ``converged`` = False).
     """
     y = np.asarray(x, np.float64).ravel()
     sizes, sems, errs = [], [], []
@@ -86,9 +92,16 @@ def block_analysis(x):
         size *= 2
     sizes, sems, errs = np.array(sizes), np.array(sems), np.array(errs)
     n_blocks = np.asarray(x).size // sizes
-    ok = n_blocks >= 32
-    plateau = sems[ok].max() if ok.any() else sems.max()
-    return {"block_size": sizes, "sem": sems, "sem_error": errs, "sem_plateau": float(plateau)}
+    ok = np.flatnonzero(n_blocks >= 32)
+    plateau, converged = (sems[ok].max() if len(ok) else sems.max()), False
+    for k in ok[:-1]:
+        if sems[k + 1] - sems[k] <= errs[k]:
+            plateau, converged = sems[k], True
+            break
+    return {
+        "block_size": sizes, "sem": sems, "sem_error": errs, "sem_plateau": float(plateau),
+        "converged": converged,
+    }  # fmt: skip
 
 
 def refractive_index_layers(z_nm, n, dz_nm: float, n_water: float, tol: float = 1e-9):

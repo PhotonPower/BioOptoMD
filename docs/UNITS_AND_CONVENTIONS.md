@@ -29,6 +29,7 @@ Nur aus `include/biooptomd/units.hpp` (C++/CUDA) bzw. `biooptomd.units` (Python)
 | `FARADAY` | 96.4853321 | kJ/(mol·V) |
 | `DEBYE_PER_ENM` | 48.0320471 | D/(e·nm) |
 | `AVOGADRO` | 6.02214076e23 | 1/mol |
+| `AKMA_TIME_PS` | 0.04888821 | ps (Zeiteinheit in DCD-Dateien) |
 | `FIXED_POINT_SCALE` | 2³² = 4294967296 | – |
 
 Debye-Länge (Wasser, 298 K): κ⁻¹ ≈ 0.304 nm / √(I / mol·L⁻¹). Der Builder berechnet κ exakt aus T, ε_r und I.

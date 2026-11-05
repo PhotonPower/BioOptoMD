@@ -343,6 +343,7 @@ void SimulationContext::restore_dynamic_state(const DynamicState& state) {
   previous_time_ps_ = state.previous_time_ps;
   forces_valid_ = false;
   constraints_dirty_ = false;
+  for (auto& force : forces_) force->on_state_restored();
 }
 
 void SimulationContext::step(std::int64_t n) {

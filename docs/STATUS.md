@@ -2,7 +2,8 @@
 
 > Diese Datei wird am Ende **jeder** Arbeitssitzung aktualisiert (AGENTS.md §2.4).
 
-**Aktive Phase:** 7 – Python-Builder, I/O & End-to-End (Branch `phase-7/builder-io`, auf PR #9).
+**Aktive Phase:** 7 – Python-Builder, I/O & End-to-End: implementiert (PR #10 auf PR #9), Abnahme
+durch den Projektinhaber ausstehend.
 **Nachrüstung (PR #9) abgenommen** am 2026-11-05 durch den Projektinhaber (RTX 3090).
 **Phase 6 abgenommen** am 2026-11-04 durch den Projektinhaber (RTX 3090), vor den neuen Abnahmetests.
 **Referenz-Hardware:** RTX 6000 Ada 48 GB (CC 8.9), Host 1 TB RAM
@@ -20,6 +21,31 @@
 
 - Phase 5 (PR #5): HMR, SHAKE/RATTLE auf H-Bindungen, N_dof. Abgenommen 2026-11-03; Nacharbeit nach
   Review siehe unten.
+
+## Phase 7 – erledigt, Abnahme ausstehend (Branch `phase-7/builder-io`, PR #10)
+1. `biooptomd.builder`: `from_openmm`/`from_parmed` → `SystemSpec`; `build_context` (LJ-Typen,
+   Exclusion-Tiles, HMR, H-Constraints, κ_r/ε_r(T_r), Cutoff aus κ, Box unverändert, Typ-Default 1).
+   Lehnt mehrfache Kräfte gleichen Typs, Parameter-Offsets und virtuelle Sites ab.
+2. Helfer: `add_anchors` (Höhe über z_top, OQ-07), `assign_types`, `dipole_probe`, `optical_tables`
+   (α′, v je Element, ASSUMPTION(OQ-01/02), unkalibriert).
+3. `biooptomd.io`: bitgenaue Checkpoints (`save/restore_dynamic_state`, prüft Ladungen/Massen gegen den
+   Kontext; Pulling beginnt die Arbeitsakkumulation nach dem Restore neu, W selbst und Observer-Puffer
+   sind nicht im Checkpoint), `DCDWriter` je Replica (C = 0, z nicht periodisch), `read_dcd`,
+   `HDF5Writer`. Neue Konstante `AKMA_TIME_PS`.
+4. `biooptomd.analysis`: FRET-Regime dynamic/static/static_isotropic/static_distance, Blockmittelung
+   (Flyvbjerg-Petersen mit Plateau-Kriterium), n(z)-Schichtstapel, CSV-Export.
+5. `examples/aptamer_on_graphene/` (Platzhalter OQ-01/02/03/05/07 markiert).
+- Abnahmetests: `test_builder_roundtrip_openmm` (ParmEd und OpenMM, Energie rel. ≈ 5e-8),
+  `test_checkpoint_bitexact` (mit/ohne Constraints, mit zeitabhängigem Pulling, Imagezähler ≠ 0),
+  `test_end_to_end_biosensor` (`slow`, 8 Replicas, 1 ns in ≈ 80 s). Dazu `test_builder_options`,
+  `test_checkpoint_mismatch`, `test_trajectory_writers`, `test_analysis.py`.
+- Review-Agent: keine Fehler mit Auswirkung; umgesetzt: Typ-Default 1 statt 0, strengere
+  OpenMM-Prüfungen, Ankerhöhe im Beispiel (0.35 nm wie dokumentiert, Höhe relativ zu z_top),
+  datenbasierte n(z)-Prüfung, Checkpoint-Test schärfer, Massen-/Ladungsprüfung beim Laden,
+  DCD-ISTART/NSTEP wie OpenMM, Plateau-Kriterium, 4σ-Toleranzen in test_analysis.
+- Getestet (RTX 3090, CUDA 12.9): `pytest` 92/92 grün (inkl. `slow`), compute-sanitizer memcheck 0 Fehler
+  auf Checkpoint-/Trajektorientests.
+- Hinweis: ParmEd rundet Massen (bis 0.004 amu Abweichung zu OpenMM); ohne Einfluss auf Energien.
 
 ## Integration von `main` (2026-11-05)
 `origin/main` (PR #7: Review, ADR 0006 Rev. 2 und ADR 0007 Accepted, OQ-01…10 entschieden; PR #8:
@@ -95,10 +121,10 @@ ADR 0007 → **0009** (Mixed Precision), unsere OQ-08…11 → **OQ-11…14**.
   Structs unterschiedlich aus. Vor dem Push mit beiden prüfen oder Kommentare über die Member setzen.
 
 ## Nächster konkreter Schritt
-1. Projektinhaber: Nachrüstung (PR #9) abnehmen; OQ-14 (Temperaturschätzer) entscheiden; PRs #1 → #6, #9
-   nacheinander mergen (gestapelt, nach jedem Merge Basis des nächsten PR auf `main` umstellen).
-2. Phase 7, Aufgabe 1: `biooptomd.builder.from_parmed()/from_openmm()` – die bisher in den Tests verstreuten
-   Schritte (Topologie-Extraktion, LJ-Typen, Ausschlüsse, HMR, Constraints) zu einem Builder bündeln.
+1. Projektinhaber: Phase 7 (PR #10) abnehmen; OQ-14 (Temperaturschätzer) entscheiden; PRs #1 → #6, #9,
+   #10 nacheinander mergen (gestapelt, nach jedem Merge Basis des nächsten PR auf `main` umstellen).
+2. Danach Phase 8 (Performance & Benchmark) laut ROADMAP; offen aus Phase 6: zwei `reference`-Tests
+   (dn/dc-Kalibrierung, Clausius-Mossotti-Konsistenz).
 3. Nachholen: Kontrolllauf auf der RTX 6000 Ada; Nsight Compute (Counter-Freigabe).
 
 ## Sitzungslog
@@ -118,4 +144,5 @@ ADR 0007 → **0009** (Mixed Precision), unsere OQ-08…11 → **OQ-11…14**.
 | 2026-11-04 | Claude (Build) | Env angelegt (CUDA 12.6), Build + leeres `_core`-Modul laufen, 2 Tests grün. Keine Quelländerungen außer dieser Datei. |
 | 2026-11-05 | Claude Opus 5.5 | `origin/main` (PR #7 Review/ADR-Entscheidungen, PR #8 Build-Umgebung RTX 6000 Ada) in den Phasen-Stapel gemergt. Doppelte Nummern aufgelöst: unsere ADR 0006 → **0008** (Kraftschranke/Statusflags), ADR 0007 → **0009** (Mixed Precision), unsere OQ-08…11 → **OQ-11…14**. ADR 0006/0007 auf `main` (Cutoff aus κ, Wandformen) gelten unverändert. |
 | 2026-11-05 | Projektinhaber | Nachrüstung (PR #9) abgenommen; weiter mit Phase 7. |
+| 2026-11-05 | Claude Opus 5.5 | Phase 7 implementiert (PR #10): Builder, Checkpoints, DCD/HDF5, Analyse, Beispiel + End-to-End-Test; Review umgesetzt. |
 | 2026-11-05 | Claude Opus 5.5 | Nachrüstung Phasen 2/4/6 (PR #9): Wandformen + Mischungsregeln, nichtlineares GC, κ-Cutoff + Bildsumme, Kugelschnitt-Verschmierung, optische Normierung; Review umgesetzt. Offen: zwei `reference`-Tests aus Phase 6 (s. o.). |

@@ -146,7 +146,16 @@ def _checkpoint_system(spec, constraints):
         np.array([0.0, 2.0], np.float32), np.array([0.0, 0.3], np.float32),
         phi0=3.0, kappa=np.ones(2, np.float32),
     )  # fmt: skip
+    _core.testing.shift_x(ctx, 2.0)  # Hälfte der Atome über die Boxgrenze ⇒ Imagezähler ≠ 0
+    ctx.wrap_xy()
     ctx.set_integrator(0.004 if constraints else 0.001, 1.0, seed=123)
+    # Zeitabhängiges Pulling (Referenz wandert mit t): Checkpoint muss die Zeit mitführen.
+    n_rep = 2
+    ctx.add_com_pulling(
+        np.arange(n_rep + 1, dtype=np.int32) * 6, np.tile(np.arange(0, 18, 3, dtype=np.int32), n_rep),
+        np.full((n_rep, 3), 1.5, np.float32), np.tile(np.float32([1.0, 0.0, 0.0]), (n_rep, 1)),
+        np.full(n_rep, 0.5, np.float32), np.full(n_rep, 20.0, np.float32),
+    )  # fmt: skip
     return ctx
 
 
@@ -163,6 +172,7 @@ def test_checkpoint_bitexact(tmp_path, constraints):
 
     first = _checkpoint_system(spec, constraints)
     first.step(n_steps)
+    assert np.abs(first.save_state()["image"]).max() > 0, "Checkpoint soll Imagezähler ≠ 0 haben"
     path = tmp_path / "state.npz"
     bio.save_checkpoint(first, path)
     del first
@@ -179,7 +189,6 @@ def test_checkpoint_bitexact(tmp_path, constraints):
     assert got["time"] == expected["time"]
     assert np.array_equal(second.forces_fixed_point(), ref.forces_fixed_point())
     assert np.array_equal(second.energies_fixed_point(), ref.energies_fixed_point())
-    assert np.abs(expected["image"]).max() > 0 or constraints, "Test soll Boxwechsel enthalten"
     assert ref.status() == 0
 
 
@@ -192,6 +201,9 @@ def test_checkpoint_mismatch(tmp_path):
     other = _core.SimulationContext(3, spec.n_atoms)
     with pytest.raises(ValueError):
         bio.load_checkpoint(other, path)
+    hmr = _checkpoint_system(spec, True)  # andere Massen (HMR)
+    with pytest.raises(ValueError):
+        bio.load_checkpoint(hmr, path)
 
 
 def test_trajectory_writers(tmp_path):
@@ -273,11 +285,15 @@ def test_end_to_end_biosensor():
     assert np.isfinite(res["E_dynamic"]).all() and np.isfinite(res["E_static"]).all()
     assert (res["E_static"] <= res["E_dynamic"] + 1e-12).all()  # Jensen
 
-    # n(z): oberhalb der maximalen Ausdehnung (12 nt × ≤ 0.7 nm + Anker < 9 nm) kein Atom ⇒ n = n_w.
+    # n(z) → n_w: oberhalb der höchsten Schicht mit Atombeiträgen (aus den Daten) ist n = n_w
+    # exakt, und dieser leere Bereich ist mindestens 1 nm dick (Profil reicht bis 10 nm).
     nz = obs["nz"].result()
     assert nz["n_frames"][0] == 1000 and np.isfinite(nz["n"]).all()
-    top = nz["z"] > 9.0
-    np.testing.assert_array_equal(nz["n"][:, top], np.float32(1.333))
+    occupied = (nz["s_alpha_mean"] > 0) | (nz["s_volume_mean"] > 0)
+    for r in range(8):
+        top_k = np.flatnonzero(occupied[r]).max()
+        np.testing.assert_array_equal(nz["n"][r, top_k + 1 :], np.float32(1.333))
+        assert nz["z"][-1] - nz["z"][top_k] > 1.0, "Profil endet zu nah am Molekül"
     assert (nz["n"][:, nz["z"] < 3.0] > 1.333).any(axis=1).all(), "Molekül im Profil sichtbar"
 
     # Anker: z am Ende nahe der Sollhöhe (k_z = 10⁴ ⇒ σ_z ≈ √(k_BT/k) ≈ 0.016 nm; 6σ ≈ 0.1 nm).

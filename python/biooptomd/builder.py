@@ -103,13 +103,20 @@ def from_openmm(system, topology=None, positions=None) -> SystemSpec:
 
     if system.getNumConstraints():
         raise ValueError("from_openmm: System ohne Constraints erzeugen (constraints=None)")
-    forces = {type(f).__name__: f for f in system.getForces()}
-    known = {"HarmonicBondForce", "HarmonicAngleForce", "PeriodicTorsionForce", "NonbondedForce",
-             "CMMotionRemover"}  # fmt: skip
-    unknown = set(forces) - known
-    if unknown:
-        raise ValueError(f"from_openmm: nicht unterstützte Kräfte {sorted(unknown)}")
     n = system.getNumParticles()
+    if any(system.isVirtualSite(i) for i in range(n)):
+        raise ValueError("from_openmm: virtuelle Sites werden nicht unterstützt")
+    known = {"HarmonicBondForce", "HarmonicAngleForce", "PeriodicTorsionForce", "NonbondedForce"}
+    forces = {}
+    for f in system.getForces():
+        name = type(f).__name__
+        if name == "CMMotionRemover":
+            continue  # Schwerpunktbewegung: Langevin-Thermostat, keine Kraft
+        if name not in known:
+            raise ValueError(f"from_openmm: nicht unterstützte Kraft {name}")
+        if name in forces:
+            raise ValueError(f"from_openmm: mehrere {name} werden nicht unterstützt")
+        forces[name] = f
     nm, kj = unit.nanometer, unit.kilojoule_per_mole
 
     bonds, bond_r0, bond_k = [], [], []
@@ -141,6 +148,8 @@ def from_openmm(system, topology=None, positions=None) -> SystemSpec:
     nb = forces.get("NonbondedForce")
     if nb is None:
         raise ValueError("from_openmm: NonbondedForce fehlt")
+    if nb.getNumParticleParameterOffsets() or nb.getNumExceptionParameterOffsets():
+        raise ValueError("from_openmm: Parameter-Offsets der NonbondedForce nicht unterstützt")
     q, sig, eps = np.zeros(n), np.zeros(n), np.zeros(n)
     for i in range(n):
         c, s, e = nb.getParticleParameters(i)
@@ -181,7 +190,8 @@ def from_openmm(system, topology=None, positions=None) -> SystemSpec:
         atom_names = np.array([a.name for a in atoms])
         residue_names = np.array([a.residue.name for a in atoms])
     else:
-        # Ohne Topologie: H über die Masse (HMR-Systeme vorher nicht übergeben).
+        # Ohne Topologie: H über die Masse (HMR-Systeme vorher nicht übergeben); alle anderen
+        # Atome „X“ – optical_tables braucht dann eine eigene Tabelle.
         elements = np.where(masses < 1.5, "H", "X")
         atom_names = residue_names = None
     if positions is not None:
@@ -232,6 +242,7 @@ def build_context(
     constraints: bool = False,
     n_kappa: float = 5.0,
     r_cutoff: float | None = None,
+    switch_width: float = 0.2,
     types=None,
     device: int = 0,
 ):
@@ -247,8 +258,10 @@ def build_context(
         eps_r: ε_r je Replica; Default ε_r von Wasser bei T_r (ASSUMPTION(OQ-10)).
         hmr: Hydrogen Mass Repartitioning auf ``h_mass`` [amu].
         constraints: H-Bindungen per SHAKE/RATTLE festhalten (für Δt = 4 fs mit HMR).
-        n_kappa: r_c = max(2 nm, n_κ/min κ_r) (ADR 0006); ``r_cutoff`` überschreibt r_c.
-        types: (n,) Oberflächen-/Optik-Typ je Atom (``types[..., 1]``), Default 0.
+        n_kappa: r_c = max(2 nm, n_κ/min κ_r) (ADR 0006); ``r_cutoff`` überschreibt r_c;
+            r_s = r_c − ``switch_width`` [nm].
+        types: (n,) Oberflächen-/Optik-Typ je Atom (``types[..., 1]``). Default 1 für alle Atome
+            (Typ 0 = keine Wand, nur für Anker, ADR 0007); siehe :func:`assign_types`.
 
     Returns:
         (ctx, :class:`BuildInfo`).
@@ -265,9 +278,9 @@ def build_context(
     kappa = np.atleast_1d(_nonbonded.debye_kappa(ionic_strength_molar, temps, eps))
     kappa = np.broadcast_to(kappa, (n_replicas,)).copy()
     if r_cutoff is None:
-        r_s, r_c = _nonbonded.cutoff_from_kappa(kappa, n_kappa=n_kappa)
+        r_s, r_c = _nonbonded.cutoff_from_kappa(kappa, n_kappa=n_kappa, width=switch_width)
     else:
-        r_s, r_c = r_cutoff - 0.2, float(r_cutoff)
+        r_s, r_c = r_cutoff - switch_width, float(r_cutoff)
 
     masses = np.asarray(spec.masses, np.float64)
     if hmr:
@@ -295,8 +308,7 @@ def build_context(
     )
     t2 = np.zeros((n_replicas, n, 2), np.int32)
     t2[..., 0] = lj_types
-    if types is not None:
-        t2[..., 1] = np.asarray(types, np.int32)
+    t2[..., 1] = 1 if types is None else np.asarray(types, np.int32)
     ctx.set_types(t2)
     ctx.set_temperatures(temps.astype(np.float32))
     k32, e32 = kappa.astype(np.float32), eps.astype(np.float32)
@@ -323,7 +335,8 @@ def add_anchors(ctx, anchor_atoms, height_nm: float, z_top_nm: float = 0.0, k_z:
 
     Args:
         anchor_atoms: lokale Atomindizes (m,), in jeder Replica gleich.
-        height_nm: Höhe über z_top [nm]; ASSUMPTION(OQ-07): Literatur uneinheitlich, typ. 0.2–0.25.
+        height_nm: Höhe über z_top [nm] (nicht über z = 0); ASSUMPTION(OQ-07): Literatur
+            uneinheitlich, typ. 0.2–0.25 für Thiol auf Au(111).
         z_top_nm: Höhe der obersten Atomlage über z = 0 der Wand [nm] (``wall_table(...)['z_top']``).
         k_z: Federkonstante in z [kJ/mol/nm²].
         xy: optional (m, 2) Ankerpositionen in x/y [nm] (nur bei mehreren Rezeptoren pro Box);

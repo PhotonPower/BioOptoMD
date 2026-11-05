@@ -68,7 +68,8 @@ def load_strand():
     else:
         rot = np.eye(3) if c > 0 else np.diag([1.0, -1.0, -1.0])
     pos = (pos - pos[anchor]) @ rot.T
-    lift = max(0.0, 0.3 - pos[:, 2].min())  # kein Atom unter 0.3 nm (Wand-Clamp)
+    # Anker auf ANCHOR_HEIGHT; nur falls ein anderes Atom dann unter 0.3 nm läge, alles anheben.
+    lift = max(0.0, 0.3 - (pos[:, 2].min() + ANCHOR_HEIGHT))
     pos += [BOX_NM[0] / 2, BOX_NM[1] / 2, ANCHOR_HEIGHT + lift]
     spec.positions = pos
 
@@ -93,7 +94,7 @@ def build(n_replicas: int = 8, t_min: float = 300.0, t_max: float = 340.0, seed:
     # Graphen-Wand: Zeilen = Optik-/Oberflächen-Typen, Typ 0 (Anker) ohne Wand, λ = 1.
     wall = surface.wall_table("graphene", info.lj_table, np.ones(len(names)))
     ctx.add_planar_surface(wall["prefactor"], wall["sigma"], form=wall["form"], delta=wall["delta"])
-    builder.add_anchors(ctx, [anchor], height_nm=anchor_z, z_top_nm=wall["z_top"])
+    builder.add_anchors(ctx, [anchor], height_nm=anchor_z - wall["z_top"], z_top_nm=wall["z_top"])
     ctx.set_integrator(DT_PS, FRICTION, seed)
 
     reps = n_replicas

@@ -6,7 +6,8 @@
   Restraints und Observer gehören zum Aufbau des Systems und werden nicht gespeichert; der Kontext
   muss vor dem Laden genauso aufgebaut sein. Observer-Puffer und die Pulling-Arbeit sind nicht Teil
   des Checkpoints.
-- :class:`DCDWriter`: eine DCD-Datei je Replica (CHARMM/NAMD-Format wie OpenMM: Å, Box je Frame).
+- :class:`DCDWriter`: eine DCD-Datei je Replica (CHARMM/NAMD-Format wie OpenMM: Å, Box je Frame;
+  C = 0, weil z nicht periodisch ist – Leseprogramme sehen eine in z degenerierte Zelle).
 - :class:`HDF5Writer`: eine Datei für alle Replicas (``positions`` (n_frames, n_replicas, n_atoms, 3)
   in nm, ``step``, ``time`` [ps], ``box`` [nm]); benötigt h5py.
 - :func:`read_dcd`: Rückleser (für Tests und Analyse).
@@ -21,6 +22,8 @@ import struct
 from pathlib import Path
 
 import numpy as np
+
+from . import units
 
 CHECKPOINT_VERSION = 1
 _STATE_KEYS = ("pos", "pos_corr", "vel", "image")
@@ -56,6 +59,8 @@ def load_checkpoint(ctx, path, restore_integrator: bool = True) -> int:
 
     Reihenfolge: Box (setzt die Imagezähler zurück), Temperaturen, Integrator, dann der dynamische
     Zustand. Danach liefert ``ctx.step(n)`` bitgenau dieselbe Trajektorie wie der ursprüngliche Lauf.
+    Ladungen und Massen (``pos.w``, ``vel.w``) müssen mit dem Kontext übereinstimmen (z. B. HMR
+    gleich), sonst ValueError. Pulling-Plugins beginnen die Arbeitsakkumulation neu.
 
     Returns:
         Schrittzähler des Checkpoints.
@@ -65,6 +70,11 @@ def load_checkpoint(ctx, path, restore_integrator: bool = True) -> int:
             raise ValueError(f"Checkpoint-Version {int(d['version'])} nicht unterstützt")
         if int(d["n_replicas"]) != ctx.n_replicas or int(d["n_atoms"]) != ctx.n_atoms:
             raise ValueError("Checkpoint passt nicht zum Kontext (n_replicas, n_atoms)")
+        current = ctx.save_state()
+        if not np.array_equal(current["pos"][..., 3], d["pos"][..., 3]) or not np.array_equal(
+            current["vel"][..., 3], d["vel"][..., 3]
+        ):
+            raise ValueError("Checkpoint: Ladungen oder Massen weichen vom Kontext ab")
         ctx.set_box(np.ascontiguousarray(d["box"], np.float32))
         ctx.set_temperatures(np.ascontiguousarray(d["temperatures"], np.float32))
         if restore_integrator and "dt" in d:
@@ -113,9 +123,10 @@ class DCDWriter:
         # Dateien bleiben bis close() offen (Frames werden fortlaufend angehängt).
         self._files = [open(p, "wb") for p in self.paths]  # noqa: SIM115
         dt_ps = ctx.dt if ctx.has_integrator else 0.0
-        # Zeiteinheit der DCD: AKMA (1 AKMA = 0.04888821 ps), wie CHARMM/OpenMM
-        delta = dt_ps / 0.04888821
-        self._first_step = ctx.current_step
+        # Zeiteinheit der DCD: AKMA, wie CHARMM/OpenMM
+        delta = dt_ps / units.AKMA_TIME_PS
+        self._first_step = None  # Schritt des ersten Frames (ISTART), gesetzt beim ersten write()
+        self._last_step = 0
         for f in self._files:
             f.write(self._header(0, delta, interval))
             f.write(_record("i80s", 1, b"Created by BioOptoMD".ljust(80)))
@@ -124,8 +135,9 @@ class DCDWriter:
 
     def _header(self, n_frames: int, delta: float, interval: int) -> bytes:
         icntrl = [0] * 20
-        icntrl[0], icntrl[1], icntrl[2] = n_frames, self._first_step, interval
-        icntrl[3] = interval * n_frames
+        first = self._first_step if self._first_step is not None else 0
+        # NFILE, ISTART (Schritt des ersten Frames), NSAVC, NSTEP (Schritt des letzten Frames)
+        icntrl[0], icntrl[1], icntrl[2], icntrl[3] = n_frames, first, interval, self._last_step
         icntrl[10], icntrl[19] = 1, 24  # Box je Frame, CHARMM-Version 24
         ints = struct.pack("<20i", *icntrl)
         ints = ints[:36] + struct.pack("<f", delta) + ints[40:]  # ICNTRL[9] = Δt (float)
@@ -136,6 +148,9 @@ class DCDWriter:
         """Schreibt den aktuellen Frame aller Replicas (synchronisiert)."""
         x = _frame_positions(self.ctx, self.unwrap) * 10.0  # nm → Å
         box = self.ctx.box().astype(np.float64) * 10.0
+        if self._first_step is None:
+            self._first_step = self.ctx.current_step
+        self._last_step = self.ctx.current_step
         self.n_frames += 1
         for r, f in enumerate(self._files):
             # Einheitszelle (A, γ, B, β, α, C); z nicht periodisch ⇒ C = 0

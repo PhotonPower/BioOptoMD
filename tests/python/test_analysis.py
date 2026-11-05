@@ -36,6 +36,13 @@ def test_fret_regimes():
     out = fret_efficiency(r, k2, r0, "static_isotropic")
     assert out.shape == (3,)
     np.testing.assert_allclose(out, fret_efficiency(r, np.full_like(k2, 2 / 3), r0, "static"))
+    # Anisotrope Orientierung, eingefrorener Abstand: ⟨κ²⟩ statt 2/3
+    kbar = k2.mean(axis=1, keepdims=True)
+    q = (r0 / r) ** 6
+    np.testing.assert_allclose(
+        fret_efficiency(r, k2, r0, "static_distance"),
+        np.mean(1.5 * kbar * q / (1 + 1.5 * kbar * q), 1),
+    )
     with pytest.raises(ValueError):
         fret_efficiency(r, k2, r0, "mean")
 
@@ -54,12 +61,18 @@ def test_block_average_ar1():
     sigma_x = 1.0 / np.sqrt(1 - phi**2)
     exact = sigma_x / np.sqrt(n) * np.sqrt((1 + phi) / (1 - phi))
     res = block_analysis(x)
+    assert res["converged"]
     k = int(np.argmin(np.abs(res["sem"] - res["sem_plateau"])))
-    assert abs(res["sem_plateau"] - exact) < 4 * res["sem_error"][k] + 0.05 * exact
+    # Blockgröße 2^k erfasst die Korrelation nur bis auf O(τ/2^k) ⇒ Bias ~ τ_int/2^k zusätzlich zu 4σ.
+    tau = (1 + phi) / (1 - phi)
+    assert (
+        abs(res["sem_plateau"] - exact)
+        < 4 * res["sem_error"][k] + tau / res["block_size"][k] * exact
+    )
     assert res["sem"][0] < 0.35 * exact  # naive Schätzung (Blockgröße 1)
     mean, sem = block_average(x, n_blocks=32)
     assert abs(mean) < 4 * exact
-    assert sem == pytest.approx(exact, rel=0.35)  # 32 Blöcke: rel. Fehler ≈ 1/√62 ≈ 13 %
+    assert sem == pytest.approx(exact, rel=0.51)  # 32 Blöcke: rel. Fehler ≈ 1/√62 ≈ 13 % ⇒ 4σ
     m2, s2 = block_average(np.stack([x, 2 * x]), n_blocks=32)
     np.testing.assert_allclose(m2, [mean, 2 * mean])
     np.testing.assert_allclose(s2, [sem, 2 * sem])
