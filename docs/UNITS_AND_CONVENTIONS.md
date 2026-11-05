@@ -41,7 +41,7 @@ Debye-Länge (Wasser, 298 K): κ⁻¹ ≈ 0.304 nm / √(I / mol·L⁻¹). Der B
 
 ## Numerik
 
-- Kernel-Arithmetik in FP32. Ausnahme (ADR 0007): Integrator, `wrap_xy` und Schwerpunkt rechnen mit dem Mixed-Precision-Zustand (Position = `d_pos` + `d_pos_corr`, Geschwindigkeit FP64). `--use_fast_math` ist **verboten** in Kraft-Kernels (Denormals/Genauigkeit), erlaubt nur in Observer-Kernels mit Begründung.
+- Kernel-Arithmetik in FP32. Ausnahme (ADR 0009): Integrator, `wrap_xy` und Schwerpunkt rechnen mit dem Mixed-Precision-Zustand (Position = `d_pos` + `d_pos_corr`, Geschwindigkeit FP64). `--use_fast_math` ist **verboten** in Kraft-Kernels (Denormals/Genauigkeit), erlaubt nur in Observer-Kernels mit Begründung.
 - Kraftakkumulation Fixed-Point int64 (ADR 0002). Energieakkumulation ebenfalls.
 - Reduktionen über viele Atome (kinetische Energie, Schwerpunkte) in FP64 oder Kahan-Summe, da nicht im Hot-Path.
 - `EPS_R2 = 1e-8 nm²` als Untergrenze für Abstandsquadrate.

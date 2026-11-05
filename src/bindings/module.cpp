@@ -337,7 +337,7 @@ NB_MODULE(_core, m) {
       .def("compute_forces", &SimulationContext::compute_forces,
            "clear_forces → Nonbonded → ForcePlugins → fixed_point_to_float (asynchron).")
       .def("status", &SimulationContext::status,
-           "Geräte-Statuswort (Bits STATUS_*, ADR 0006); 0 = in Ordnung. Synchronisiert.")
+           "Geräte-Statuswort (Bits STATUS_*, ADR 0008); 0 = in Ordnung. Synchronisiert.")
       .def("clear_status", &SimulationContext::clear_status, "Statuswort auf 0 setzen.")
       .def("synchronize", &SimulationContext::synchronize,
            "Wartet auf alle Arbeit im Stream des Kontexts.");
@@ -351,10 +351,10 @@ NB_MODULE(_core, m) {
       "float32 (n_replicas, n_pad, 4): x, y, z [nm], q [e].");
   def_export<double>(
       cls, "velocities", [](const DeviceState& s) { return &s.d_vel->x; }, atoms4,
-      "float64 (n_replicas, n_pad, 4): vx, vy, vz [nm/ps], 1/m [1/amu] (ADR 0007).");
+      "float64 (n_replicas, n_pad, 4): vx, vy, vz [nm/ps], 1/m [1/amu] (ADR 0009).");
   def_export<float>(
       cls, "position_corrections", [](const DeviceState& s) { return &s.d_pos_corr->x; }, atoms4,
-      "float32 (n_replicas, n_pad, 4): Korrektur zu positions() (ADR 0007), w = 0.");
+      "float32 (n_replicas, n_pad, 4): Korrektur zu positions() (ADR 0009), w = 0.");
   def_export<float>(
       cls, "forces", [](const DeviceState& s) { return &s.d_force->x; }, atoms4,
       "float32 (n_replicas, n_pad, 4): Fx, Fy, Fz [kJ/mol/nm], w = 0.");
@@ -424,7 +424,7 @@ NB_MODULE(_core, m) {
             return vector_to_numpy(c.positions_precise(), {static_cast<std::size_t>(c.n_replicas()),
                                                            static_cast<std::size_t>(c.n_pad()), 3});
           },
-          "float64 (n_replicas, n_pad, 3) [nm]: positions + position_corrections (ADR 0007).")
+          "float64 (n_replicas, n_pad, 3) [nm]: positions + position_corrections (ADR 0009).")
       .def(
           "degrees_of_freedom",
           [](SimulationContext& c) {
@@ -478,7 +478,7 @@ NB_MODULE(_core, m) {
             const auto& z = f.clamp_distances();
             return vector_to_numpy(z, {z.size()});
           },
-          "float32 (n_surface_types,): zeta_c = max(clamp_factor*sigma, zeta_F) [nm], ADR 0006.");
+          "float32 (n_surface_types,): zeta_c = max(clamp_factor*sigma, zeta_F) [nm], ADR 0008.");
   cls.def(
       "add_planar_surface",
       [](SimulationContext& c, HostInput<float> epsilon, HostInput<float> sigma, float z0,

@@ -57,7 +57,7 @@ __global__ void k_com_pulling(DeviceState s, const int* offsets, const int* atom
   double ax = 0.0, ay = 0.0, az = 0.0;
   for (int g = begin + threadIdx.x; g < end; g += blockDim.x) {
     const int i = r * s.n_pad + atoms[g];
-    const double3 p = detail::load_position(s, i);  // FP64-Position (ADR 0007)
+    const double3 p = detail::load_position(s, i);  // FP64-Position (ADR 0009)
     const int2 img = s.d_image[i];
     const double w = weights[g];
     ax += w * (p.x + static_cast<double>(img.x) * box.x);

@@ -32,7 +32,7 @@ struct ConstraintParams {
 };
 
 /// Besitzt die Cluster-Listen pro Replica (ADR 0005) und startet die SHAKE/RATTLE-Kernels.
-/// Ein Thread pro Cluster rechnet iterativ in FP64 auf der Mixed-Precision-Position (ADR 0007).
+/// Ein Thread pro Cluster rechnet iterativ in FP64 auf der Mixed-Precision-Position (ADR 0009).
 /// Nicht-Konvergenz setzt kStatusConstraintFailure.
 class ConstraintSet {
  public:

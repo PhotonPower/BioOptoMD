@@ -1,6 +1,6 @@
-# ADR 0006: Kraftschranke am Wand-Clamp, Fixed-Point-Sättigung und Geräte-Statusflags
+# ADR 0008: Kraftschranke am Wand-Clamp, Fixed-Point-Sättigung und Geräte-Statusflags
 
-- **Status:** Proposed (Entscheidung des Projektinhabers zu OQ-10 am 2026-11-03; formale Annahme ausstehend)
+- **Status:** Proposed (Entscheidung des Projektinhabers zu OQ-13 am 2026-11-03; formale Annahme ausstehend)
 - **Datum:** 2026-11-03
 - **Ergänzt:** ADR 0002
 
@@ -8,7 +8,7 @@
 ADR 0002 akkumuliert Kräfte und Energien als int64 mit Skala 2³² und setzt |F| < 2³¹ voraus. PHYSICS_MODEL §4.1
 clampte die 9-3-Wand bei ζ_c = 0.1 σ. Dort ist |F| ≈ 1.2·10⁹ ε/ζ_c ≈ 10¹¹ kJ/mol/nm, also weit außerhalb des
 darstellbaren Bereichs. `__float2ll_rn` sättigt außerhalb von int64, die anschließende Ganzzahlsumme kann aber
-modulo 2⁶⁴ überlaufen und das Vorzeichen kippen; das ist in `test_phase2.py` nachgewiesen (OQ-10). NaN-Beiträge
+modulo 2⁶⁴ überlaufen und das Vorzeichen kippen; das ist in `test_phase2.py` nachgewiesen (OQ-13). NaN-Beiträge
 werden zu einem undefinierten Wert. Eine explodierende Simulation bleibt dadurch unbemerkt.
 
 ## Entscheidung
