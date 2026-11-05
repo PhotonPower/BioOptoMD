@@ -75,7 +75,7 @@ class SimulationContext {
   /// Host-Kopie der Box (Lx, Ly) [nm] je Replica; leer, solange keine Box gesetzt ist.
   const std::vector<float2>& host_box() const { return h_box_; }
 
-  /// Geräte-Statuswort (Bits bomd::StatusBit, ADR 0006). Synchronisiert.
+  /// Geräte-Statuswort (Bits bomd::StatusBit, ADR 0008). Synchronisiert.
   unsigned int status();
   /// Setzt das Statuswort auf 0 (asynchron).
   void clear_status();

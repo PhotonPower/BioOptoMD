@@ -201,7 +201,7 @@ def test_degenerate_geometries(core):
 def test_nve_energy_conservation(core):
     """γ = 0, Δt = 0.5 fs, 200 000 Schritte (100 ps): Drift (Regressionssteigung) < 1e-4
     kJ/mol/ps/Atom, Fluktuation < 1e-3·⟨E_kin⟩. Molekül bei realistischen Koordinaten (~5 nm),
-    wo FP32-Zustand die Grenze verfehlen würde (ADR 0007). Protokoll: Entscheidung des
+    wo FP32-Zustand die Grenze verfehlen würde (ADR 0009). Protokoll: Entscheidung des
     Projektinhabers 2026-11-03 (5000 Schritte lösen 1e-4 statistisch nicht auf)."""
     topo, pos, masses = _load()
     n = pos.shape[0]

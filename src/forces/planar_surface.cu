@@ -36,7 +36,7 @@ __global__ void k_planar_surface(DeviceState s, const float4* type_params, int n
     } else {
       const float4 es = type_params[t];  // (ε, σ, ζ_c, 0)
       if (es.x != 0.0f && es.y > 0.0f) {
-        // ζ_c = max(clamp_factor·σ, ζ_F) > 0 (ADR 0006) schützt die Division (AGENTS.md Regel 4)
+        // ζ_c = max(clamp_factor·σ, ζ_F) > 0 (ADR 0008) schützt die Division (AGENTS.md Regel 4)
         // und begrenzt |F| auf max_force. Unterhalb von ζ_c werden V und F am Punkt ζ_c
         // ausgewertet und das Ereignis gezählt.
         const float zeta_c = es.z;
@@ -54,7 +54,7 @@ __global__ void k_planar_surface(DeviceState s, const float4* type_params, int n
     }
 
     // Linearisiertes Gouy-Chapman (§4.1): V = q Φ0 exp(−κζ), F_z = q Φ0 κ exp(−κζ) für ζ >= 0.
-    // ASSUMPTION(OQ-09): für ζ < 0 konstant V = q Φ0, F = 0.
+    // ASSUMPTION(OQ-12): für ζ < 0 konstant V = q Φ0, F = 0.
     if (phi0 != 0.0f && p.w != 0.0f) {
       const float ex = expf(-kappa * fmaxf(zeta, 0.0f));
       energy += p.w * phi0 * ex;
@@ -72,7 +72,7 @@ double wall_force(double eps, double sigma, double zeta) {
   return eps * (1.2 * s3 * s3 * s3 - 3.0 * s3) / zeta;
 }
 
-/// ζ_c = max(clamp_factor·σ, ζ_F) mit |F(ζ_F)| = f_max (ADR 0006). Auf (0, z*) mit
+/// ζ_c = max(clamp_factor·σ, ζ_F) mit |F(ζ_F)| = f_max (ADR 0008). Auf (0, z*) mit
 /// z* = (2/5)^(1/6) σ < σ fällt |F| streng monoton (dF/dζ ∝ σ^6 − ζ^6), daher Bisektion.
 float clamp_distance(double eps, double sigma, double clamp_factor, double f_max) {
   if (eps == 0.0 || sigma <= 0.0) return 0.0f;
