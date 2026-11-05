@@ -25,7 +25,7 @@ erweiterbar für GBn2).
 - Phase 5 (PR #5): HMR, SHAKE/RATTLE auf H-Bindungen, N_dof. Abgenommen 2026-11-03; Nacharbeit nach
   Review siehe unten.
 
-## Phase 9.1 – GB-OBC2: implementiert, Abnahme ausstehend (Branch `phase-9/gb-obc2`)
+## Phase 9.1 – GB-OBC2: abgenommen 2026-11-05 (PR #12)
 - ADR 0010 (Proposed): Modell, Kopplung an Cutoff/Switching/Bildsumme, Passes; OQ-15 (OBC2 vs. GBn2),
   OQ-16 (dielektrische Grenze an der Oberfläche, offen). Abnahmetests als Vorschlag in ROADMAP 9.1.
 - NumPy-Referenz `tests/reference/gb_ref.py` (vs. OpenMM-CustomGBForce 2·10⁻⁷, FD 2·10⁻⁸).
@@ -191,6 +191,7 @@ ADR 0007 → **0009** (Mixed Precision), unsere OQ-08…11 → **OQ-11…14**.
 | 2026-11-05 | Projektinhaber | Phase 7 (PR #10) abgenommen; weiter mit Phase 8. |
 | 2026-11-05 | Projektinhaber | Phase 8 (PR #11) abgenommen; weiter mit Phase 9+. |
 | 2026-11-05 | Projektinhaber | Phase 9: GB-OBC2 zuerst (mbondi2, Salz, ACE optional/Default an, erweiterbar für GBn2). |
+| 2026-11-05 | Projektinhaber | Phase 9.1 (PR #12) abgenommen; weiter mit der nächsten Erweiterung. |
 | 2026-11-05 | Claude Opus 5.5 | Phase 9.1 GB-OBC2 implementiert (ADR 0010 Proposed, gb_ref, TiledGeneralizedBorn, Builder), 12/12 Phase-9-Tests grün. |
 | 2026-11-05 | Claude Opus 5.5 | Phase 8: Benchmark vs. OpenMM (32×2k Faktor 3.5), Tile-Vorauswahl, M-SHAKE/RATTLE; Review umgesetzt, 94/94 Tests grün. |
 | 2026-11-05 | Claude Opus 5.5 | Phase 7 implementiert (PR #10): Builder, Checkpoints, DCD/HDF5, Analyse, Beispiel + End-to-End-Test; Review umgesetzt. |
