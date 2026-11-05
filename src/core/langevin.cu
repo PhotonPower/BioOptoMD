@@ -15,7 +15,7 @@ namespace {
 using detail::elementwise_grid;
 using detail::kElementwiseBlock;
 
-/// B A O A (PHYSICS_MODEL.md §1) in FP64 (ADR 0007). Ein Thread pro Atom, blockIdx.y = Replica.
+/// B A O A (PHYSICS_MODEL.md §1) in FP64 (ADR 0009). Ein Thread pro Atom, blockIdx.y = Replica.
 __global__ void k_baoa(DeviceState s, double half_dt, double c1, double noise_coeff, uint2 key,
                        std::int64_t step) {
   const int i_local = blockIdx.x * blockDim.x + threadIdx.x;

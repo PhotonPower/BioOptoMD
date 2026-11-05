@@ -6,7 +6,7 @@
     F_z,i  = −dV/dζ = ε_t [ (6/5) σ_t^9/ζ^10 − 3 σ_t^3/ζ^4 ]    [kJ/mol/nm]
 
 Für ζ < ζ_c wird ζ auf ζ_c gesetzt (V und F dort konstant fortgesetzt; das Ereignis wird gezählt),
-mit ζ_c,t = max(clamp_factor·σ_t, ζ_F,t) und |F(ζ_F,t)| = F_max (ADR 0006). Atome mit ε_t = 0 oder
+mit ζ_c,t = max(clamp_factor·σ_t, ζ_F,t) und |F(ζ_F,t)| = F_max (ADR 0008). Atome mit ε_t = 0 oder
 σ_t = 0 spüren keine Wand.
 
 Linearisiertes Gouy-Chapman (optional), Φ0 [kJ/(mol·e)], κ [1/nm]:
@@ -14,7 +14,7 @@ Linearisiertes Gouy-Chapman (optional), Φ0 [kJ/(mol·e)], κ [1/nm]:
     V_i = q_i Φ0 exp(−κ ζ),   F_z,i = q_i Φ0 κ exp(−κ ζ)     für ζ ≥ 0
     V_i = q_i Φ0,             F_z,i = 0                      für ζ < 0
 
-(ASSUMPTION(OQ-09): hinter der Wand konstant fortgesetzt; dort sollte wegen der 9-3-Wand nie
+(ASSUMPTION(OQ-12): hinter der Wand konstant fortgesetzt; dort sollte wegen der 9-3-Wand nie
 ein Atom sein.)
 """
 
@@ -31,7 +31,7 @@ def wall_force(zeta, eps, sigma):
 
 
 def clamp_distance(eps, sigma, clamp_factor=0.1, max_force=1.0e6):
-    """ζ_c = max(clamp_factor·σ, ζ_F) mit |F(ζ_F)| = max_force auf dem repulsiven Ast (ADR 0006)."""
+    """ζ_c = max(clamp_factor·σ, ζ_F) mit |F(ζ_F)| = max_force auf dem repulsiven Ast (ADR 0008)."""
     if eps == 0.0 or sigma <= 0.0:
         return 0.0
     lo = clamp_factor * sigma

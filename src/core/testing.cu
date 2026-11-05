@@ -20,7 +20,7 @@ __global__ void k_shift_x(DeviceState s, float dx) {
   const int r = blockIdx.y;
   if (i_local >= s.n_atoms) return;
   const int i = r * s.n_pad + i_local;
-  double3 x = detail::load_position(s, i);  // FP64-Zustand (ADR 0007)
+  double3 x = detail::load_position(s, i);  // FP64-Zustand (ADR 0009)
   x.x += dx;
   detail::store_position(s, i, x);
 }

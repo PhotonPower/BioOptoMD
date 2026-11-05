@@ -1,4 +1,4 @@
-"""NumPy-Referenzen für die Kern-Kernels (fixed_point, wrap_xy in FP64 nach ADR 0007).
+"""NumPy-Referenzen für die Kern-Kernels (fixed_point, wrap_xy in FP64 nach ADR 0009).
 
 Die Referenzen bilden die Gerätearithmetik bitgenau nach, damit Tests exakt (nicht mit
 Toleranz) vergleichen können. Einheiten: nm, kJ/mol/nm.
@@ -37,7 +37,7 @@ def accumulate_fixed_point(n_total: int, atom_index: np.ndarray, forces: np.ndar
 
 
 def wrap_coordinate_mixed(hi, lo, box_length):
-    """Bitgenaue Nachbildung des FP64-Wraps (ADR 0007) in src/core/core_kernels.cu.
+    """Bitgenaue Nachbildung des FP64-Wraps (ADR 0009) in src/core/core_kernels.cu.
 
     Args:
         hi, lo: FP32-Position und FP32-Korrektur (x = hi + lo in FP64) [nm].

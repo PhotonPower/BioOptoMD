@@ -38,7 +38,7 @@ def test_allocate_batch():
     r, p, nt = 4, 512, _core.N_ENERGY_TERMS
     expected = {
         "positions": ((r, p, 4), np.float32),
-        "velocities": ((r, p, 4), np.float64),  # ADR 0007
+        "velocities": ((r, p, 4), np.float64),  # ADR 0009
         "position_corrections": ((r, p, 4), np.float32),
         "forces": ((r, p, 4), np.float32),
         "forces_fixed_point": ((3, r, p), np.int64),
@@ -161,7 +161,7 @@ def test_fixed_point_roundtrip():
 
 
 def test_wrap_xy():
-    """Wrap nach [0, L), Imagezähler und exakte ungewrappte Rekonstruktion (ADR 0007, OQ-08).
+    """Wrap nach [0, L), Imagezähler und exakte ungewrappte Rekonstruktion (ADR 0009, OQ-11).
 
     Der Wrap rechnet mit der FP64-Position x = positions + position_corrections. Gewrappte Teile
     und Imagezähler müssen bitgenau der NumPy-Referenz entsprechen; x_w + n·L = x gilt exakt.

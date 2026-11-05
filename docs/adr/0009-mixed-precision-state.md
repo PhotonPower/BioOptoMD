@@ -1,4 +1,4 @@
-# ADR 0007: Mixed-Precision-Zustand (FP64-Geschwindigkeiten, Positionskorrektur)
+# ADR 0009: Mixed-Precision-Zustand (FP64-Geschwindigkeiten, Positionskorrektur)
 
 - **Status:** Proposed (Entscheidung des Projektinhabers am 2026-11-03; formale Annahme ausstehend)
 - **Datum:** 2026-11-03
@@ -37,7 +37,7 @@ Nach dem Vorbild von OpenMMs „mixed precision“:
 ## Konsequenzen
 - +16 Byte (Geschwindigkeit) und +16 Byte (Korrektur) pro Atomplatz; wenige FP64-Operationen pro Atom und
   Schritt (vernachlässigbar gegenüber den Kraft-Kernels, auch bei FP64 = 1/64 FP32).
-- `wrap_xy` rechnet in FP64: die ungewrappte Rekonstruktion x_w + n·L ist exakt (löst OQ-08). Die FP32-
+- `wrap_xy` rechnet in FP64: die ungewrappte Rekonstruktion x_w + n·L ist exakt (löst OQ-11). Die FP32-
   Komponente d_pos.x liegt in [0, L]; sie kann durch Rundung genau L sein, die FP64-Position liegt in [0, L).
 - Python: `velocities()` liefert float64; neu `position_corrections()` und `positions_precise()`.
 - Tests: `test_phase1.py::test_wrap_xy` (FP64-Wrap, exakte Rekonstruktion),
