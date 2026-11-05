@@ -297,6 +297,18 @@ void TiledAllPairs::initialize(SimulationContext& ctx) {
   ctx.synchronize();  // Host-Vektoren leben bis hier
 }
 
+void TiledAllPairs::set_screening(const std::vector<float>& kappa, const std::vector<float>& eps_r,
+                                  cudaStream_t stream) {
+  std::vector<float2> screening(kappa.size());
+  for (std::size_t r = 0; r < kappa.size(); ++r) {
+    params_.kappa_per_nm[r] = kappa[r];
+    params_.eps_r[r] = eps_r[r];
+    screening[r] = make_float2(kappa[r], eps_r[r]);
+  }
+  d_screening_.upload_async(screening.data(), stream);
+  BOMD_CUDA_CHECK(cudaStreamSynchronize(stream));  // screening lebt bis hier
+}
+
 bool TiledAllPairs::uses_image_sum() const {
   if (params_.always_image_sum) return true;
   const float min_box = 2.0f * params_.r_cutoff_nm;

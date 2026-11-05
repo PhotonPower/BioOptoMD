@@ -2,9 +2,8 @@
 
 > Diese Datei wird am Ende **jeder** Arbeitssitzung aktualisiert (AGENTS.md §2.4).
 
-**Aktive Phase:** 9.1 – Generalized Born OBC2 (Branch `phase-9/gb-obc2`, ADR 0010 Proposed). Reihenfolge
-vom Projektinhaber am 2026-11-05 festgelegt: GB-OBC2 zuerst (mbondi2, Salz, ACE optional mit Default an,
-erweiterbar für GBn2).
+**Aktive Phase:** 9.2 – Replica Exchange (Branch `phase-9/remd`, ADR 0011 Proposed), implementiert,
+Abnahme ausstehend. Reihenfolge vom Projektinhaber am 2026-11-05 festgelegt (nach GB-OBC2).
 **Phase 8 abgenommen** am 2026-11-05 durch den Projektinhaber (RTX 3090, PR #11).
 **Phase 7 abgenommen** am 2026-11-05 durch den Projektinhaber (RTX 3090).
 **Nachrüstung (PR #9) abgenommen** am 2026-11-05 durch den Projektinhaber (RTX 3090).
@@ -24,6 +23,18 @@ erweiterbar für GBn2).
 
 - Phase 5 (PR #5): HMR, SHAKE/RATTLE auf H-Bindungen, N_dof. Abgenommen 2026-11-03; Nacharbeit nach
   Review siehe unten.
+
+## Phase 9.2 – Replica Exchange: implementiert, Abnahme ausstehend (Branch `phase-9/remd`)
+- ADR 0011 (Proposed): Zustände (T, κ, ε) statt Koordinaten tauschen, Hamiltonian-Kriterium mit
+  Kreuzenergien (κ(T), ε(T), γ(T) nach OQ-10), Geschwindigkeits-Skalierung, fester r_c der Leiter.
+- C++: Plugin-Hook `set_screening` (Bonded mit `follow_screening`, PlanarSurface, TiledAllPairs/GB),
+  `SimulationContext::set_screening`, `scale_velocities`; Bindings.
+- `biooptomd.remd.ReplicaExchange` (attempt/run, Akzeptanzstatistik, state_dict für Checkpoints).
+- Tests `test_phase9_remd.py` 4/4 grün: Entscheidungen = unabhängige Metropolis-Rechnung mit frischen
+  Kontexten, Parameter/Energie/Geschwindigkeiten nach Tausch, set_screening (DH/GB/Gouy-Chapman),
+  Sampling harmonischer Atome (⟨U⟩ und Akzeptanzraten vs. Gamma-Erwartung, 4σ), Checkpoint bitgenau.
+  pytest gesamt 113/113; memcheck 0 Fehler.
+- Hinweis: ε_r(T) von Wasser gilt bis 373 K – Leitern darüber brauchen eine andere Fitformel (OQ-10).
 
 ## Phase 9.1 – GB-OBC2: abgenommen 2026-11-05 (PR #12)
 - ADR 0010 (Accepted 2026-11-05): Modell, Kopplung an Cutoff/Switching/Bildsumme, Passes; OQ-15 (OBC2 vs. GBn2),
@@ -165,8 +176,8 @@ ADR 0007 → **0009** (Mixed Precision), unsere OQ-08…11 → **OQ-11…14**.
   Structs unterschiedlich aus. Vor dem Push mit beiden prüfen oder Kommentare über die Member setzen.
 
 ## Nächster konkreter Schritt
-1. Projektinhaber: Phase 9.1 abnehmen, ADR 0010 und die Abnahmekriterien in ROADMAP 9.1 bestätigen
-   (Push/PR auf Anfrage); OQ-14 entscheiden; PRs #1 → #6, #9, #10, #11 nacheinander mergen.
+1. Projektinhaber: Phase 9.2 abnehmen, ADR 0011 und die Abnahmekriterien in ROADMAP 9.2 bestätigen
+   (Push/PR auf Anfrage); OQ-14 entscheiden; PRs #1 → #6, #9 → #12 nacheinander mergen.
 2. Danach Phase 9+ nach Forschungsbedarf (ROADMAP); offen aus Phase 6: zwei `reference`-Tests
    (dn/dc-Kalibrierung, Clausius-Mossotti-Konsistenz).
 3. Nachholen: Kontrolllauf auf der RTX 6000 Ada; Nsight Compute (Counter-Freigabe).
@@ -191,7 +202,8 @@ ADR 0007 → **0009** (Mixed Precision), unsere OQ-08…11 → **OQ-11…14**.
 | 2026-11-05 | Projektinhaber | Phase 7 (PR #10) abgenommen; weiter mit Phase 8. |
 | 2026-11-05 | Projektinhaber | Phase 8 (PR #11) abgenommen; weiter mit Phase 9+. |
 | 2026-11-05 | Projektinhaber | Phase 9: GB-OBC2 zuerst (mbondi2, Salz, ACE optional/Default an, erweiterbar für GBn2). |
-| 2026-11-05 | Projektinhaber | Phase 9.1 (PR #12) abgenommen; weiter mit der nächsten Erweiterung. |
+| 2026-11-05 | Projektinhaber | Phase 9.1 (PR #12) abgenommen, ADR 0010 Accepted; nächste Erweiterung: Replica Exchange. |
+| 2026-11-05 | Claude Opus 5.5 | Phase 9.2 Replica Exchange implementiert (ADR 0011 Proposed), 113/113 Tests grün. |
 | 2026-11-05 | Claude Opus 5.5 | Phase 9.1 GB-OBC2 implementiert (ADR 0010 Proposed, gb_ref, TiledGeneralizedBorn, Builder), 12/12 Phase-9-Tests grün. |
 | 2026-11-05 | Claude Opus 5.5 | Phase 8: Benchmark vs. OpenMM (32×2k Faktor 3.5), Tile-Vorauswahl, M-SHAKE/RATTLE; Review umgesetzt, 94/94 Tests grün. |
 | 2026-11-05 | Claude Opus 5.5 | Phase 7 implementiert (PR #10): Builder, Checkpoints, DCD/HDF5, Analyse, Beispiel + End-to-End-Test; Review umgesetzt. |

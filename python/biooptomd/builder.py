@@ -356,7 +356,9 @@ def build_context(
         if spec.gb_radius is None:
             raise ValueError("build_context: GB-Parameter fehlen (System mit implicit/obc2.xml)")
         ones = np.ones(n_replicas, np.float32)
-        ctx.add_bonded([bonded], zeros, np.zeros(n_replicas, np.float32), ones)  # 1-4: ε_in = 1
+        ctx.add_bonded(  # 1-4: ε_in = 1, unabgeschirmt, auch bei Replica Exchange
+            [bonded], zeros, np.zeros(n_replicas, np.float32), ones, follow_screening=False
+        )
         ctx.set_nonbonded_gb(
             [nbt], zeros, k32, e32, [spec.gb_radius], [spec.gb_scale], r_switch=r_s,
             r_cutoff=r_c, ace=ace,

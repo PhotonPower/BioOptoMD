@@ -174,6 +174,23 @@ Dokumentation, Verzeichnisstruktur, Agenten-Anweisungen, Build-Entwürfe.
   Drift im Rahmen von Phase 3. (Bei 1 fs ohne Constraints driftet GB mit ≈ 1.5e-4 – Integrationsfehler, skaliert
   stark mit Δt, unabhängig von r_c; mit H-Constraints bei 1 fs gleichauf mit DH.)
 
+### Phase 9.2 – Replica Exchange (ADR 0011, Proposed; Reihenfolge vom Projektinhaber am 2026-11-05 festgelegt)
+
+**Aufgaben**
+1. Plugin-Hook `set_screening` (κ_r, ε_r je Replica zur Laufzeit), `scale_velocities`.
+2. `biooptomd.remd.ReplicaExchange`: Zustandstausch mit Hamiltonian-Kriterium (Kreuzenergien), Statistik,
+   Checkpoint.
+
+**Abnahmetests (Vorschlag, mit ADR 0011 vom Projektinhaber zu bestätigen)**
+- `test_phase9_remd.py::test_remd_exchange_mechanics` – jede Entscheidung gleich der unabhängig (frische Kontexte)
+  berechneten Metropolis-Entscheidung; nach Tausch T, κ, ε je Slot getauscht (Energien gleich frischem Kontext),
+  Geschwindigkeiten exakt mit sqrt(T_neu/T_alt) skaliert.
+- `test_phase9_remd.py::test_remd_sampling_harmonic` (`slow`) – unabhängige harmonische Atome, 4 Zustände:
+  ⟨U⟩_k = (3/2) N k_B T_k innerhalb 4σ; Akzeptanzraten vs. analytische Erwartung (Gamma-Verteilungen) innerhalb 4σ.
+- `test_phase9_remd.py::test_remd_checkpoint_bitexact` – 2M Zyklen == M + Checkpoint (inkl. Austauschzustand) + M.
+- `test_phase9_remd.py::test_set_screening` – set_screening wirkt auf Nonbonded (DH/GB) und Gouy-Chapman, im GB-Modus
+  nicht auf die 1-4-Terme.
+
 - Generalized Born OBC2 (ADR 0004)
 - Replica-Exchange-Moves (Temperatur-Austausch auf Host-Seite)
 - `ImageChargeForce` für Metalloberflächen

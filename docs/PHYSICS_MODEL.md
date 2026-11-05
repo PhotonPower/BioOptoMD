@@ -109,6 +109,11 @@ Bei RMS-Feldern ist der Vorfaktor ½ statt ¼; die Lade-Funktion verlangt daher 
 
 **Überschusspolarisierbarkeit (OQ-04):** In s_i steht α′_eff,i = α′_i − (3/4π) v_i (n_w² − 1)/(n_w² + 2), d. h. der Kontrast gegenüber dem verdrängten Wasser, mit denselben v_i wie im `RefractiveIndexProfiler`. Ohne Korrektur wäre die Kraft um rund Faktor 2 zu groß. Streu-/Absorptionskräfte (Im α) sind nicht konservativ und nicht abgebildet; Fluorophore sind im Optikmodus per Default ausgenommen. Größenordnung: 1 MW/cm² in Wasser, α′ ≈ 10⁻³ nm³ → U ≈ 10⁻⁷ kJ/mol pro Atom; relevant erst in plasmonischen Hotspots (Feldverstärkung ≳ 10³).
 
+### Replica Exchange (Phase 9.2, ADR 0011)
+Temperatur-Austausch auf dem Host (`biooptomd.remd.ReplicaExchange`): Zustände (T_k, κ_k, ε_k) wandern
+zwischen den Slots, Akzeptanz nach dem Hamiltonian-Kriterium mit Kreuzenergien, weil κ, ε_r und γ (Gouy-
+Chapman) von T abhängen (OQ-10); Geschwindigkeiten werden mit sqrt(T_neu/T_alt) skaliert.
+
 ## 5. Constraints & HMR (Phase 5)
 
 - **HMR:** Wasserstoffmasse auf 3.024 amu, Differenz vom gebundenen Schweratom abgezogen (Gesamtmasse erhalten).

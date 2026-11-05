@@ -60,6 +60,9 @@ class PlanarSurfaceForce final : public ForcePlugin {
   /// Anzahl Auswertungen mit Oberflächen- oder LJ-Typ außerhalb der Tabelle (keine Wand).
   std::uint64_t unknown_type_count() const;
   void reset_counters();
+  /// κ_r für Gouy-Chapman (ε_r wird nicht verwendet; T_r kommt live aus d_temperature).
+  void set_screening(const std::vector<float>& kappa, const std::vector<float>& eps_r,
+                     cudaStream_t stream) override;
 
  private:
   std::uint64_t counter(int index) const;

@@ -43,6 +43,10 @@ class ForcePlugin {
   /// Host-seitig nach SimulationContext::restore_dynamic_state: schrittabhängigen Zustand
   /// verwerfen (z. B. „letzter Schritt“ für Arbeitsinkremente).
   virtual void on_state_restored() {}
+  /// Neue Lösungsmittel-Abschirmung je Replica (Replica Exchange, ADR 0011): κ_r [1/nm], ε_r
+  /// (n_replicas). Plugins mit κ/ε-abhängigen Termen laden sie hoch; Default: unabhängig.
+  virtual void set_screening(const std::vector<float>& /*kappa*/,
+                             const std::vector<float>& /*eps_r*/, cudaStream_t /*stream*/) {}
 };
 
 /// In-situ-Messung; akkumuliert auf dem Gerät, Download nur auf Anfrage (AGENTS.md Regel 12).
@@ -66,6 +70,9 @@ class NonbondedStrategy {
   virtual ~NonbondedStrategy() = default;
   virtual void initialize(SimulationContext&) {}
   virtual void compute(DeviceState& s, cudaStream_t stream) = 0;
+  /// Wie ForcePlugin::set_screening (κ_r, ε_r bzw. ε_out je Replica).
+  virtual void set_screening(const std::vector<float>& /*kappa*/,
+                             const std::vector<float>& /*eps_r*/, cudaStream_t /*stream*/) {}
 };
 
 }  // namespace bomd

@@ -260,6 +260,28 @@ void SimulationContext::set_box(const float* box_nm) {
   synchronize();
 }
 
+void SimulationContext::set_screening(const float* kappa_per_nm, const float* eps_r) {
+  activate();
+  std::vector<float> kappa(kappa_per_nm, kappa_per_nm + n_replicas());
+  std::vector<float> eps(eps_r, eps_r + n_replicas());
+  for (int r = 0; r < n_replicas(); ++r)
+    require(std::isfinite(kappa[r]) && kappa[r] >= 0.0f && std::isfinite(eps[r]) && eps[r] > 0.0f,
+            "set_screening: kappa >= 0 und eps_r > 0 erwartet");
+  for (auto& force : forces_) force->set_screening(kappa, eps, stream_.get());
+  if (nonbonded_) nonbonded_->set_screening(kappa, eps, stream_.get());
+  forces_valid_ = false;
+}
+
+void SimulationContext::scale_velocities(const double* factor) {
+  activate();
+  for (int r = 0; r < n_replicas(); ++r)
+    require(std::isfinite(factor[r]) && factor[r] > 0.0, "scale_velocities: Faktor > 0 erwartet");
+  DeviceBuffer<double> d_factor(n_replicas());
+  d_factor.upload_async(factor, stream_.get());
+  detail::launch_scale_velocities(state_, d_factor.data(), stream_.get());
+  synchronize();  // d_factor lebt bis hier
+}
+
 void SimulationContext::set_temperatures(const float* t_k) {
   activate();
   for (int r = 0; r < n_replicas(); ++r)
