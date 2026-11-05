@@ -3,6 +3,8 @@
 - inputs/dna_trinucleotide_topology.npz  (klein, committet): Topologie, Positionen, Massen des
   Testmoleküls aus OpenMM (AMBER OL15), damit GPU-Tests ohne OpenMM laufen.
 - data/openmm_bonded.npz (gitignored): OpenMM-Energien und -Kräfte je Term (κ = 1/nm, ε_r = 78.5).
+- inputs/dna_duplex_ions_topology.npz (committet): Phase-4-Testsystem (2 Duplexe + Ionen) mit
+  kovalenter Topologie, Ladungen, σ, ε, Ausschlüssen, Massen, Positionen und Box.
 
 Jede Datei enthält die OpenMM-Version und alle Parameter als Metadaten (TESTING.md).
 """
@@ -19,6 +21,7 @@ HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
 
 import openmm_bonded
+import openmm_nonbonded
 
 KAPPA, EPS_R = 1.0, 78.5
 
@@ -48,6 +51,22 @@ def main() -> None:
         **{f"meta_{k}": v for k, v in meta.items()},
     )
     print(data / "openmm_bonded.npz")
+
+    system, positions, box = openmm_nonbonded.load_system()
+    topo = openmm_bonded.extract_topology(system)
+    _, sig, eps, excl = openmm_nonbonded.extract_nonbonded(system)  # Ladungen stehen in topo
+    out = HERE / "inputs" / "dna_duplex_ions_topology.npz"
+    np.savez_compressed(
+        out,
+        positions=positions,
+        box=np.array(box),
+        sigma=sig,
+        epsilon=eps,
+        excluded=excl,
+        **topo,
+        **{f"meta_{k}": v for k, v in meta.items()},
+    )
+    print(out)
 
 
 if __name__ == "__main__":

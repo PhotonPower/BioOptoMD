@@ -23,6 +23,9 @@ Die Vorschläge aus den Reviews vom 2026-11-04 (inklusive der Nachträge aus Rev
 | OQ-12 | assumption | Gouy-Chapman-Term für Atome hinter der Wand (ζ < 0): wie fortsetzen? | – | V = q Φ0 konstant, F = 0 (energiekonsistent; die 9-3-Wand verhindert ζ < 0 praktisch). | – (Bestätigung offen) |
 | OQ-13 | resolved | Widerspruch PHYSICS_MODEL §4.1 ↔ ADR 0002: Clamp bei 0.1 σ erzeugte Kräfte ≫ 2³¹, Fixed-Point-Summen konnten überlaufen. | – | Entschieden 2026-11-03 (Projektinhaber): Kraftschranke für ζ_c + Sättigung pro Beitrag + Geräte-Statusflags, siehe ADR 0008. | Projektinhaber (2026-11-03) |
 
+Implementierungsnotizen aus den Phasen 1–6 (Stand vor der Entscheidung):
+- **OQ-03:** OL15 + GAFF2. Phase-4-Testsystem enthält mangels verfügbarer GAFF2/RESP-Parameter keinen Fluorophor; Platzhalter: zweiter DNA-Duplex (1558 Atome, `make_duplex_ions.py`).
+
 > **Hinweis zu Literaturangaben:** Die Angaben des ersten Reviews stammten aus dem Gedächtnis. Im zweiten Review (2026-11-04) wurden Bibliographie und, wo möglich, Zahlenwerte per Websuche gegen Verlags-, PubMed-/PMC- und Projektseiten geprüft. Der Prüfstand jedes Punkts steht in der Checkliste am Ende. Punkte ohne Haken sind weiterhin unverifiziert. Primärtabellen (Parameterwerte) wurden nur dort eingesehen, wo es ausdrücklich vermerkt ist.
 
 ---

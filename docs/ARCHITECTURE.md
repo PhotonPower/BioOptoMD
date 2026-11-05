@@ -176,3 +176,14 @@ x = sim.positions(dlpack=True)   # Zero-Copy nach CuPy/PyTorch
   `add_planar_surface`, `add_position_restraints`, `add_com_pulling`.
 - Energiebeiträge pro Atom werden warpweise in Fixed-Point summiert (`warp_add_energy`), dann ein Atomic pro Warp.
 
+
+### 3.3 Nicht-kovalente Terme (Phase 4)
+
+- `NonbondedStrategy`-Implementierung `TiledAllPairs` (`src/nonbonded/`), gesetzt über
+  `ctx.set_nonbonded_tiled(topologies, replica_topology, kappa, eps_r, r_switch, r_cutoff)`.
+- Ein Warp pro 32×32-Tile-Paar (I ≤ J), `blockIdx.y` = Replica; j-Atome im Shared Memory, rotierender
+  Zugriff (konfliktfreie j-Kraftakkumulation), Kräfte je Tile in FP32 summiert, dann Fixed-Point-Atomics.
+- Elektrostatik als Template-Parameter (`detail::DebyeHuckel`), vorbereitet für `GeneralizedBornOBC`.
+- Topologie je Replica (ADR 0005): LJ-Typtabelle (T × T, (σ, ε), Typ 0 = Padding mit ε = 0, im Shared
+  Memory) und Exclusion-Bitmasken je Tile-Paar (`mask_index` −1 = keine). Erzeugung im Python-Builder
+  `biooptomd.nonbonded.nonbonded_topology()`; LJ-Typen der Atome in `types[..., 0]`.
