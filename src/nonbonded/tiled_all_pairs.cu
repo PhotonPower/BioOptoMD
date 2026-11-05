@@ -26,12 +26,25 @@ struct SwitchParams {
   float r_s, r_c, r_c2, inv_width;  // r_s, r_c [nm], r_c² [nm²], 1/(r_c − r_s) [1/nm]
 };
 
+/// Anzahl Bildverschiebungen je Richtung (ADR 0006 Rev. 2): 0 für L >= 2 r_c (jedes verschobene
+/// Bild ist dann mindestens L/2 >= r_c entfernt), sonst ⌈r_c/L + ½⌉ (der Minimum-Image-Abstand
+/// selbst kann bis L/2 betragen).
+__device__ __forceinline__ int image_count(float box_length, float r_c) {
+  return box_length >= 2.0f * r_c ? 0 : static_cast<int>(ceilf(r_c / box_length + 0.5f));
+}
+
 /// Ein Warp pro Tile-Paar (I ≤ J), blockIdx.y = Replica. Lane a hält Atom i = I·32 + a; die
 /// 32 j-Atome liegen im Shared Memory und werden rotierend (b = (a + k) mod 32) besucht, sodass
 /// in jedem Schritt jede Lane ein anderes j schreibt (konfliktfreie j-Kraftakkumulation).
 /// Ausgeschlossen: Bit b der Exclusion-Maske, in Diagonal-Tiles b ≤ a (jedes Paar genau einmal),
 /// Padding-Atome (i_local >= n_atoms) und r² < EPS_R2.
-template <typename Elec>
+///
+/// kImages (ADR 0006 Rev. 2, L < 2 r_c): Für jedes Paar wird über die Gittervektoren
+/// n = (n_x L_x, n_y L_y), |n_x| ≤ image_count(L_x), |n_y| ≤ image_count(L_y), summiert, ausgehend
+/// vom Minimum-Image-Abstand. Exclusions gelten nur für n = 0. Eigenbilder (i = j, n ≠ 0) tragen
+/// ½ V(|n|) zur Energie bei; ihre Kräfte heben sich paarweise (n, −n) auf und werden nicht
+/// berechnet. Für L >= 2 r_c ist image_count = 0 und das Ergebnis gleich dem Minimum-Image-Pfad.
+template <typename Elec, bool kImages>
 __global__ void __launch_bounds__(kWarpsPerBlock * 32)
     k_tiled_all_pairs(DeviceState s, const int2* tile_pairs, int n_tile_pairs, const float2* lj,
                       const int* mask_index, const std::uint32_t* masks, const int4* replica,
@@ -74,6 +87,11 @@ __global__ void __launch_bounds__(kWarpsPerBlock * 32)
   if (tp.x == tp.y) skip |= (2u << a) - 1u;  // Bits 0..a (für a = 31 alle Bits)
   skip |= ~valid_j_bits;
   if (!valid_i) skip = 0xffffffffu;
+  // Bildpfad, n ≠ 0: keine Exclusions; in Diagonal-Tiles wird b < a übersprungen (Paar genau
+  // einmal), b = a ist das Eigenbild.
+  unsigned int skip_image = ~valid_j_bits;
+  if (tp.x == tp.y) skip_image |= (1u << a) - 1u;
+  if (!valid_i) skip_image = 0xffffffffu;
 
   const typename Elec::Params ep = elec[r];
   const float2 box = s.d_box[r];
@@ -81,46 +99,67 @@ __global__ void __launch_bounds__(kWarpsPerBlock * 32)
   float energy = 0.0f;
   __syncwarp();
 
+  int n_img_x = 0, n_img_y = 0;
+  if constexpr (kImages) {
+    n_img_x = image_count(box.x, sw.r_c);
+    n_img_y = image_count(box.y, sw.r_c);
+  }
+
   for (int k = 0; k < 32; ++k) {
     const int b = (a + k) & 31;
-    if (!((skip >> b) & 1u)) {
-      const float3 d = detail::minimum_image_delta(pi, sh_pos[warp][b], box);
-      const float r2 = d.x * d.x + d.y * d.y + d.z * d.z;
-      if (r2 < sw.r_c2 && r2 >= units::EPS_R2) {
-        const float dist = sqrtf(r2);
-        const float inv_r = 1.0f / dist;
-        const float2 se = sh_lj[ti * n_types + sh_type[warp][b]];  // (σ, ε)
-        float v = 0.0f, f = 0.0f;                                  // f = −dV/dr
-        if (se.y != 0.0f) {  // ε = 0: kein LJ (vermeidet 0·inf = NaN bei r ≪ σ)
-          const float sr2 = se.x * se.x * inv_r * inv_r;
-          const float sr6 = sr2 * sr2 * sr2;
-          v = 4.0f * se.y * (sr6 * sr6 - sr6);
-          f = 4.0f * se.y * (12.0f * sr6 * sr6 - 6.0f * sr6) * inv_r;
+    const float3 d0 = detail::minimum_image_delta(pi, sh_pos[warp][b], box);
+    const float qq = pi.w * sh_pos[warp][b].w;
+    const float2 se = sh_lj[ti * n_types + sh_type[warp][b]];  // (σ, ε)
+    for (int nx = -n_img_x; nx <= n_img_x; ++nx) {
+      for (int ny = -n_img_y; ny <= n_img_y; ++ny) {
+        const bool zero_image = nx == 0 && ny == 0;
+        if (((zero_image ? skip : skip_image) >> b) & 1u) continue;
+        const bool self_image = kImages && !zero_image && tp.x == tp.y && b == a;
+        float3 d = d0;
+        if constexpr (kImages) {
+          d.x += static_cast<float>(nx) * box.x;
+          d.y += static_cast<float>(ny) * box.y;
         }
-        float v_el, f_el;
-        Elec::pair(ep, pi.w * sh_pos[warp][b].w, dist, inv_r, v_el, f_el);
-        v += v_el;
-        f += f_el;
-        if (dist > sw.r_s) {
-          // S = 1 − 10x³ + 15x⁴ − 6x⁵ = y³(1 + 3x + 6x²), dS/dx = −30 x² y², y = 1 − x;
-          // faktorisiert, weil die Monomform für x → 1 in FP32 auslöscht. y direkt aus r_c − r.
-          const float x = (dist - sw.r_s) * sw.inv_width;
-          const float y = (sw.r_c - dist) * sw.inv_width;
-          const float sv = y * y * y * (1.0f + x * (3.0f + 6.0f * x));
-          const float ds = -30.0f * x * x * y * y * sw.inv_width;
-          f = f * sv - v * ds;
-          v *= sv;
+        const float r2 = d.x * d.x + d.y * d.y + d.z * d.z;
+        if (r2 < sw.r_c2 && r2 >= units::EPS_R2) {
+          const float dist = sqrtf(r2);
+          const float inv_r = 1.0f / dist;
+          float v = 0.0f, f = 0.0f;  // f = −dV/dr
+          if (se.y != 0.0f) {        // ε = 0: kein LJ (vermeidet 0·inf = NaN bei r ≪ σ)
+            const float sr2 = se.x * se.x * inv_r * inv_r;
+            const float sr6 = sr2 * sr2 * sr2;
+            v = 4.0f * se.y * (sr6 * sr6 - sr6);
+            f = 4.0f * se.y * (12.0f * sr6 * sr6 - 6.0f * sr6) * inv_r;
+          }
+          float v_el, f_el;
+          Elec::pair(ep, qq, dist, inv_r, v_el, f_el);
+          v += v_el;
+          f += f_el;
+          if (dist > sw.r_s) {
+            // S = 1 − 10x³ + 15x⁴ − 6x⁵ = y³(1 + 3x + 6x²), dS/dx = −30 x² y², y = 1 − x;
+            // faktorisiert, weil die Monomform für x → 1 in FP32 auslöscht. y direkt aus r_c − r.
+            const float x = (dist - sw.r_s) * sw.inv_width;
+            const float y = (sw.r_c - dist) * sw.inv_width;
+            const float sv = y * y * y * (1.0f + x * (3.0f + 6.0f * x));
+            const float ds = -30.0f * x * x * y * y * sw.inv_width;
+            f = f * sv - v * ds;
+            v *= sv;
+          }
+          if (self_image) {
+            energy += 0.5f * v;
+          } else {
+            const float c = f * inv_r;
+            const float3 fv = make_float3(c * d.x, c * d.y, c * d.z);
+            fi.x += fv.x;
+            fi.y += fv.y;
+            fi.z += fv.z;
+            float3& fj = sh_fj[warp][b];
+            fj.x -= fv.x;
+            fj.y -= fv.y;
+            fj.z -= fv.z;
+            energy += v;
+          }
         }
-        const float c = f * inv_r;
-        const float3 fv = make_float3(c * d.x, c * d.y, c * d.z);
-        fi.x += fv.x;
-        fi.y += fv.y;
-        fi.z += fv.z;
-        float3& fj = sh_fj[warp][b];
-        fj.x -= fv.x;
-        fj.y -= fv.y;
-        fj.z -= fv.z;
-        energy += v;
       }
     }
     __syncwarp();
@@ -219,20 +258,31 @@ void TiledAllPairs::initialize(SimulationContext& ctx) {
   ctx.synchronize();  // Host-Vektoren leben bis hier
 }
 
-void TiledAllPairs::compute(DeviceState& s, cudaStream_t stream) {
+bool TiledAllPairs::uses_image_sum() const {
+  if (params_.always_image_sum) return true;
   const float min_box = 2.0f * params_.r_cutoff_nm;
-  if (ctx_->host_box().empty()) throw std::logic_error("TiledAllPairs: Box nicht gesetzt");
   for (const float2& b : ctx_->host_box())
-    if (b.x < min_box || b.y < min_box)
-      throw std::logic_error("TiledAllPairs: Box kleiner als 2 r_c (ADR 0003)");
+    if (b.x < min_box || b.y < min_box) return true;
+  return false;
+}
+
+void TiledAllPairs::compute(DeviceState& s, cudaStream_t stream) {
+  if (ctx_->host_box().empty()) throw std::logic_error("TiledAllPairs: Box nicht gesetzt");
   const float r_s = params_.r_switch_nm, r_c = params_.r_cutoff_nm;
   const SwitchParams sw{r_s, r_c, r_c * r_c, 1.0f / (r_c - r_s)};
   const dim3 grid((n_tile_pairs_ + kWarpsPerBlock - 1) / kWarpsPerBlock, s.n_replicas);
   const std::size_t shmem = static_cast<std::size_t>(max_types_) * max_types_ * sizeof(float2);
-  k_tiled_all_pairs<detail::DebyeHuckel><<<grid, kWarpsPerBlock * 32, shmem, stream>>>(
-      s, d_tile_pairs_.data(), n_tile_pairs_, d_lj_.data(), d_mask_index_.data(), d_masks_.data(),
-      d_replica_.data(), d_screening_.data(), sw);
-  BOMD_LAUNCH_CHECK();
+  const auto launch = [&](auto kernel) {
+    kernel<<<grid, kWarpsPerBlock * 32, shmem, stream>>>(
+        s, d_tile_pairs_.data(), n_tile_pairs_, d_lj_.data(), d_mask_index_.data(), d_masks_.data(),
+        d_replica_.data(), d_screening_.data(), sw);
+    BOMD_LAUNCH_CHECK();
+  };
+  // Bildsumme nur, wenn eine Box kleiner als 2 r_c ist (ADR 0006 Rev. 2); sonst Minimum Image.
+  if (uses_image_sum())
+    launch(k_tiled_all_pairs<detail::DebyeHuckel, true>);
+  else
+    launch(k_tiled_all_pairs<detail::DebyeHuckel, false>);
 }
 
 }  // namespace bomd

@@ -1,6 +1,7 @@
 // BioOptoMD – TiledAllPairs: nicht-kovalente Wechselwirkungen (LJ + Debye-Hückel, Switching,
-// Minimum Image in x/y) über alle 32×32-Tile-Paare je Replica (ROADMAP Phase 4, PHYSICS_MODEL.md
-// §3). NumPy-Referenz: tests/reference/nonbonded_ref.py. Builder: python/biooptomd/nonbonded.py.
+// Minimum Image in x/y bzw. Summe über periodische Bilder bei L < 2 r_c, ADR 0006) über alle
+// 32×32-Tile-Paare je Replica (ROADMAP Phase 4, PHYSICS_MODEL.md §3). NumPy-Referenz:
+// tests/reference/nonbonded_ref.py. Builder: python/biooptomd/nonbonded.py.
 #pragma once
 
 #include <cstdint>
@@ -29,7 +30,11 @@ struct TiledAllPairsParams {
   std::vector<float> kappa_per_nm;    ///< Debye-Hückel κ je Replica, >= 0
   std::vector<float> eps_r;           ///< relative Permittivität je Replica, > 0
   float r_switch_nm = 1.8f;           ///< r_s, 0 < r_s < r_c
-  float r_cutoff_nm = 2.0f;           ///< r_c; Box muss L_x, L_y >= 2 r_c erfüllen (ADR 0003)
+  /// r_c [nm]; Builder: biooptomd.nonbonded.cutoff_from_kappa (ADR 0006). Bei L_x oder L_y < 2 r_c
+  /// summiert der Kernel über periodische Bilder.
+  float r_cutoff_nm = 2.0f;
+  /// true ⇒ Bildpfad auch für L >= 2 r_c (nur für Tests; Ergebnis gleich Minimum Image).
+  bool always_image_sum = false;
 };
 
 class TiledAllPairs final : public NonbondedStrategy {
@@ -37,9 +42,10 @@ class TiledAllPairs final : public NonbondedStrategy {
   explicit TiledAllPairs(TiledAllPairsParams params);
 
   void initialize(SimulationContext& ctx) override;
-  /// Kräfte in d_force_fp, Energie in kEnergyNonbonded. Wirft std::logic_error, wenn eine Box
-  /// kleiner als 2 r_c ist.
+  /// Kräfte in d_force_fp, Energie in kEnergyNonbonded. Wirft std::logic_error ohne Box.
   void compute(DeviceState& s, cudaStream_t stream) override;
+  /// true, wenn compute() über periodische Bilder summiert (eine Box < 2 r_c oder erzwungen).
+  bool uses_image_sum() const;
 
   int n_tile_pairs() const { return n_tile_pairs_; }
   const TiledAllPairsParams& params() const { return params_; }

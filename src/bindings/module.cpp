@@ -630,7 +630,10 @@ NB_MODULE(_core, m) {
   cls.def(
       "set_nonbonded_tiled",
       [](SimulationContext& c, nb::list topologies, HostInput<int32_t> replica_topology,
-         HostInput<float> kappa, HostInput<float> eps_r, float r_switch, float r_cutoff) {
+         HostInput<float> kappa, HostInput<float> eps_r, float r_switch, float r_cutoff,
+         const std::string& image_sum) {
+        if (image_sum != "auto" && image_sum != "always")
+          throw nb::value_error("image_sum: 'auto' oder 'always'");
         bomd::TiledAllPairsParams p;
         for (nb::handle h : topologies)
           p.topologies.push_back(nonbonded_topology_from_dict(nb::cast<nb::dict>(h)));
@@ -639,13 +642,16 @@ NB_MODULE(_core, m) {
         p.eps_r = to_vector(eps_r);
         p.r_switch_nm = r_switch;
         p.r_cutoff_nm = r_cutoff;
+        p.always_image_sum = image_sum == "always";
         c.set_nonbonded(std::make_unique<bomd::TiledAllPairs>(std::move(p)));
       },
       "topologies"_a, "replica_topology"_a, "kappa"_a, "eps_r"_a, "r_switch"_a = 1.8f,
-      "r_cutoff"_a = 2.0f,
+      "r_cutoff"_a = 2.0f, "image_sum"_a = "auto",
       "Nonbonded (Tiled All-Pairs). topologies: Liste von dicts aus\n"
       "biooptomd.nonbonded.nonbonded_topology(); replica_topology int32 (n_replicas,),\n"
-      "kappa [1/nm], eps_r (n_replicas,), r_switch/r_cutoff [nm]. LJ-Typen aus types[..., 0].\n"
+      "kappa [1/nm], eps_r (n_replicas,), r_switch/r_cutoff [nm] (biooptomd.nonbonded.\n"
+      "cutoff_from_kappa, ADR 0006). LJ-Typen aus types[..., 0]. Bei L_x oder L_y < 2 r_c\n"
+      "Summe über periodische Bilder; image_sum='always' erzwingt sie (Test).\n"
       "Ersetzt eine zuvor gesetzte Nonbonded-Strategie (daher kein zurückgegebenes Handle).");
 
   cls.def(
