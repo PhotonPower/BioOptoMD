@@ -5,6 +5,7 @@
 #include "biooptomd/cuda_check.hpp"
 #include "core/core_kernels.cuh"
 #include "core/fixed_point.cuh"
+#include "core/philox.cuh"
 #include "core/testing.hpp"
 
 namespace bomd::testing {
@@ -31,6 +32,11 @@ __global__ void k_uniform_force(DeviceState s, float fx, float fy, float fz) {
   const int r = blockIdx.y;
   if (i_local >= s.n_atoms) return;
   detail::add_force(s, r * s.n_pad + i_local, fx, fy, fz);
+}
+
+__global__ void k_philox(const uint4* c, int n, uint2 key, uint4* out) {
+  const int j = blockIdx.x * blockDim.x + threadIdx.x;
+  if (j < n) out[j] = detail::philox4x32_10(c[j], key);
 }
 
 class UniformForce final : public ForcePlugin {
@@ -74,6 +80,17 @@ void accumulate_forces(SimulationContext& ctx, const int* atom_global, const flo
       ctx.state(), d_atom.data(), d_f.data(), m);
   BOMD_LAUNCH_CHECK();
   ctx.synchronize();  // Staging-Puffer leben bis hier.
+}
+
+void philox(const unsigned int* counters, int n, unsigned int key_lo, unsigned int key_hi,
+            unsigned int* out) {
+  if (n <= 0) return;
+  DeviceBuffer<uint4> d_c(n), d_out(n);
+  BOMD_CUDA_CHECK(cudaMemcpy(d_c.data(), counters, n * sizeof(uint4), cudaMemcpyHostToDevice));
+  k_philox<<<elementwise_grid(n), kElementwiseBlock>>>(d_c.data(), n, make_uint2(key_lo, key_hi),
+                                                       d_out.data());
+  BOMD_LAUNCH_CHECK();
+  BOMD_CUDA_CHECK(cudaMemcpy(out, d_out.data(), n * sizeof(uint4), cudaMemcpyDeviceToHost));
 }
 
 std::unique_ptr<ForcePlugin> make_uniform_force(float fx, float fy, float fz) {

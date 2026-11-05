@@ -5,12 +5,14 @@
 #include <cuda_runtime.h>
 
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <vector>
 
 #include "biooptomd/cuda_stream.hpp"
 #include "biooptomd/device_buffer.hpp"
 #include "biooptomd/device_state.hpp"
+#include "biooptomd/langevin.hpp"
 #include "biooptomd/plugin.hpp"
 
 namespace bomd {
@@ -71,6 +73,11 @@ class SimulationContext {
   void set_temperatures(const float* t_k);
   bool box_is_set() const { return box_set_; }
 
+  /// Geräte-Statuswort (Bits bomd::StatusBit, ADR 0008). Synchronisiert.
+  unsigned int status();
+  /// Setzt das Statuswort auf 0 (asynchron).
+  void clear_status();
+
   // --- Kernels (asynchron auf stream()) ----------------------------------------------------
 
   /// d_force_fp und d_energy_fp auf 0 setzen.
@@ -82,6 +89,39 @@ class SimulationContext {
   void wrap_xy();
   /// clear_forces → Nonbonded → alle ForcePlugins → fixed_point_to_float.
   void compute_forces();
+
+  // --- Integration ---------------------------------------------------------------------------
+
+  /// Setzt (oder ersetzt) den BAOAB-Integrator.
+  void set_integrator(const LangevinParams& params);
+  bool has_integrator() const { return integrator_ != nullptr; }
+  /// Zeitschritt [ps]; 0, wenn kein Integrator gesetzt ist.
+  double dt_ps() const { return integrator_ ? integrator_->params().dt_ps : 0.0; }
+  /// Anzahl bisher ausgeführter Zeitschritte.
+  std::int64_t current_step() const { return step_; }
+  /// Simulationszeit t [ps], fortlaufend Σ Δt (bleibt bei einem Wechsel von Δt korrekt).
+  double time_ps() const { return time_ps_; }
+  /// Simulationszeit vor dem letzten Schritt [ps] (für Protokoll-Arbeit, z. B. Pulling).
+  double previous_time_ps() const { return previous_time_ps_; }
+
+  /// Markiert d_force als veraltet (z. B. nach Schreibzugriff über eine DLPack-Sicht);
+  /// step() berechnet die Kräfte dann vor dem ersten B neu.
+  void invalidate_forces() { forces_valid_ = false; }
+  /// Wird bei jedem set_masses erhöht; Plugins mit massenabhängigen Daten prüfen ihn.
+  std::uint64_t masses_version() const { return masses_version_; }
+
+  /// n BAOAB-Schritte (PHYSICS_MODEL.md §1, ARCHITECTURE.md §1). Pro Schritt:
+  /// B A O A → wrap_xy → step += 1 → compute_forces → B → Observer mit step % stride == 0.
+  /// Sind die Kräfte nach einer Zustandsänderung veraltet, werden sie vorher neu berechnet.
+  /// Wirft std::logic_error ohne Integrator oder Box. Synchronisiert nicht.
+  void step(std::int64_t n);
+
+  /// Energie-Frame pro Replica, Shape (n_replicas, 1 + kNumEnergyTerms), kJ/mol:
+  /// [E_kin, E_pot je Term] zum aktuellen Zustand (E_pot aus dem letzten compute_forces).
+  /// Synchronisiert.
+  std::vector<double> energy_frame();
+  /// N_dof = 3·N_mobile pro Replica (Atome mit inv_mass > 0; PHYSICS_MODEL.md §1). Synchronisiert.
+  std::vector<int> degrees_of_freedom();
   /// Wartet, bis alle Arbeit auf stream() abgeschlossen ist.
   void synchronize();
 
@@ -105,7 +145,12 @@ class SimulationContext {
   void check_wrap_range(const float* xyz, int atom_stride, int components) const;
 
   int device_ = 0;
-  CudaStream stream_;  // vor den Puffern deklariert ⇒ wird nach ihnen zerstört
+  std::int64_t step_ = 0;
+  double time_ps_ = 0.0;
+  double previous_time_ps_ = 0.0;
+  std::uint64_t masses_version_ = 0;
+  bool forces_valid_ = false;  // d_force entspricht F(x) des aktuellen Zustands
+  CudaStream stream_;          // vor den Puffern deklariert ⇒ wird nach ihnen zerstört
   bool box_set_ = false;
   std::vector<float2> h_box_;  // Host-Kopie der Box für Eingabeprüfungen
 
@@ -118,8 +163,13 @@ class SimulationContext {
   DeviceBuffer<float2> box_;
   DeviceBuffer<float> temperature_;
   DeviceBuffer<int2> image_;
+  DeviceBuffer<unsigned int> status_;
+
+  DeviceBuffer<double> energy_frame_;  // Arbeitspuffer für energy_frame()
 
   DeviceState state_;
+
+  std::unique_ptr<LangevinIntegrator> integrator_;
 
   std::unique_ptr<NonbondedStrategy> nonbonded_;
   std::vector<std::unique_ptr<ForcePlugin>> forces_;

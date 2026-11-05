@@ -43,6 +43,9 @@ SimulationContext::SimulationContext(int n_replicas, int n_atoms, int device) : 
   box_ = DeviceBuffer<float2>(n_replicas);
   temperature_ = DeviceBuffer<float>(n_replicas);
   image_ = DeviceBuffer<int2>(n_total);
+  status_ = DeviceBuffer<unsigned int>(1);
+  energy_frame_ =
+      DeviceBuffer<double>(static_cast<std::size_t>(n_replicas) * detail::kEnergyFrameColumns);
   // Blockierender Stream ⇒ implizit geordnet mit dem Legacy-Default-Stream (z. B. von CuPy).
   stream_ = CudaStream::create();
 
@@ -56,6 +59,7 @@ SimulationContext::SimulationContext(int n_replicas, int n_atoms, int device) : 
   box_.zero_async(stream_.get());
   temperature_.zero_async(stream_.get());
   image_.zero_async(stream_.get());
+  status_.zero_async(stream_.get());
 
   state_.n_replicas = n_replicas;
   state_.n_atoms = n_atoms;
@@ -69,6 +73,7 @@ SimulationContext::SimulationContext(int n_replicas, int n_atoms, int device) : 
   state_.d_box = box_.data();
   state_.d_temperature = temperature_.data();
   state_.d_image = image_.data();
+  state_.d_status = status_.data();
 
   synchronize();
 }
@@ -85,6 +90,19 @@ SimulationContext::~SimulationContext() {
 
 void SimulationContext::activate() const {
   BOMD_CUDA_CHECK(cudaSetDevice(device_));
+}
+
+unsigned int SimulationContext::status() {
+  activate();
+  unsigned int value = 0;
+  status_.download_async(&value, stream_.get());
+  synchronize();
+  return value;
+}
+
+void SimulationContext::clear_status() {
+  activate();
+  status_.zero_async(stream_.get());
 }
 
 void SimulationContext::synchronize() {
@@ -130,6 +148,7 @@ void SimulationContext::set_positions(const float* xyz_nm) {
   for (std::size_t k = 0; k < n; ++k) require(std::isfinite(xyz_nm[k]), "Wert nicht endlich");
   check_wrap_range(xyz_nm, n_atoms(), 3);
   scatter_xyz(pos_.data(), xyz_nm);
+  forces_valid_ = false;
   image_.zero_async(stream_.get());  // neue Positionen = neuer ungewrappter Ursprung
   synchronize();
 }
@@ -141,6 +160,7 @@ void SimulationContext::set_velocities(const float* v_nm_ps) {
 void SimulationContext::set_charges(const float* q_e) {
   const std::size_t n = static_cast<std::size_t>(n_replicas()) * n_atoms();
   for (std::size_t k = 0; k < n; ++k) require(std::isfinite(q_e[k]), "Ladung nicht endlich");
+  forces_valid_ = false;
   scatter_w(pos_.data(), q_e);
 }
 
@@ -151,6 +171,8 @@ void SimulationContext::set_masses(const float* m_amu) {
     require(std::isfinite(m_amu[k]) && m_amu[k] > 0.0f, "Massen müssen endlich und > 0 sein");
     inv_mass[k] = static_cast<float>(1.0 / static_cast<double>(m_amu[k]));
   }
+  forces_valid_ = false;  // massengewichtete Kräfte (z. B. Pulling) hängen von m ab
+  ++masses_version_;
   scatter_w(vel_.data(), inv_mass.data());
 }
 
@@ -164,6 +186,7 @@ void SimulationContext::set_types(const int* types) {
       padded[static_cast<std::size_t>(r) * n_pad() + i] = int2{types[k], types[k + 1]};
     }
   }
+  forces_valid_ = false;
   types_.upload_async(padded.data(), stream_.get());
   synchronize();
 }
@@ -191,6 +214,7 @@ void SimulationContext::set_box(const float* box_nm) {
     box_set_ = was_set;
     throw;
   }
+  forces_valid_ = false;
   box_.upload_async(h_box_.data(), stream_.get());
   image_.zero_async(stream_.get());  // neue Box = neuer ungewrappter Ursprung
   synchronize();
@@ -227,6 +251,53 @@ void SimulationContext::compute_forces() {
   if (nonbonded_) nonbonded_->compute(state_, stream_.get());
   for (auto& force : forces_) force->compute(state_, stream_.get());
   fixed_point_to_float();
+  forces_valid_ = true;
+}
+
+// --- Integration ------------------------------------------------------------------------
+
+void SimulationContext::set_integrator(const LangevinParams& params) {
+  integrator_ = std::make_unique<LangevinIntegrator>(params);
+}
+
+void SimulationContext::step(std::int64_t n) {
+  require(n >= 0, "step: n muss >= 0 sein");
+  if (!integrator_) throw std::logic_error("step: kein Integrator gesetzt (set_integrator)");
+  if (!box_set_) throw std::logic_error("step: Box nicht gesetzt (set_box)");
+  activate();
+  if (!forces_valid_) compute_forces();
+  for (std::int64_t k = 0; k < n; ++k) {
+    integrator_->first_half(state_, step_, stream_.get());
+    detail::launch_wrap_xy(state_, stream_.get());
+    ++step_;
+    previous_time_ps_ = time_ps_;
+    time_ps_ += integrator_->params().dt_ps;
+    compute_forces();
+    integrator_->second_half(state_, stream_.get());
+    for (auto& observer : observers_)
+      if (step_ % observer->stride() == 0) observer->observe(state_, step_, stream_.get());
+  }
+}
+
+std::vector<double> SimulationContext::energy_frame() {
+  activate();
+  detail::launch_energy_frame(state_, energy_frame_.data(), stream_.get());
+  std::vector<double> out(energy_frame_.size());
+  energy_frame_.download_async(out.data(), stream_.get());
+  synchronize();
+  return out;
+}
+
+std::vector<int> SimulationContext::degrees_of_freedom() {
+  activate();
+  std::vector<float4> vel(vel_.size());
+  vel_.download_async(vel.data(), stream_.get());
+  synchronize();
+  std::vector<int> n_dof(n_replicas(), 0);
+  for (int r = 0; r < n_replicas(); ++r)
+    for (int i = 0; i < n_atoms(); ++i)
+      if (vel[static_cast<std::size_t>(r) * n_pad() + i].w > 0.0f) n_dof[r] += 3;
+  return n_dof;
 }
 
 // --- Plugins ----------------------------------------------------------------------------
@@ -236,6 +307,7 @@ ForcePlugin& SimulationContext::add_force(std::unique_ptr<ForcePlugin> plugin) {
   activate();
   plugin->initialize(*this);
   forces_.push_back(std::move(plugin));
+  forces_valid_ = false;
   return *forces_.back();
 }
 
@@ -252,6 +324,7 @@ void SimulationContext::set_nonbonded(std::unique_ptr<NonbondedStrategy> strateg
   activate();
   if (strategy) strategy->initialize(*this);
   nonbonded_ = std::move(strategy);
+  forces_valid_ = false;
 }
 
 }  // namespace bomd
