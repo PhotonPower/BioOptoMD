@@ -34,6 +34,7 @@ from openmm import app, unit
 from biooptomd import builder
 
 TEMPERATURE, IONIC, DT_PS, FRICTION, H_MASS = 300.0, 0.15, 0.004, 1.0, 3.024
+CONSTRAINT_TOL = 1e-6  # relative Längentoleranz (BioOptoMD-Default)
 UNIT_BOX = 8.0
 
 
@@ -111,6 +112,7 @@ def bench_openmm(ref, pos, n_rep, steps, warmup, batch=32):
         contexts = []
         for r in range(start, min(n_rep, start + batch)):
             integ = openmm.LangevinMiddleIntegrator(TEMPERATURE, FRICTION, DT_PS)
+            integ.setConstraintTolerance(CONSTRAINT_TOL)  # wie BioOptoMD (OpenMM-Default 1e-5)
             integ.setRandomNumberSeed(r + 1)
             ctx = openmm.Context(ref, integ, platform, {"Precision": "mixed"})
             ctx.setPositions(pos * unit.nanometer)
@@ -122,9 +124,10 @@ def bench_openmm(ref, pos, n_rep, steps, warmup, batch=32):
         t0 = time.perf_counter()
         for _, integ in contexts:
             integ.step(steps)
-        for ctx, _ in contexts:
-            ctx.getState(getEnergy=True)  # wartet auf alle Kernels
-        elapsed += time.perf_counter() - t0
+        energies = [ctx.getState(getEnergy=True).getPotentialEnergy() for ctx, _ in contexts]
+        elapsed += time.perf_counter() - t0  # getState wartet auf alle Kernels
+        if not all(np.isfinite(e.value_in_unit(unit.kilojoule_per_mole)) for e in energies):
+            raise RuntimeError("OpenMM: nicht endliche Energie")
         del contexts
     return n_rep * steps * DT_PS / elapsed * 86400.0 / 1000.0, elapsed
 
@@ -135,6 +138,7 @@ def main(argv=None):
     p.add_argument("--steps", type=int, default=2000)
     p.add_argument("--warmup", type=int, default=200)
     p.add_argument("--openmm-steps", type=int, default=None, help="Default: wie --steps")
+    p.add_argument("--repeat", type=int, default=1, help="Wiederholungen je Engine (Spanne)")
     args = p.parse_args(argv)
     rows = []
     for case in args.cases:
@@ -142,19 +146,35 @@ def main(argv=None):
         n_rep = int(n_rep)
         system, topology, pos, box = make_system(name)
         spec = builder.from_openmm(system, topology, pos)
-        bomd, info, t_b = bench_biooptomd(spec, pos, box, n_rep, args.steps, args.warmup)
-        ref = openmm_system(system, topology, info, box)
-        omm, t_o = bench_openmm(ref, pos, n_rep, args.openmm_steps or args.steps, args.warmup)
-        rows.append((case, spec.n_atoms, info.r_cutoff, bomd, omm, bomd / omm))
-        print(
-            f"{case}: N = {spec.n_atoms}, r_c = {info.r_cutoff:.2f} nm, BioOptoMD {bomd:.0f} ns/Tag "
-            f"({t_b:.1f} s), OpenMM {omm:.0f} ns/Tag ({t_o:.1f} s), Faktor {bomd / omm:.2f}",
-            flush=True,
+        bomd, omm = [], []
+        for _ in range(args.repeat):
+            b, info, t_b = bench_biooptomd(spec, pos, box, n_rep, args.steps, args.warmup)
+            ref = openmm_system(system, topology, info, box)
+            o, t_o = bench_openmm(ref, pos, n_rep, args.openmm_steps or args.steps, args.warmup)
+            bomd.append(b)
+            omm.append(o)
+            print(
+                f"{case}: N = {spec.n_atoms}, r_c = {info.r_cutoff:.2f} nm, BioOptoMD {b:.0f} ns/Tag "
+                f"({t_b:.1f} s), OpenMM {o:.0f} ns/Tag ({t_o:.1f} s), Faktor {b / o:.2f}",
+                flush=True,
+            )
+        rows.append((case, spec.n_atoms, info.r_cutoff, np.array(bomd), np.array(omm)))
+
+    def span(x):
+        return (
+            f"{np.median(x):.0f}"
+            if len(x) == 1
+            else f"{np.median(x):.0f} ({x.min():.0f}–{x.max():.0f})"
         )
+
     print("\n| Fall | Atome/Replica | r_c [nm] | BioOptoMD [ns/Tag] | OpenMM [ns/Tag] | Faktor |")
     print("|---|---|---|---|---|---|")
-    for case, n, rc, b, o, f in rows:
-        print(f"| {case} | {n} | {rc:.2f} | {b:.0f} | {o:.0f} | {f:.2f} |")
+    for case, n, rc, b, o in rows:
+        f_lo, f_hi = b.min() / o.max(), b.max() / o.min()
+        factor = f"{np.median(b) / np.median(o):.2f}" + (
+            f" ({f_lo:.2f}–{f_hi:.2f})" if len(b) > 1 else ""
+        )
+        print(f"| {case} | {n} | {rc:.2f} | {span(b)} | {span(o)} | {factor} |")
 
 
 if __name__ == "__main__":

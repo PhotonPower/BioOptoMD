@@ -295,3 +295,58 @@ def test_stability_4fs(core):
     assert abs(m4.mean() - m1.mean()) < 4.0 * sigma, (m4.mean(), m1.mean(), sigma)
     p = stats.ks_2samp(e4.ravel(), e1.ravel()).pvalue
     assert p > 1e-3, f"KS p = {p:.2e}"
+
+
+@pytest.mark.gpu
+def test_constraints_immobile_atoms(core):
+    """Cluster mit inv_mass = 0 (nur über restore_state erreichbar): festes Schweratom (n_h = 2),
+    festes H (n_h = 1) – der gekoppelte Löser bzw. sein Gauss-Seidel-Fallback projiziert wie die
+    NumPy-Referenz (auf 1e-12 auskonvergiert, Vergleich 1e-9 nm), unbewegliche Atome bleiben
+    stehen. Cluster mit beiden Atomen fest und verletzter Länge: unverändert, Statusbit
+    STATUS_CONSTRAINT_FAILURE."""
+    x = np.array(
+        [[1.0, 1.0, 1.0], [1.13, 1.02, 1.0], [0.97, 1.11, 1.01],  # C (fest), H, H
+         [2.0, 1.0, 1.0], [2.0, 1.12, 0.98],  # C, H (fest)
+         [3.0, 1.0, 1.0], [3.15, 1.0, 1.0]],  # C, H (beide fest)
+        np.float64,
+    )  # fmt: skip
+    n = len(x)
+    clusters = np.array([[0, 1, 2, -1], [3, 4, -1, -1], [5, 6, -1, -1]], np.int32)
+    distances = np.array([[0.1, 0.1, 0], [0.1, 0, 0], [0.1, 0, 0]], np.float32)
+    box = (5.0, 5.0)
+    ctx = core.SimulationContext(1, n)
+    ctx.set_box(np.array([box], np.float32))
+    ctx.set_masses(np.array([[12.0, 1.0, 1.0, 12.0, 1.0, 12.0, 1.0]], np.float32))
+    ctx.set_positions(x[None].astype(np.float32))
+    rng = np.random.default_rng(51)
+    ctx.set_velocities(rng.normal(0.0, 1.0, (1, n, 3)))
+    ctx.set_constraints(
+        [{"clusters": clusters, "distances": distances}], np.zeros(1, np.int32), tolerance=1e-12
+    )
+    st = ctx.save_state()
+    st["vel"][0, [0, 4, 5, 6], 3] = 0.0  # inv_mass = 0
+    st["vel"][0, [0, 4, 5, 6], :3] = 0.0
+    ctx.restore_state(
+        st["pos"], st["pos_corr"], st["vel"], st["image"], st["step"], st["time"],
+        st["previous_time"],
+    )  # fmt: skip
+    x0 = ctx.positions_precise()[0, :n]
+    v0 = ctx.velocities()[0, :n, :3].astype(np.float64)
+    inv_m = ctx.velocities()[0, :n, 3]
+    ctx.apply_constraints()
+    x1 = ctx.positions_precise()[0, :n]
+    v1 = ctx.velocities()[0, :n, :3]
+
+    x_ref, v_ref = x0.copy(), v0.copy()
+    cref.shake(x_ref, x0, inv_m, clusters[:2], distances[:2].astype(np.float64), box, tol=1e-12)
+    cref.rattle(x_ref, v_ref, inv_m, clusters[:2], box, tol_v=1e-14)
+    mobile = slice(0, 5)
+    np.testing.assert_allclose(x1[mobile], x_ref[mobile], rtol=0, atol=1e-9)
+    np.testing.assert_allclose(v1[mobile], v_ref[mobile], rtol=0, atol=1e-9)
+    for atom in (0, 4, 5, 6):  # unbewegliche Atome stehen still
+        np.testing.assert_array_equal(x1[atom], x0[atom])
+        np.testing.assert_array_equal(v1[atom], v0[atom])
+    for c, h in ((0, 1), (0, 2), (3, 4)):
+        assert np.linalg.norm(x1[h] - x1[c]) == pytest.approx(float(np.float32(0.1)), rel=1e-10)
+    assert np.linalg.norm(x1[6] - x1[5]) == pytest.approx(0.15)  # nicht projizierbar
+    assert ctx.status() & core.STATUS_CONSTRAINT_FAILURE

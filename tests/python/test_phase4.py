@@ -543,6 +543,13 @@ def test_tile_culling_vs_numpy(core):
     (f_cull, e_cull), (f_all, e_all) = results
     assert np.abs(f_cull - f_ref).max() < 1e-5 * _rms(f_ref)
     assert e_cull == pytest.approx(e_ref, rel=1e-5)
-    assert np.abs(f_cull[0]).max() > 0 and np.abs(f_cull[-1]).max() > 0, "Randpaar fehlt"
+    # Das Randpaar ist für den Test relevant: ohne es wiche die Referenzkraft auf Atom 0 weit über
+    # die Toleranz ab – ein fälschlich übersprungenes Tile-Paar fiele also auf.
+    _, f_wo = nr.nonbonded(
+        _f32(pos), _f32(q), types, topo["lj_table"].astype(np.float64),
+        np.vstack([excl, [[0, n - 1]]]), (box, box), float(np.float32(KAPPA)),
+        float(np.float32(EPS_R)), R_S, R_C,
+    )  # fmt: skip
+    assert np.abs(f_wo[0] - f_ref[0]).max() > 10 * 1e-5 * _rms(f_ref)
     assert np.abs(f_cull - f_all).max() < 1e-5 * _rms(f_ref)
     assert e_cull == pytest.approx(e_all, rel=1e-5)

@@ -28,9 +28,11 @@ struct SwitchParams {
   float r_s, r_c, r_c2, inv_width;  // r_s, r_c [nm], r_c² [nm²], 1/(r_c − r_s) [1/nm]
 };
 
-/// Sicherheitsabstand der Tile-Vorauswahl [nm]: deckt die FP32-Rundung von Mittelpunkt und
-/// Halbbreite ab (|x − c| ≤ h + ulp), viele Größenordnungen über dieser Rundung.
+/// Sicherheitsabstand der Tile-Vorauswahl: absolut [nm] plus relativ zur Koordinatengröße
+/// (≈ 8 ulp in FP32), deckt die Rundung von Mittelpunkt und Halbbreite (|x − c| ≤ h + ulp) und
+/// des Kernel-Abstands auch für große Koordinaten ab.
 constexpr float kCullMargin = 1.0e-3f;
+constexpr float kCullMarginRel = 1.0e-6f;
 
 /// Achsenparallele Hülle der echten Atome je Tile und Replica (ein Warp pro Tile): (Mittelpunkt,
 /// Halbbreite) als zwei float4; Halbbreite.w = −1 für Tiles ohne echte Atome. Grundlage der
@@ -78,7 +80,9 @@ __device__ __forceinline__ bool tiles_out_of_range(const float4* bounds, int r, 
   const float gx = fmaxf(0.0f, fabsf(detail::minimum_image_1d(ci.x, cj.x, box.x)) - hi.x - hj.x);
   const float gy = fmaxf(0.0f, fabsf(detail::minimum_image_1d(ci.y, cj.y, box.y)) - hi.y - hj.y);
   const float gz = fmaxf(0.0f, fabsf(ci.z - cj.z) - hi.z - hj.z);
-  const float reach = r_c + kCullMargin;
+  const float extent = fmaxf(fmaxf(fabsf(ci.x) + hi.x, fabsf(ci.y) + hi.y), fabsf(ci.z) + hi.z) +
+                       fmaxf(fmaxf(fabsf(cj.x) + hj.x, fabsf(cj.y) + hj.y), fabsf(cj.z) + hj.z);
+  const float reach = r_c + kCullMargin + kCullMarginRel * extent;
   return gx * gx + gy * gy + gz * gz >= reach * reach;
 }
 
