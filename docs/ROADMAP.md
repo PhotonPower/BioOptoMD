@@ -148,6 +148,27 @@ Dokumentation, Verzeichnisstruktur, Agenten-Anweisungen, Build-Entwürfe.
 
 ## Phase 9+ – Erweiterungen (Reihenfolge nach Forschungsbedarf)
 
+### Phase 9.1 – Generalized Born OBC2 (ADR 0010, Proposed; Reihenfolge vom Projektinhaber am 2026-11-05 festgelegt)
+
+**Aufgaben**
+1. NumPy-Referenz `tests/reference/gb_ref.py` (Born-Radien, Energie, analytische Kräfte).
+2. Nonbonded-Strategie `TiledGeneralizedBorn` (LJ + Coulomb + GB-OBC2 mit Salz, ACE optional, Switching
+   und Bildsumme wie ADR 0006, Tile-Vorauswahl); Bindings.
+3. Builder: GB-Parameter (ρ, s) aus OpenMM (`implicit/obc2.xml`), Auswahl `solvent="debye-huckel" | "gb-obc2"`.
+
+**Abnahmetests (Vorschlag, mit ADR 0010 vom Projektinhaber zu bestätigen)**
+- `test_phase9.py::test_gb_reference_vs_openmm` (`reference`) – NumPy-Referenz vs. OpenMM-`CustomGBForce`
+  (obc2.xml, κ > 0, ACE an/aus): Born-Radien rel. < 1e-6, Energie rel. < 1e-6.
+- `test_phase9.py::test_gb_reference_forces_fd` – Referenzkräfte vs. finite Differenzen, rel. < 1e-5.
+- `test_phase9.py::test_gb_born_radii_vs_numpy` – GPU-Born-Radien vs. Referenz, rel. < 1e-5.
+- `test_phase9.py::test_gb_vs_openmm` (`reference`) – isolierter Duplex (r_c größer als das Molekül):
+  Gesamtenergie und Kräfte vs. OpenMM, Energie rel. < 1e-4, Kräfte < 1e-4 der größten RMS-Kraft eines Terms.
+- `test_phase9.py::test_gb_cutoff_and_images_vs_numpy` – r_c < Molekülgröße und L < 2 r_c: GPU vs. Referenz
+  (gleiches Switching, Bildsumme), Kräfte < 1e-4 RMS.
+- `test_phase9.py::test_gb_salt_far_field` – zwei Ionen bei r ≫ B: E_C + E_GB → Debye-Hückel, rel. < 1e-3.
+- `test_phase9.py::test_gb_padding_batch_determinism` – Padding ohne Beitrag, Replicas unabhängig, bitidentisch.
+- `test_phase9.py::test_gb_nve` (`slow`) – NVE 10 ps, Δt = 1 fs: Drift im Rahmen von Phase 3.
+
 - Generalized Born OBC2 (ADR 0004)
 - Replica-Exchange-Moves (Temperatur-Austausch auf Host-Seite)
 - `ImageChargeForce` für Metalloberflächen

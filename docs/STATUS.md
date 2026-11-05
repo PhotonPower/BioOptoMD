@@ -2,7 +2,9 @@
 
 > Diese Datei wird am Ende **jeder** Arbeitssitzung aktualisiert (AGENTS.md §2.4).
 
-**Aktive Phase:** 9+ – Erweiterungen (Reihenfolge nach Forschungsbedarf, Entscheidung des Projektinhabers).
+**Aktive Phase:** 9.1 – Generalized Born OBC2 (Branch `phase-9/gb-obc2`, ADR 0010 Proposed). Reihenfolge
+vom Projektinhaber am 2026-11-05 festgelegt: GB-OBC2 zuerst (mbondi2, Salz, ACE optional mit Default an,
+erweiterbar für GBn2).
 **Phase 8 abgenommen** am 2026-11-05 durch den Projektinhaber (RTX 3090, PR #11).
 **Phase 7 abgenommen** am 2026-11-05 durch den Projektinhaber (RTX 3090).
 **Nachrüstung (PR #9) abgenommen** am 2026-11-05 durch den Projektinhaber (RTX 3090).
