@@ -41,6 +41,8 @@ class SystemSpec:
         elements: Elementsymbole (n,), z. B. für H-Erkennung und Typzuweisung.
         positions: Startpositionen [nm] (n, 3) oder None.
         atom_names, residue_names: optionale Namen (n,) für Atomauswahl.
+        gb_radius: intrinsischer GB-Radius ρ [nm] (n,) oder None (ADR 0010, aus ``implicit/obc2.xml``).
+        gb_scale: HCT-Skalierungsfaktor s (n,) oder None.
     """
 
     masses: np.ndarray
@@ -53,6 +55,8 @@ class SystemSpec:
     positions: np.ndarray | None = None
     atom_names: np.ndarray | None = None
     residue_names: np.ndarray | None = None
+    gb_radius: np.ndarray | None = None
+    gb_scale: np.ndarray | None = None
 
     @property
     def n_atoms(self) -> int:
@@ -106,7 +110,8 @@ def from_openmm(system, topology=None, positions=None) -> SystemSpec:
     n = system.getNumParticles()
     if any(system.isVirtualSite(i) for i in range(n)):
         raise ValueError("from_openmm: virtuelle Sites werden nicht unterstützt")
-    known = {"HarmonicBondForce", "HarmonicAngleForce", "PeriodicTorsionForce", "NonbondedForce"}
+    known = {"HarmonicBondForce", "HarmonicAngleForce", "PeriodicTorsionForce", "NonbondedForce",
+             "CustomGBForce"}  # fmt: skip
     forces = {}
     for f in system.getForces():
         name = type(f).__name__
@@ -169,6 +174,9 @@ def from_openmm(system, topology=None, positions=None) -> SystemSpec:
         psig.append(s.value_in_unit(nm))
         peps.append(ep)
     masses = np.array([system.getParticleMass(i).value_in_unit(unit.dalton) for i in range(n)])
+    gb_radius = gb_scale = None
+    if "CustomGBForce" in forces:
+        gb_radius, gb_scale = _obc2_parameters(forces["CustomGBForce"], q)
 
     def idx(x, arity):
         return np.asarray(x, np.int32).reshape(-1, arity)
@@ -204,8 +212,29 @@ def from_openmm(system, topology=None, positions=None) -> SystemSpec:
     return SystemSpec(
         masses=masses, charges=q, sigma=sig, epsilon=eps, bonded=bonded,
         excluded=idx(excluded, 2), elements=elements, positions=positions,
-        atom_names=atom_names, residue_names=residue_names,
+        atom_names=atom_names, residue_names=residue_names, gb_radius=gb_radius, gb_scale=gb_scale,
     )  # fmt: skip
+
+
+GB_OFFSET = 0.009  # nm, Radius-Offset von OBC (ADR 0010)
+
+
+def _obc2_parameters(gb, charges):
+    """(ρ, s) aus einer OpenMM-``CustomGBForce`` von ``implicit/obc2.xml`` (Parameter charge, or, sr).
+
+    Prüft, dass es OBC2 ist (Born-Radius-Ausdruck mit 0.8/4.85) und die Ladungen mit der
+    NonbondedForce übereinstimmen; ρ = or + 0.009 nm, s = sr/or.
+    """
+    names = [gb.getPerParticleParameterName(k) for k in range(gb.getNumPerParticleParameters())]
+    if names != ["charge", "or", "sr"]:
+        raise ValueError(f"from_openmm: CustomGBForce mit Parametern {names} ist kein OBC2")
+    exprs = [gb.getComputedValueParameters(k)[1] for k in range(gb.getNumComputedValues())]
+    if not any("0.8*psi^2+4.85*psi^3" in e for e in exprs):
+        raise ValueError("from_openmm: nur GB-OBC2 (implicit/obc2.xml) wird unterstützt (ADR 0010)")
+    par = np.array([gb.getParticleParameters(i) for i in range(gb.getNumParticles())], np.float64)
+    if not np.allclose(par[:, 0], charges, rtol=0, atol=1e-12):
+        raise ValueError("from_openmm: Ladungen in CustomGBForce und NonbondedForce verschieden")
+    return par[:, 1] + GB_OFFSET, par[:, 2] / par[:, 1]
 
 
 def from_parmed(structure) -> SystemSpec:
