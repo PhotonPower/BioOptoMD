@@ -395,3 +395,49 @@ def dipole_probe(groups, axis):
     atoms = np.concatenate([np.asarray(g, np.int32) for g in groups])
     ax = np.asarray(axis, np.int32).reshape(-1, 2)
     return offsets, atoms, ax[:, 0].copy(), ax[:, 1].copy()
+
+
+# ASSUMPTION(OQ-01/02): Platzhalter je Element, nicht kalibriert (Entscheidung: Typtabelle nach
+# Miller mit Skalierungsfaktor, kalibriert an dn/dc; Volumina aus ProtOr/NucProt). Hier: α′ grob nach
+# Miller (1990, J. Am. Chem. Soc. 112, 8533), v aus Bondi-Radien (Überlappung ignoriert), beide
+# unverifiziert. Einheiten nm³.
+ELEMENT_OPTICS = {
+    "H": (0.387e-3, 4.0 / 3.0 * np.pi * 0.120**3),
+    "C": (1.20e-3, 4.0 / 3.0 * np.pi * 0.170**3),
+    "N": (1.09e-3, 4.0 / 3.0 * np.pi * 0.155**3),
+    "O": (0.64e-3, 4.0 / 3.0 * np.pi * 0.152**3),
+    "P": (3.0e-3, 4.0 / 3.0 * np.pi * 0.180**3),
+    "S": (3.0e-3, 4.0 / 3.0 * np.pi * 0.180**3),
+    "Na": (0.15e-3, 4.0 / 3.0 * np.pi * 0.227**3),
+    "Mg": (0.08e-3, 4.0 / 3.0 * np.pi * 0.173**3),
+}
+
+
+def optical_tables(spec: SystemSpec, anchor_atoms=(), table=None):
+    """Optik-/Oberflächen-Typ je Atom nach Element und die Tabellen α′, v je Typ.
+
+    Typ 0 ist das Ankeratom-Element (keine Wand, ADR 0007); alle Anker müssen dasselbe Element
+    haben. Typen ≥ 1 entsprechen den übrigen Elementen in der Reihenfolge des ersten Auftretens.
+
+    Returns:
+        (types int32 (n,), alpha float32 (T,) [nm³], volume float32 (T,) [nm³], names (T,)).
+    """
+    table = ELEMENT_OPTICS if table is None else table
+    anchors = np.asarray(anchor_atoms, np.int64)
+    missing = sorted(set(spec.elements) - set(table))
+    if missing:
+        raise ValueError(f"optical_tables: keine Parameter für {missing}")
+    names = [""]
+    if len(anchors):
+        el = set(spec.elements[anchors])
+        if len(el) != 1:
+            raise ValueError("optical_tables: alle Ankeratome brauchen dasselbe Element")
+        names[0] = el.pop()
+    types = np.zeros(spec.n_atoms, np.int32)
+    for e in dict.fromkeys(spec.elements):
+        names.append(str(e))
+        types[spec.elements == e] = len(names) - 1
+    types[anchors] = 0
+    alpha = np.array([table[e][0] if e else 0.0 for e in names], np.float32)
+    volume = np.array([table[e][1] if e else 0.0 for e in names], np.float32)
+    return types, alpha, volume, np.array(names)

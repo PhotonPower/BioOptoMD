@@ -236,3 +236,52 @@ def test_trajectory_writers(tmp_path):
         np.testing.assert_allclose(
             f["positions"][-1], ctx.positions_precise()[:, : spec.n_atoms, :3], atol=1e-6
         )
+
+
+@pytest.mark.slow
+@pytest.mark.reference
+def test_end_to_end_biosensor():
+    """Oberflächenfixiertes Aptamer (examples/aptamer_on_graphene), 8 Replicas, 1 ns:
+    Observer liefern endliche, normierte Zeitreihen (|μ̂| = 1, 0 ≤ κ² ≤ 4, 0 ≤ E ≤ 1, d > 0);
+    n(z) → n_w für z ≫ Molekülhöhe; Anker bleibt an der Oberfläche; keine Statusbits."""
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[2] / "examples" / "aptamer_on_graphene"
+    spec_ = importlib.util.spec_from_file_location(
+        "aptamer_on_graphene", path / "aptamer_on_graphene.py"
+    )
+    ex = importlib.util.module_from_spec(spec_)
+    spec_.loader.exec_module(ex)
+
+    ctx, obs, meta = ex.build(n_replicas=8, capacity=1000, stride=250)
+    ctx.step(250_000)  # 1 ns bei 4 fs
+    assert ctx.status() == 0
+    assert ctx.time == pytest.approx(1000.0)
+
+    dip = obs["dipole"].result()["frames"]
+    assert dip.shape == (8, 1000, 7) and np.isfinite(dip).all()
+    np.testing.assert_allclose(np.linalg.norm(dip[..., 3:6], axis=-1), 1.0, atol=1e-5)
+    assert (dip[..., 6] > 0).all(), "Fluorophor-Sonde unter der Oberfläche"
+    fret = obs["fret"].result()
+    for key in ("r_da", "kappa2", "efficiency"):
+        assert fret[key].shape == (8, 1000) and np.isfinite(fret[key]).all()
+    assert (fret["r_da"] > 0).all()
+    assert (fret["kappa2"] >= 0).all() and (fret["kappa2"] <= 4 + 1e-5).all()
+    assert (fret["efficiency"] >= 0).all() and (fret["efficiency"] <= 1).all()
+    res = ex.summarize(obs, meta)
+    assert np.isfinite(res["E_dynamic"]).all() and np.isfinite(res["E_static"]).all()
+    assert (res["E_static"] <= res["E_dynamic"] + 1e-12).all()  # Jensen
+
+    # n(z): oberhalb der maximalen Ausdehnung (12 nt × ≤ 0.7 nm + Anker < 9 nm) kein Atom ⇒ n = n_w.
+    nz = obs["nz"].result()
+    assert nz["n_frames"][0] == 1000 and np.isfinite(nz["n"]).all()
+    top = nz["z"] > 9.0
+    np.testing.assert_array_equal(nz["n"][:, top], np.float32(1.333))
+    assert (nz["n"][:, nz["z"] < 3.0] > 1.333).any(axis=1).all(), "Molekül im Profil sichtbar"
+
+    # Anker: z am Ende nahe der Sollhöhe (k_z = 10⁴ ⇒ σ_z ≈ √(k_BT/k) ≈ 0.016 nm; 6σ ≈ 0.1 nm).
+    z_anchor = ctx.positions_precise()[:, meta["anchor"], 2]
+    assert np.abs(z_anchor - meta["anchor_z"]).max() < 0.1
+    e = obs["energy"].result()["energies"]
+    assert np.isfinite(e).all()
