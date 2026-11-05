@@ -105,3 +105,29 @@ def layer_histograms_smeared(z, alpha, volume, z_min, dz, n_bins, sigma):
             s_a[k] += w * a
             s_v[k] += w * v
     return s_a, s_v
+
+
+def sphere_radius(volume):
+    """R = (3 v/4π)^(1/3) [nm] aus dem Atomvolumen v [nm³] (OQ-02)."""
+    return np.cbrt(3.0 * np.asarray(volume, np.float64) / (4.0 * np.pi))
+
+
+def sphere_layer_fraction(z, radius, lo, hi):
+    """Volumenanteil einer Kugel (Mittelpunkt z, Radius R) in der Schicht [lo, hi]:
+    π∫(R² − (ζ − z)²) dζ / (4π R³/3) über [lo, hi] ∩ [z − R, z + R] (PHYSICS_MODEL §6.3)."""
+    a = np.maximum(lo, z - radius) - z
+    b = np.minimum(hi, z + radius) - z
+    w = 0.75 / radius**3 * (radius**2 * (b - a) - (b**3 - a**3) / 3.0)
+    return np.where(b > a, w, 0.0)
+
+
+def layer_histograms_sphere(z, alpha, volume, z_min, dz, n_bins):
+    """S_α(k), S_V(k) mit Kugelschnitt-Verschmierung (Default des Profilers)."""
+    lo = z_min + np.arange(n_bins) * dz
+    s_a = np.zeros(n_bins)
+    s_v = np.zeros(n_bins)
+    for zi, a, v in zip(np.asarray(z, np.float64), alpha, volume, strict=True):
+        w = sphere_layer_fraction(zi, float(sphere_radius(v)), lo, lo + dz)
+        s_a += w * a
+        s_v += w * v
+    return s_a, s_v

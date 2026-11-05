@@ -56,7 +56,7 @@ Switching wie OpenMM (`useSwitchingFunction`): `V = (V_LJ + V_el)·S(r)` mit `S 
 ## 4. Oberflächen- und Umgebungsplugins
 
 ### 4.1 `PlanarSurfaceForce` (Phase 2)
-Die Wandform ist ein Template-Parameter (ADR 0007): `Wall93` (Volumenmaterial, z. B. Gold), `Wall104` (Graphen-Monolage), `Wall1043` (Graphit). Formeln und Kräfte aller Formen stehen in ADR 0007. Die Parameter pro (LJ-Typ, Oberflächen-Typ) leitet der Builder über Lorentz-Berthelot aus den Kraftfeld-LJ-Parametern und den Wandatom-Parametern ab, optional mit Lösungsmittel-Skalierung λ (OQ-05). Oberflächen-Typ 0 hat ε = 0 und ist für Padding-Atome und Thiol-Ankeratome reserviert (OQ-07).
+Die Wandform ist ein Template-Parameter (ADR 0007): `Wall93` (Volumenmaterial, z. B. Gold), `Wall104` (Graphen-Monolage), `Wall1043` (Graphit). Formeln und Kräfte aller Formen stehen in ADR 0007. Die Parameter pro (LJ-Typ, Oberflächen-Typ) leitet der Builder über Lorentz-Berthelot aus den Kraftfeld-LJ-Parametern und den Wandatom-Parametern ab, optional mit Lösungsmittel-Skalierung λ (OQ-05). Oberflächen-Typ 0 hat ε = 0 und ist für Padding-Atome und Thiol-Ankeratome reserviert (OQ-07); `PlanarSurfaceForce` lehnt Tabellen mit C ≠ 0 in Zeile 0 ab. λ gilt derzeit pro Oberflächen-Typ; Atomklassen werden über eigene Oberflächen-Typen abgebildet.
 
 Implementierung: Tabelle (C, σ_iw) pro (Oberflächen-Typ s = `d_types.y`, LJ-Typ l = `d_types.x`), erstellt von `biooptomd.surface.wall_table` (Materialtabelle `MATERIALS`, Lorentz-Berthelot, λ pro Oberflächen-Typ). Eine Tabelle mit nur einem LJ-Typ gilt für alle LJ-Typen. Der Kernel ist ein Template über die Form; die Form wird pro Launch auf dem Host gewählt. Mit s = σ_iw/ζ und dem Vorfaktor C aus ADR 0007:
 
@@ -74,7 +74,7 @@ u(z)   = γ_r exp(−κ z)
 V_i(z) = q_i · 2 k_B T_r · ln[(1 + u)/(1 − u)]  = q_i · 4 k_B T_r · atanh(u)   (numerisch: s. u.)
 F_z,i  = q_i · 4 k_B T_r · κ · u / (1 − u²)
 ```
-Numerik: Gerechnet wird mit |Φ₀| (u > 0) und 1 − u = (1 − e^{−κζ}) + (1 − γ) e^{−κζ} ohne Auslöschung, damit V für γ → 1 (große Φ₀) endlich bleibt. κ_r kommt pro Replica (OQ-10). Bei T_r = 0 entfällt der Term (Grenzfall vollständiger Abschirmung). Für ζ < 0 gilt V = V(0), F = 0 (ASSUMPTION(OQ-12)).
+Numerik: Gerechnet wird mit |Φ₀| (u > 0) und 1 − u = (1 − e^{−κζ}) + (1 − γ) e^{−κζ} ohne Auslöschung, damit V für γ → 1 (große Φ₀) endlich bleibt. κ_r kommt pro Replica (OQ-10). Das nichtlineare Gouy-Chapman verlangt T_r > 0 für alle Replicas (sonst Fehler in `compute`). Der Term hat keine Kraftschranke nach ADR 0008: Bei großem Φ₀ ist F(0) = 2k_BTκ·sinh(Φ₀/2k_BT) und kann den Fixed-Point-Bereich sprengen (dann Statusbit gesetzt). Für ζ < 0 gilt V = V(0), F = 0 (ASSUMPTION(OQ-12)).
 
 Linearisiert (Φ₀ ≪ k_BT/e ≈ 25 mV, Option `gouy_chapman="linear"`): `V_i(z) = q_i Φ₀ exp(−κ z)`, `F_z,i = q_i Φ₀ κ exp(−κ z)`. Die Linearisierung überschätzt das Fernfeld um ca. 30 % bei 100 mV und etwa Faktor 2 bei 200 mV.
 
@@ -95,7 +95,7 @@ Linearisiert (Φ₀ ≪ k_BT/e ≈ 25 mV, Option `gouy_chapman="linear"`): `V_i(
 ```
 s_i = −α′_i · FARADAY² / (4 · ONE_4PI_EPS0)      ⇒  U_i = s_i W,  F_i = −s_i ∇W
 ```
-Bei RMS-Feldern ist der Vorfaktor ½ statt ¼; die Lade-Funktion verlangt daher das Pflichtargument `amplitude="peak" | "rms"`.
+Bei RMS-Feldern ist der Vorfaktor ½ statt ¼; die Lade-Funktion verlangt daher das Pflichtargument `amplitude="peak" | "rms"`. Implementierung: `biooptomd.voxel.optical_scale(alpha, volume, n_water, amplitude=...)` liefert s_i je Optik-Typ für `add_voxel_grid`; das Gitter selbst baut `values_from_potential(W, spacing)`.
 
 **Überschusspolarisierbarkeit (OQ-04):** In s_i steht α′_eff,i = α′_i − (3/4π) v_i (n_w² − 1)/(n_w² + 2), d. h. der Kontrast gegenüber dem verdrängten Wasser, mit denselben v_i wie im `RefractiveIndexProfiler`. Ohne Korrektur wäre die Kraft um rund Faktor 2 zu groß. Streu-/Absorptionskräfte (Im α) sind nicht konservativ und nicht abgebildet; Fluorophore sind im Optikmodus per Default ausgenommen. Größenordnung: 1 MW/cm² in Wasser, α′ ≈ 10⁻³ nm³ → U ≈ 10⁻⁷ kJ/mol pro Atom; relevant erst in plasmonischen Hotspots (Feldverstärkung ≳ 10³).
 
@@ -130,6 +130,6 @@ n(k)            = sqrt((1 + 2L)/(1 − L))
 ```
 Ausgabe: n(z), sowie die Rohhistogramme S_α, S_V und ihre Varianz, damit andere Mischungsregeln (z. B. Maxwell-Garnett) nachträglich in Python möglich sind.
 
-**Verschmierung (OQ-02):** Default ist der exakte Kugelschnitt: Atom i mit R_i = (3 v_i/4π)^{1/3} trägt zu Schicht [z_a, z_b] den Volumenanteil π∫(R_i² − (z − z_i)²) dz bei (analytisch, kompakter Träger, keine Beiträge unter z = 0 durch Ausläufer). Option: Gauß-Verschmierung mit σ_i = R_i/√5 (gleiche z-Varianz wie eine homogene Kugel). Bei Δz = 0,05 nm sind Schichten deutlich dünner als ein Atom; mit Punktatomen greift das `max(0, …)` in f_w häufig und verzerrt n(z) systematisch. Punktatome bleiben als Option für Tests.
+**Verschmierung (OQ-02):** Default ist der exakte Kugelschnitt: Atom i mit R_i = (3 v_i/4π)^{1/3} trägt zu Schicht [z_a, z_b] den Volumenanteil π∫(R_i² − (z − z_i)²) dz bei (analytisch, kompakter Träger, keine Beiträge unter z = 0 durch Ausläufer). Option: Gauß-Verschmierung mit σ_i = R_i/√5 (gleiche z-Varianz wie eine homogene Kugel). Bei Δz = 0,05 nm sind Schichten deutlich dünner als ein Atom; mit Punktatomen greift das `max(0, …)` in f_w häufig und verzerrt n(z) systematisch. Punktatome bleiben als Option für Tests. API: `add_refractive_index_profiler(..., smearing="sphere" | "gauss" | "point")`; Atomtypen mit v_i = 0 werden immer als Punkt gezählt.
 
 **Parameter (OQ-01/02):** v_i aus Voronoi-Volumina (ProtOr für Proteine, NucProt für Nukleinsäuren; Summe ≈ partielles spezifisches Volumen nur bei Proteinen), α′_i aus Typtabelle mit klassenweisem Skalierungsfaktor, gemeinsam kalibriert an dn/dc (Proteine ≈ 0,185–0,19 mL/g, DNA ≈ 0,17 mL/g), Dispersion über Cauchy-Term. Fluorophore erhalten eine separate, resonanzbewusste Polarisierbarkeit oder werden per Option ausgeschlossen.

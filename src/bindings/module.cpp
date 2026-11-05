@@ -768,18 +768,28 @@ NB_MODULE(_core, m) {
   cls.def(
       "add_refractive_index_profiler",
       [](SimulationContext& c, float dz, int n_bins, HostInput<float> alpha,
-         HostInput<float> volume, float z_min, float n_water, float smear_sigma,
+         HostInput<float> volume, float z_min, float n_water, const std::string& smearing,
          int stride) -> bomd::RefractiveIndexProfiler& {
-        bomd::RefractiveIndexParams p{
-            dz, n_bins, z_min, to_vector(alpha), to_vector(volume), n_water, smear_sigma};
+        bomd::LayerSmearing mode;
+        if (smearing == "sphere") {
+          mode = bomd::LayerSmearing::kSphere;
+        } else if (smearing == "gauss") {
+          mode = bomd::LayerSmearing::kGauss;
+        } else if (smearing == "point") {
+          mode = bomd::LayerSmearing::kPoint;
+        } else {
+          throw nb::value_error("smearing: 'sphere', 'gauss' oder 'point'");
+        }
+        bomd::RefractiveIndexParams p{dz,      n_bins, z_min, to_vector(alpha), to_vector(volume),
+                                      n_water, mode};
         return static_cast<bomd::RefractiveIndexProfiler&>(
             c.add_observer(std::make_unique<bomd::RefractiveIndexProfiler>(std::move(p), stride)));
       },
       "dz"_a, "n_bins"_a, "alpha"_a, "volume"_a, "z_min"_a = 0.0f, "n_water"_a = 1.333f,
-      "smear_sigma"_a = 0.0f, "stride"_a = 1, nb::rv_policy::reference_internal,
+      "smearing"_a = "sphere", "stride"_a = 1, nb::rv_policy::reference_internal,
       "Brechungsindexprofil: Schichten der Dicke dz [nm] ab z_min; alpha (α′ [nm^3]) und\n"
-      "volume (v [nm^3]) je Optik-Typ types[..., 1]; n_water; smear_sigma [nm] > 0 verteilt\n"
-      "Atome gaußförmig auf Nachbarschichten.");
+      "volume (v [nm^3]) je Optik-Typ types[..., 1]; n_water. smearing (OQ-02): 'sphere'\n"
+      "(Default, Kugelschnitt mit R = (3v/4π)^(1/3)), 'gauss' (σ = R/√5) oder 'point'.");
 
   // --- VoxelGridForce3D -------------------------------------------------------------------------
   nb::class_<bomd::VoxelGridForce3D>(m, "VoxelGridForce3D", "Externes Gitterpotential, §4.3.");

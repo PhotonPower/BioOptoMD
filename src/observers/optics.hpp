@@ -75,6 +75,13 @@ class FRETTracker final : public ObserverPlugin {
   DeviceRingBuffer ring_;
 };
 
+/// Verteilung eines Atoms auf die Schichten (PHYSICS_MODEL.md §6.3, OQ-02). R_i = (3 v_i/4π)^(1/3).
+enum class LayerSmearing : int {
+  kSphere = 0,  ///< exakter Kugelschnitt mit Radius R_i (Default, kompakter Träger)
+  kGauss = 1,   ///< Gauß mit σ_i = R_i/√5 (gleiche z-Varianz wie die Kugel), Fenster ±4σ_i
+  kPoint = 2,   ///< Punktatom in der Schicht seines Mittelpunkts (nur für Tests)
+};
+
 struct RefractiveIndexParams {
   float dz_nm = 0.05f;            ///< Schichtdicke Δz [nm] > 0
   int n_bins = 200;               ///< Anzahl Schichten
@@ -82,7 +89,8 @@ struct RefractiveIndexParams {
   std::vector<float> alpha_nm3;   ///< α′ je Optik-Typ (d_types.y) [nm³] (OQ-01)
   std::vector<float> volume_nm3;  ///< v je Optik-Typ [nm³] (OQ-02)
   float n_water = 1.333f;         ///< Brechungsindex des Lösungsmittels bei λ
-  float smear_sigma_nm = 0.0f;    ///< > 0: Gauß-Verschmierung über ±4σ auf Nachbarschichten
+  /// Verteilung auf die Schichten; Atome mit v = 0 immer als Punkt.
+  LayerSmearing smearing = LayerSmearing::kSphere;
 };
 
 /// Histogramme S_α(k), S_V(k) je Frame (Fixed-Point, deterministisch), über Frames als Summe und
@@ -107,7 +115,7 @@ class RefractiveIndexProfiler final : public ObserverPlugin {
   int n_frames_ = 0;
   std::uint64_t box_version_ = 0;
   SimulationContext* ctx_ = nullptr;
-  DeviceBuffer<float2> d_type_params_;    // (α′, v)
+  DeviceBuffer<float4> d_type_params_;    // (α′, v, R, 0), R = (3v/4π)^(1/3)
   DeviceBuffer<long long> d_frame_hist_;  // (n_replicas, 2, n_bins) Fixed-Point
   DeviceBuffer<double> d_sums_;           // (n_replicas, 4, n_bins): Σα, Σα², ΣV, ΣV²
 };

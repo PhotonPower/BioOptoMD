@@ -152,8 +152,9 @@ def test_wall_boltzmann(form):
     start = rng.uniform(0.0, 5.0, (2, n, 3)).astype(np.float32)
     start[..., 2] = z_ref
     ctx.set_positions(start)
+    ctx.set_types(np.broadcast_to(np.int32([0, 1]), (2, n, 2)).copy())
     ctx.add_planar_surface(
-        np.array([eps_w], np.float32), np.array([sigma_w], np.float32), form=form, delta=0.335
+        np.array([0.0, eps_w], np.float32), np.array([0.0, sigma_w], np.float32), form=form
     )
     replica, atom = np.divmod(np.arange(2 * n, dtype=np.int32), n)
     ctx.add_position_restraints(
@@ -204,7 +205,7 @@ def _gouy_chapman_ctx(z, q, temps, phi0, kappa, linear=False):
     return ctx
 
 
-@pytest.mark.parametrize("phi0_mv", [25.0, 100.0, 200.0])
+@pytest.mark.parametrize("phi0_mv", [25.0, 100.0, 200.0, -100.0])
 def test_gouy_chapman_force(phi0_mv):
     """Nichtlineares Gouy-Chapman (OQ-06): Referenzkraft = −dE/dz (finite Differenzen, FP64,
     rel. < 1e-4); GPU-Kraft und -Energie gegen die Referenz, γ und κ pro Replica (T_r)."""
@@ -215,7 +216,7 @@ def test_gouy_chapman_force(phi0_mv):
     q = rng.uniform(-1.0, 1.0, n)
     temps = np.array([280.0, 300.0, 340.0])
     kappa = np.array([1.10, 1.04, 0.95])  # κ_r je Replica (OQ-10)
-    phi0, h = phi0_mv * 1e-3 * _core.units.FARADAY, 1e-4
+    phi0, h = phi0_mv * 1e-3 * _core.units.FARADAY, 1e-4  # Φ0 < 0: Vorzeichenpfad
 
     for t, k in zip(temps, kappa, strict=True):
         kt = KB * t
@@ -270,9 +271,16 @@ def test_gouy_chapman_linear_limit():
         )
         assert 1.2 < phi0 / (4 * KB * t * gamma) < 1.4
 
-    f_big, e_big = run(2000.0, False)  # γ = tanh(Φ0/4k_BT) rundet in float32 auf 1
-    assert np.isfinite(f_big).all() and np.isfinite(e_big).all()
-    assert (f_big[:, 0] > f_big[:, 1]).all()
+    # Φ0 = 1 V: γ = tanh(Φ0/4k_BT) rundet in float32 auf 1. V(0) = qΦ0 exakt; F(0) =
+    # 2k_BTκ sinh(Φ0/2k_BT) ≈ 10⁸ bleibt im Fixed-Point-Bereich (keine Kraftschranke für GC).
+    phi_big = 1.0 * _core.units.FARADAY
+    ctx = _gouy_chapman_ctx(z[:1], q[:1], temps, phi_big, kappa)
+    e0 = ctx.energies()[:, TERM["surface"]]
+    np.testing.assert_allclose(e0, phi_big, rtol=1e-5)
+    f0 = ctx.forces()[:, 0, 2].astype(np.float64)
+    kt = KB * temps
+    np.testing.assert_allclose(f0, 2 * kt * kappa * np.sinh(phi_big / (2 * kt)), rtol=1e-4)
+    assert ctx.status() == 0
 
 
 @pytest.mark.parametrize("form", WALL_FORMS)
@@ -306,8 +314,9 @@ def test_wall_forms_vs_numpy(form):
     xyz[0, :, 0] = np.linspace(0.0, 5.0, n, endpoint=False)
     xyz[0, :, 2] = z
     ctx.set_positions(xyz)
+    ctx.set_types(np.broadcast_to(np.int32([0, 1]), (1, n, 2)).copy())
     surf = ctx.add_planar_surface(
-        np.array([c], np.float32), np.array([sigma], np.float32), form=form, delta=delta
+        np.array([0.0, c], np.float32), np.array([0.0, sigma], np.float32), form=form, delta=delta
     )
     ctx.compute_forces()
     zf = xyz[0, :, 2].astype(np.float64)
@@ -318,7 +327,7 @@ def test_wall_forms_vs_numpy(form):
     assert (np.abs(f_gpu - f_ref)[big] / np.abs(f_ref[big])).max() < 1e-4
     np.testing.assert_allclose(f_gpu, f_ref, rtol=1e-4, atol=1e-5 * np.abs(f_ref).max())
     e_gpu = ctx.energies()[0, TERM["surface"]]
-    assert abs(e_gpu - e_ref.sum()) < 1e-4 * np.abs(e_ref).sum()
+    assert abs(e_gpu - e_ref.sum()) < 1e-5 * np.abs(e_ref).sum()
 
     # Minimum auf dem Gerät: die Kraft wechselt bei z* das Vorzeichen und verschwindet dort.
     probe = z_min * np.array([1 - 1e-2, 1.0, 1 + 1e-2])
@@ -327,8 +336,9 @@ def test_wall_forms_vs_numpy(form):
     xyz2[0, :, 0] = [0.0, 1.0, 2.0]
     xyz2[0, :, 2] = probe
     ctx2.set_positions(xyz2)
+    ctx2.set_types(np.broadcast_to(np.int32([0, 1]), (1, 3, 2)).copy())
     ctx2.add_planar_surface(
-        np.array([c], np.float32), np.array([sigma], np.float32), form=form, delta=delta
+        np.array([0.0, c], np.float32), np.array([0.0, sigma], np.float32), form=form, delta=delta
     )
     ctx2.compute_forces()
     f_probe = ctx2.forces()[0, :3, 2]
@@ -415,9 +425,10 @@ def test_determinism():
         xyz[..., 2] += 0.5
         ctx.set_positions(xyz)
         ctx.set_charges(rng.uniform(-1, 1, (n_rep, n)).astype(np.float32))
+        ctx.set_types(np.broadcast_to(np.int32([0, 1]), (n_rep, n, 2)).copy())
         ctx.add_planar_surface(
-            np.array([2.0], np.float32),
-            np.array([0.3], np.float32),
+            np.array([0.0, 2.0], np.float32),
+            np.array([0.0, 0.3], np.float32),
             phi0=2.0,
             kappa=np.ones(n_rep, np.float32),
         )
@@ -509,8 +520,9 @@ def test_surface_vs_numpy(form):
     Alle Kräfte werden verglichen, auch an der Wand."""
     rng = np.random.default_rng(17)
     n = 500
-    eps = np.array([[2.0, 1.0], [0.0, 0.0], [5.0, 3.0]], np.float32)  # (Oberfläche, LJ)
-    sigma = np.array([[0.3, 0.35], [0.3, 0.3], [0.25, 0.28]], np.float32)
+    # (Oberfläche, LJ); Zeile 0 reserviert (ADR 0007), Zeile 3 mit C = 0 und σ > 0
+    eps = np.array([[0.0, 0.0], [2.0, 1.0], [5.0, 3.0], [0.0, 0.0]], np.float32)
+    sigma = np.array([[0.0, 0.0], [0.3, 0.35], [0.25, 0.28], [0.3, 0.3]], np.float32)
     z0, clamp, phi0, delta = 0.2, 0.1, 3.0, 0.335
     kappa = np.array([1.5, 1.3], np.float32)
     temps = np.array([300.0, 330.0], np.float32)
@@ -520,8 +532,9 @@ def test_surface_vs_numpy(form):
     xyz[:, :5, 2] = z0 + 0.01  # sicher unterhalb ζ_c ⇒ Clamp
     types = np.zeros((2, n, 2), np.int32)
     types[..., 0] = rng.integers(0, 2, (2, n))
-    types[..., 1] = rng.integers(0, 3, (2, n))
-    types[:, :5, 1] = 0
+    types[..., 1] = rng.integers(0, 4, (2, n))
+    types[:, :5, 1] = 1
+    types[:, :5, 0] = 0
     types[1, -1, 1] = 7  # unbekannter Oberflächen-Typ ⇒ keine Wand, Zähler
     types[1, -2, 0] = 5  # unbekannter LJ-Typ ⇒ keine Wand, Zähler
     q = rng.uniform(-1, 1, (2, n)).astype(np.float32)
@@ -542,8 +555,8 @@ def test_surface_vs_numpy(form):
 
     t, lt = types[..., 1], types[..., 0]
     known = (t < eps.shape[0]) & (lt < eps.shape[1])
-    e_t = np.where(known, eps[np.minimum(t, 2), np.minimum(lt, 1)], 0.0)
-    s_t = np.where(known, sigma[np.minimum(t, 2), np.minimum(lt, 1)], 0.0)
+    e_t = np.where(known, eps[np.minimum(t, 3), np.minimum(lt, 1)], 0.0)
+    s_t = np.where(known, sigma[np.minimum(t, 3), np.minimum(lt, 1)], 0.0)
     e_ref = np.zeros((2, n))
     f_ref = np.zeros((2, n))
     clamped = np.zeros((2, n), bool)
@@ -573,7 +586,9 @@ def test_surface_vs_numpy(form):
         eps, sigma
     )
     np.testing.assert_allclose(surf.clamp_distances(), zeta_c, rtol=1e-6)
-    assert zeta_c[0, 0] > clamp * sigma[0, 0], "ζ_F muss für C = 2 den 0.1·σ-Clamp dominieren"
+    assert zeta_c[1, 0] > clamp * sigma[1, 0], "ζ_F muss für C = 2 den 0.1·σ-Clamp dominieren"
+    with pytest.raises(ValueError):  # Oberflächen-Typ 0 ist reserviert
+        ctx.add_planar_surface(np.array([1.0], np.float32), np.array([0.3], np.float32))
     assert ctx.status() == 0, "keine Sättigung bei begrenzter Wandkraft"
     assert not ctx.forces()[:, n:].any(), "Padding-Atome erhalten Kraft"
 

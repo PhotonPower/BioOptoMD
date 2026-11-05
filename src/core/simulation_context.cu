@@ -264,6 +264,7 @@ void SimulationContext::set_temperatures(const float* t_k) {
   activate();
   for (int r = 0; r < n_replicas(); ++r)
     require(std::isfinite(t_k[r]) && t_k[r] >= 0.0f, "Temperaturen müssen endlich und >= 0 sein");
+  h_temperature_.assign(t_k, t_k + n_replicas());
   temperature_.upload_async(t_k, stream_.get());
   synchronize();
 }

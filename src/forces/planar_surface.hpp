@@ -24,7 +24,8 @@ struct PlanarSurfaceParams {
   /// Anzahl LJ-Typen der Tabelle (>= 1). Bei 1 hängt die Wand nur vom Oberflächen-Typ ab.
   int n_lj_types = 1;
   /// Vorfaktor C pro (Oberflächen-Typ s = d_types.y, LJ-Typ l = d_types.x), Index
-  /// s·n_lj_types + l [kJ/mol], >= 0; C = 0 ⇒ keine Wand. Formeln: PHYSICS_MODEL.md §4.1.
+  /// s·n_lj_types + l [kJ/mol], >= 0; C = 0 ⇒ keine Wand. Zeile s = 0 muss 0 sein (reserviert für
+  /// Padding- und Ankeratome, ADR 0007). Formeln: PHYSICS_MODEL.md §4.1.
   std::vector<float> prefactor_kj_mol;
   /// σ_iw pro Eintrag wie prefactor_kj_mol [nm], >= 0; σ = 0 ⇒ keine Wand.
   std::vector<float> sigma_nm;
@@ -47,7 +48,8 @@ class PlanarSurfaceForce final : public ForcePlugin {
 
   std::string_view name() const override { return "PlanarSurfaceForce"; }
   void initialize(SimulationContext& ctx) override;
-  /// Kräfte in d_force_fp, Energie in Term kEnergySurface.
+  /// Kräfte in d_force_fp, Energie in Term kEnergySurface. Wirft std::logic_error, wenn das
+  /// nichtlineare Gouy-Chapman aktiv ist und eine Replica T_r <= 0 hat.
   void compute(DeviceState& s, cudaStream_t stream) override;
 
   const PlanarSurfaceParams& params() const { return params_; }

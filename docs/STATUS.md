@@ -2,8 +2,9 @@
 
 > Diese Datei wird am Ende **jeder** Arbeitssitzung aktualisiert (AGENTS.md §2.4).
 
-**Aktive Phase:** 7 – Python-Builder, I/O & End-to-End (noch nicht begonnen)
-**Phase 6 abgenommen** am 2026-11-04 durch den Projektinhaber (RTX 3090).
+**Aktive Phase:** Nachrüstung der Phasen 2, 4, 6 nach den Entscheidungen vom 2026-11-04 (PR #9),
+danach Phase 7 – Python-Builder, I/O & End-to-End (noch nicht begonnen).
+**Phase 6 abgenommen** am 2026-11-04 durch den Projektinhaber (RTX 3090), vor den neuen Abnahmetests.
 **Referenz-Hardware:** RTX 6000 Ada 48 GB (CC 8.9), Host 1 TB RAM
 
 ## Abgeschlossen
@@ -19,6 +20,33 @@
 
 - Phase 5 (PR #5): HMR, SHAKE/RATTLE auf H-Bindungen, N_dof. Abgenommen 2026-11-03; Nacharbeit nach
   Review siehe unten.
+
+## Integration von `main` (2026-11-05)
+`origin/main` (PR #7: Review, ADR 0006 Rev. 2 und ADR 0007 Accepted, OQ-01…10 entschieden; PR #8:
+Build-Umgebung RTX 6000 Ada mit conda, CUDA 12.6) wurde kaskadierend in die Branches der PRs #1 → #6
+gemergt und gepusht. Doppelte Nummern: unsere ADR 0006 → **0008** (Kraftschranke/Statusflags),
+ADR 0007 → **0009** (Mixed Precision), unsere OQ-08…11 → **OQ-11…14**.
+
+## Nachrüstung (Branch `phase-6/nachruestung-adr0006-0007`, PR #9 auf PR #6)
+- Phase 2 (`9255cae`): Wandformen 9-3/10-4/10-4-3 (ADR 0007), Tabelle pro (Oberflächen-Typ, LJ-Typ),
+  `biooptomd.surface.wall_table` (Lorentz-Berthelot, λ pro Oberflächen-Typ, Typ 0 reserviert und im
+  C++-Kern erzwungen), nichtlineares Gouy-Chapman (OQ-06) mit γ aus T_r und κ_r je Replica.
+- Phase 4 (`7c57edd`): Cutoff aus κ (`cutoff_from_kappa`, `debye_kappa`, `water_permittivity`, OQ-10),
+  Summe über periodische Bilder bei L < 2 r_c (ADR 0006 Rev. 2); Box wird nie geändert.
+- Phase 6 (siehe Commit unten): Kugelschnitt-Verschmierung (Default), Gauß σ = R/√5, Punkt (OQ-02);
+  `biooptomd.voxel.optical_scale(..., amplitude=...)` mit Überschusspolarisierbarkeit (OQ-04).
+- Review-Agent: keine Rechenfehler. Umgesetzt: Fehler bei nichtlinearem GC mit T_r = 0 statt stillem
+  Wegfall; Oberflächen-Typ 0 im Kern erzwungen; Test mit Φ0 < 0; Φ0 = 1 V prüft V(0) = qΦ0 und
+  F(0) = 2k_BTκ sinh(Φ0/2k_BT); Voxel-Normierungstest mit Kräften weit über der Fixed-Point-Auflösung;
+  Energietoleranz im Wandformtest 1e-5; GC-Fernfeld über 2·atanh(u).
+- Getestet (RTX 3090, CUDA 12.9): `pytest` 82/82 grün (inkl. `slow`); compute-sanitizer memcheck 0 Fehler,
+  racecheck 0 Hazards (Wandformen, GC, Bildsumme, Profiler Kugel/Gauß).
+- **Offen (ROADMAP Phase 6, `reference`):** `test_refractive_index_dn_dc` braucht die Kalibrierung der
+  Parameter (OQ-01/02, `assumption`); `test_voxel_optical_sphere_consistency` braucht eine eigene
+  Clausius-Mossotti-Vergleichsrechnung. Beide nicht umgesetzt.
+- Hinweis für Phase 7 (REMD): GC liest T_r live, κ_r und ε_r (GC, Bonded, Nonbonded) bleiben auf den
+  Startwerten – beim Temperaturtausch mitführen. λ derzeit nur pro Oberflächen-Typ (Atomklassen über
+  eigene Oberflächen-Typen).
 
 ## Phase 6 – erledigt (Branch `phase-6/observers-voxel`, baut auf Phase 5 auf)
 1. `DipoleAndDistanceTracker`, `FRETTracker` (Rohzeitreihen R_DA, κ², optional E), `RefractiveIndexProfiler`
@@ -56,7 +84,10 @@
 
 ## Offene Punkte / Hinweise für den nächsten Agenten
 - Nsight Compute nachholen, sobald GPU-Counter freigeschaltet sind (Befehl in `benchmarks/README.md`).
-- ADR 0008 und ADR 0009 auf `Accepted` setzen; OQ-12 bestätigen; OQ-03 (Fluorophor-Parameter) offen.
+- ADR 0008 und ADR 0009 auf `Accepted` setzen; OQ-12 bestätigen. OQ-03 ist entschieden (OL21, AMBER-DYES);
+  das Phase-4-Testsystem nutzt noch OL15 ohne Fluorophor.
+- Build auf der RTX 6000 Ada (laut PR #8: conda-forge-Workaround ohne Anaconda-ToS, CUDA 12.6, Python 3.12)
+  ist mit dem leeren Modul belegt; Kontrolllauf der Phasen-Tests dort steht aus.
 - Tiled All-Pairs prüft alle Tile-Paare (keine Cutoff-Vorauswahl); Optimierung/Cell-List später (Phase 8/9).
 - nanobind-„leaked instances“ nur unter compute-sanitizer mit mehreren Tests pro Prozess (siehe frühere Notiz).
 - Explodierende Trajektorien setzen Statusbits; `step()` prüft sie nicht selbst.
@@ -64,8 +95,8 @@
   Structs unterschiedlich aus. Vor dem Push mit beiden prüfen oder Kommentare über die Member setzen.
 
 ## Nächster konkreter Schritt
-1. Projektinhaber: OQ-14 (Temperaturschätzer) entscheiden; PRs #1 → #6 nacheinander mergen (gestapelt,
-   nach jedem Merge Basis des nächsten PR auf `main` umstellen).
+1. Projektinhaber: Nachrüstung (PR #9) abnehmen; OQ-14 (Temperaturschätzer) entscheiden; PRs #1 → #6, #9
+   nacheinander mergen (gestapelt, nach jedem Merge Basis des nächsten PR auf `main` umstellen).
 2. Phase 7, Aufgabe 1: `biooptomd.builder.from_parmed()/from_openmm()` – die bisher in den Tests verstreuten
    Schritte (Topologie-Extraktion, LJ-Typen, Ausschlüsse, HMR, Constraints) zu einem Builder bündeln.
 3. Nachholen: Kontrolllauf auf der RTX 6000 Ada; Nsight Compute (Counter-Freigabe).
@@ -86,3 +117,4 @@
 | 2026-11-04 | Projektinhaber (eingetragen von Claude) | Vorschläge aus Review 1 und 2 angenommen: ADR 0006 Rev. 2 und ADR 0007 → Accepted, Nachtrag in ADR 0003 (Bildsummation für Non-Bonded bei L < 2 r_c). OQ-03/04/05/06/09/10 → `resolved`; OQ-01/02/07/08 → `assumption` (Vorgehen entschieden, Kalibrierung bzw. Verifikation laut Checkliste offen). |
 | 2026-11-04 | Claude (Build) | Env angelegt (CUDA 12.6), Build + leeres `_core`-Modul laufen, 2 Tests grün. Keine Quelländerungen außer dieser Datei. |
 | 2026-11-05 | Claude Opus 5.5 | `origin/main` (PR #7 Review/ADR-Entscheidungen, PR #8 Build-Umgebung RTX 6000 Ada) in den Phasen-Stapel gemergt. Doppelte Nummern aufgelöst: unsere ADR 0006 → **0008** (Kraftschranke/Statusflags), ADR 0007 → **0009** (Mixed Precision), unsere OQ-08…11 → **OQ-11…14**. ADR 0006/0007 auf `main` (Cutoff aus κ, Wandformen) gelten unverändert. |
+| 2026-11-05 | Claude Opus 5.5 | Nachrüstung Phasen 2/4/6 (PR #9): Wandformen + Mischungsregeln, nichtlineares GC, κ-Cutoff + Bildsumme, Kugelschnitt-Verschmierung, optische Normierung; Review umgesetzt. Offen: zwei `reference`-Tests aus Phase 6 (s. o.). |

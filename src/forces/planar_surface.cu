@@ -96,7 +96,7 @@ __global__ void k_planar_surface(DeviceState s, const float4* type_params, int n
         if (zeta >= 0.0f) fz += pos.w * phi0 * kappa * ex;
       } else {
         const float kt = units::KB_F * s.d_temperature[r];
-        // T_r = 0: Grenzfall vollständiger Abschirmung, kein Beitrag (kt im Nenner).
+        // T_r > 0 prüft compute() auf dem Host; der Schutz hier verhindert nur die Division.
         if (kt > 0.0f) {
           // V = q·2k_BT·ln[(1+u)/(1−u)], F_z = q·4k_BT·κ·u/(1−u²), u = γ e^{−κζ}, γ = tanh(x).
           // Mit |Φ0| gerechnet (u > 0), Vorzeichen von Φ0 am Ende. 1 − u ohne Auslöschung:
@@ -108,7 +108,9 @@ __global__ void k_planar_surface(DeviceState s, const float4* type_params, int n
           const float one_minus_u =
               fmaxf(-expm1f(-kappa * zp) + 2.0f * em / (1.0f + em) * ex, FLT_MIN);
           const float qs = phi0 > 0.0f ? pos.w : -pos.w;
-          energy += qs * 2.0f * kt * (log1pf(u) - logf(one_minus_u));
+          // ln[(1+u)/(1−u)]: für u < ½ als 2·atanh(u) (genauer im Fernfeld), sonst über 1 − u.
+          const float log_ratio = u < 0.5f ? 2.0f * atanhf(u) : log1pf(u) - logf(one_minus_u);
+          energy += qs * 2.0f * kt * log_ratio;
           if (zeta >= 0.0f) fz += qs * 4.0f * kt * kappa * u / ((1.0f + u) * one_minus_u);
         }
       }
@@ -167,6 +169,10 @@ PlanarSurfaceForce::PlanarSurfaceForce(PlanarSurfaceParams params) : params_(std
     throw std::invalid_argument(
         "PlanarSurfaceForce: prefactor und sigma brauchen gleiche Länge n_surface·n_lj_types");
   n_surface_types_ = static_cast<int>(n / params_.n_lj_types);
+  // ADR 0007 Punkt 4: Oberflächen-Typ 0 (Padding, Thiol-Ankeratom) wechselwirkt nie mit der Wand.
+  for (int l = 0; l < params_.n_lj_types && n > 0; ++l)
+    if (params_.prefactor_kj_mol[l] != 0.0f)
+      throw std::invalid_argument("PlanarSurfaceForce: Oberflächen-Typ 0 ist reserviert (C = 0)");
   for (std::size_t k = 0; k < n; ++k) {
     if (!(std::isfinite(params_.prefactor_kj_mol[k]) && params_.prefactor_kj_mol[k] >= 0.0f) ||
         !(std::isfinite(params_.sigma_nm[k]) && params_.sigma_nm[k] >= 0.0f))
@@ -217,6 +223,11 @@ void PlanarSurfaceForce::initialize(SimulationContext& ctx) {
 }
 
 void PlanarSurfaceForce::compute(DeviceState& s, cudaStream_t stream) {
+  if (params_.phi0_kj_mol_e != 0.0f && !params_.gouy_chapman_linear)
+    for (float t : ctx_->host_temperatures())
+      if (!(t > 0.0f))
+        throw std::logic_error(
+            "PlanarSurfaceForce: nichtlineares Gouy-Chapman braucht T_r > 0 (set_temperatures)");
   const dim3 grid(elementwise_grid(s.n_atoms), s.n_replicas);
   const float a = static_cast<float>(kGraphiteShift * params_.delta_nm);
   const auto launch = [&](auto kernel) {
