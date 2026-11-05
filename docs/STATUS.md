@@ -34,9 +34,16 @@ erweiterbar für GBn2).
   Kettenregel; Fixed-Point, Vorauswahl, Bildsumme. Bindings `set_nonbonded_gb`, `nonbonded_born_radii`.
 - Builder: `from_openmm` liest ρ, s aus `implicit/obc2.xml`; `build_context(solvent="gb-obc2", ace=...)`
   (1-4 unabgeschirmt mit ε_in = 1).
-- Tests `test_phase9.py`: 12/12 grün (Referenz vs. OpenMM, FD, Born-Radien, GPU vs. OpenMM gesamt,
-  Cutoff/Bildsumme vs. Referenz, Salz-Fernfeld, Batch/Determinismus, NVE 10 ps); compute-sanitizer
+- Tests `test_phase9.py`: 15/15 grün (Referenz vs. OpenMM inkl. Born-Radien einzelner Atome, FD,
+  GPU-Born-Radien, GPU vs. OpenMM gesamt, Cutoff/Bildsumme, Salz-Fernfeld nahe r_c, Replicas mit
+  verschiedenen Topologien/κ/ε_out in beiden Pfaden, Kraft-Energie-Konsistenz, NVE); compute-sanitizer
   memcheck 0 Fehler, racecheck 0 Hazards. Kosten ≈ 3× DH (`benchmarks/README.md`).
+- Review-Agent: keine Fehler; umgesetzt: auslöschungsfreie Form von E_C + E_GB im Fernfeld (vorher bis
+  2e-3 relativer FP32-Fehler nahe r_c), Born-Radien direkt gegen OpenMM, Tests für mehrere Topologien/κ
+  und Bildpfad, NVE mit r_c < Molekülgröße. Dabei gefunden: harter Born-Cutoff erzeugt Energiesprünge →
+  Born-Integrale jetzt mit S(r) geglättet (ADR 0010). NVE ohne Constraints: bei 1 fs Drift ≈ 1.5e-4
+  (Integrationsfehler, ∝ Δt, unabhängig von r_c/ACE, Kraft-Energie-Konsistenz geprüft); Test mit 0.5 fs.
+  Bitte bestätigen (geänderter Vorschlag in ROADMAP 9.1).
 
 ## Phase 8 – erledigt, abgenommen 2026-11-05 (PR #11)
 - `benchmarks/throughput.py`: BioOptoMD vs. OpenMM 8.6.1 (CUDA, mixed) mit gleichem Modell (DH, r_c aus κ

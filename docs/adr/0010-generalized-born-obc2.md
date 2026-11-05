@@ -31,14 +31,19 @@ E_C,ij   = C q_i q_j / (ε_in r)                                  (nur nicht aus
 
 **2. Cutoff.** Die Switching-Funktion S(r) (r_s, r_c aus κ) wirkt auf (E_LJ + E_C + E_GB) nicht
 ausgeschlossener Paare; ausgeschlossene Paare (alle kürzer als r_s) tragen E_GB ohne Switching bei.
-Die Born-Integrale I_i werden bei r_c hart abgeschnitten (wie OpenMM; H ~ sr³/r⁴, Restfehler
-< 10⁻⁴ relativ). Bei L < 2 r_c werden I_i, E_GB und E_C über periodische Bilder summiert (ADR 0006);
+Die Beiträge zu den Born-Integralen werden mit derselben Switching-Funktion geglättet, H·S(r)
+(H ~ sr³/r⁴, Änderung gegenüber dem harten Schnitt von OpenMM < 10⁻⁴ relativ in I). Ein harter
+Schnitt erzeugte bei jedem Kreuzen von r_c einen Energiesprung ~ dE/dI · H(r_c) (≈ 2·10⁻³ kJ/mol bei
+r_c = 2 nm); im NVE-Test mit r_c kleiner als das Molekül ergab das eine Drift von 2·10⁻⁴
+kJ/mol/ps/Atom (Kriterium 10⁻⁴), daher die Glättung. Die Engulfment-Korrektur 2(1/or − 1/L) für r < or − sr fehlt wie in OpenMMs
+`CustomGBForce` (gleiche Referenz). Numerik: Für nicht ausgeschlossene Paare wird E_C + E_GB
+auslöschungsfrei als C qq [(1/ε_in) δ/(r f) + e^{−κf}/(ε_out f)] mit δ = f − r gerechnet. Bei L < 2 r_c werden I_i, E_GB und E_C über periodische Bilder summiert (ADR 0006);
 Eigenbilder tragen zu I_i voll (H(|n|, or_i, sr_i)) und zu E_GB mit ½ bei.
 
 **3. Kernels** (gleiche Tile-Struktur, Exclusion-Masken und Vorauswahl wie `TiledAllPairs`):
 (a) Tile-Pass I_i (Fixed-Point, beide Richtungen), (b) elementweise B_i, dB_i/dI_i, Selbst- und
 ACE-Energie, ∂E/∂B_i (Selbstanteil), (c) Tile-Pass Paarenergie/-kräfte bei festen B und ∂E/∂B_i
-(Fixed-Point), (d) elementweise dE/dI_i = ∂E/∂B_i · dB_i/dI_i, (e) Tile-Pass Kettenregel
+(Fixed-Point), (d) dE/dI_i = ∂E/∂B_i · dB_i/dI_i (beim Laden in Pass e), (e) Tile-Pass Kettenregel
 F_i −= Σ_j [dE/dI_i ∂H(r, or_i, sr_j)/∂r + dE/dI_j ∂H(r, or_j, sr_i)/∂r] r̂_ij. Alle Akkumulationen
 über Fixed-Point (ADR 0002) ⇒ deterministisch.
 

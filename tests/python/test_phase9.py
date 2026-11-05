@@ -12,8 +12,8 @@ import pytest
 
 from biooptomd import builder
 from biooptomd.nonbonded import lj_type_table
+from biooptomd.units import ONE_4PI_EPS0
 
-ONE_4PI_EPS0 = 138.935456
 KAPPA = 1.0  # 1/nm
 PDB = Path(__file__).resolve().parents[1] / "reference" / "inputs" / "dna_duplex_ions.pdb"
 
@@ -106,6 +106,40 @@ def test_gb_reference_vs_openmm(ace):
     assert e + e14 == pytest.approx(e_omm, rel=1e-6)
     assert np.abs(f + f14 - f_omm).max() < 1e-5 * _rms(f_omm)
     assert (born >= spec.gb_radius - gb_ref.OFFSET).all()  # B ≥ or (Abschirmung vergrößert B)
+
+    # Born-Radien direkt: OpenMM stellt die berechneten Werte nicht bereit. Mit q_k = 1, allen anderen
+    # Ladungen 0 und nur dem Selbstterm ist E = −½ C' (1 − e^{−κB}/ε_out)/B (I hängt nicht von q ab);
+    # B_k folgt per Bisektion (E monoton in B). C' = 138.935485 wie in OpenMM.
+    import openmm
+    from openmm import unit
+
+    gb = next(f for f in system.getForces() if isinstance(f, openmm.CustomGBForce))
+    for k in range(gb.getNumEnergyTerms()):
+        expr, kind = gb.getEnergyTermParameters(k)
+        if not expr.startswith("-0.5*138.935485"):
+            gb.setEnergyTermParameters(k, "0*" + expr, kind)  # Paar- und ACE-Term aus
+    for f in system.getForces():  # Proxys sind nicht identisch ⇒ über den Typ zuordnen
+        f.setForceGroup(1 if isinstance(f, openmm.CustomGBForce) else 0)
+    params = [gb.getParticleParameters(i) for i in range(gb.getNumParticles())]
+    for i in range(len(params)):
+        gb.setParticleParameters(i, [0.0, params[i][1], params[i][2]])
+    ctx = openmm.Context(
+        system, openmm.VerletIntegrator(0.001), openmm.Platform.getPlatformByName("Reference")
+    )
+    ctx.setPositions(pos * unit.nanometer)
+    c_omm = 138.935485
+    for k in np.linspace(0, len(params) - 1, 12).astype(int):
+        gb.setParticleParameters(int(k), [1.0, params[k][1], params[k][2]])
+        gb.updateParametersInContext(ctx)
+        e = ctx.getState(getEnergy=True, groups={1}).getPotentialEnergy()
+        e = e.value_in_unit(unit.kilojoule_per_mole)
+        lo, hi = 0.01, 10.0
+        for _ in range(200):
+            mid = 0.5 * (lo + hi)
+            e_mid = -0.5 * c_omm * (1 - np.exp(-KAPPA * mid) / 78.5) / mid
+            (lo, hi) = (mid, hi) if e_mid < e else (lo, mid)
+        assert 0.5 * (lo + hi) == pytest.approx(born[k], rel=1e-6), k
+        gb.setParticleParameters(int(k), [0.0, params[k][1], params[k][2]])
 
 
 @pytest.mark.parametrize(
@@ -289,14 +323,16 @@ def test_gb_cutoff_and_images_vs_numpy(core, box, r_c):
 
 
 @pytest.mark.gpu
-def test_gb_salt_far_field(core):
+@pytest.mark.parametrize("r", [2.5, 4.5])
+def test_gb_salt_far_field(core, r):
     """Zwei Ionen bei r ≫ B: Paarenergie E_C + E_GB (E(beide) − E(einzeln)) → Debye-Hückel
     C q_i q_j e^{−κr}/(ε_out r), rel. < 1e-3. Mit s = 0 entschirmen sich die Ionen nicht
     (H ≡ 0, B konstant), sodass die Differenz nur den Paarterm enthält; mit s > 0 käme die
-    Änderung der Selbstenergien durch die gegenseitige Entschirmung hinzu (≈ 1e-3 kJ/mol)."""
+    Änderung der Selbstenergien durch die gegenseitige Entschirmung hinzu (≈ 1e-3 kJ/mol).
+    r = 4.5 nm (nahe r_c = 5/κ) prüft die auslöschungsfreie Form des Fernfelds (FP32)."""
     from biooptomd.nonbonded import nonbonded_topology
 
-    kappa, eps_out, r = 1.2, 78.5, 2.5
+    kappa, eps_out = 1.2, 78.5
     q = np.array([1.0, -1.0])
     pos = np.array([[5.0, 5.0, 5.0], [5.0 + r, 5.0, 5.0]])
     rho, scale = np.array([0.18, 0.18]), np.zeros(2)
@@ -305,38 +341,59 @@ def test_gb_salt_far_field(core):
     def energy(p):
         types, topo = nonbonded_topology(32, sig, eps, np.zeros((0, 2), int))
         ctx = _gb_context(
-            core, 1, p, q, types, topo, rho, scale, (20.0, 20.0), kappa, eps_out, 4.8, 5.0,
+            core, 1, p, q, types, topo, rho, scale, (30.0, 30.0), kappa, eps_out, 4.8, 5.0,
             ace=False,
         )  # fmt: skip
         return ctx.energies()[0, 5]
 
     far = pos.copy()
-    far[1, 2] += 9.0  # außerhalb r_c ⇒ nur Selbstterme
+    far[1, 2] += 12.0  # außerhalb r_c ⇒ nur Selbstterme
     pair = energy(pos) - energy(far)
     dh = ONE_4PI_EPS0 * q[0] * q[1] * np.exp(-kappa * r) / (eps_out * r)
     assert pair == pytest.approx(dh, rel=1e-3)
 
 
 @pytest.mark.gpu
-def test_gb_padding_batch_determinism(core):
-    """Gleiches System allein und als Replica 2 von 4 (andere Replicas gestört): bitidentische
-    Kräfte; wiederholter Aufruf bitidentisch; Padding-Atome ohne Kraft."""
+@pytest.mark.parametrize("box", [(4.5, 4.5), (3.0, 3.5)])
+def test_gb_padding_batch_determinism(core, box):
+    """Replicas mit verschiedenen Topologien (GB-Radien), κ und ε_out je Replica, im Minimum-Image-
+    (L ≥ 2 r_c) und im Bildsummenpfad: jede Replica bitidentisch zu einem Einzelkontext; wiederholter
+    Aufruf bitidentisch; Padding-Atome ohne Kraft."""
     from test_phase4 import _random_system
 
     from biooptomd.nonbonded import nonbonded_topology, padded_atom_count
 
     rng = np.random.default_rng(92)
     n = 45
-    pos, sig, eps, q, excl = _random_system(rng, n, 4.5, 20)
-    rho, scale = rng.uniform(0.12, 0.2, n), rng.uniform(0.7, 0.9, n)
+    pos, sig, eps, q, excl = _random_system(rng, n, min(box), 20)
+    pos[:, 0] *= box[0] / min(box)
+    pos[:, 1] *= box[1] / min(box)
     types, topo = nonbonded_topology(padded_atom_count(n), sig, eps, excl)
-    one = _gb_context(core, 1, pos, q, types, topo, rho, scale, (4.5, 4.5), 0.8, 78.5, 2.0, 2.2)
-    shake = (np.arange(4) != 2)[:, None, None]
-    batch_pos = np.repeat(pos[None], 4, 0) + rng.normal(0, 0.02, (4, n, 3)) * shake
-    many = _gb_context(
-        core, 4, batch_pos, q, types, topo, rho, scale, (4.5, 4.5), 0.8, 78.5, 2.0, 2.2
-    )
-    assert np.array_equal(one.forces_fixed_point()[:, 0], many.forces_fixed_point()[:, 2])
+    radii = [rng.uniform(0.12, 0.2, n) for _ in range(2)]
+    scales = [rng.uniform(0.7, 0.9, n) for _ in range(2)]
+    setup = [(0, 0.8, 78.5), (1, 1.1, 78.5), (0, 1.1, 60.0)]  # (Topologie, κ, ε_out)
+    batch_pos = np.repeat(pos[None], 3, 0) + rng.normal(0, 0.02, (3, n, 3))
+    many = core.SimulationContext(3, n)
+    many.set_box(np.tile(np.float32(box), (3, 1)))
+    many.set_masses(np.full((3, n), 12.0, np.float32))
+    many.set_positions(batch_pos.astype(np.float32))
+    many.set_charges(np.tile(q, (3, 1)).astype(np.float32))
+    t2 = np.zeros((3, n, 2), np.int32)
+    t2[..., 0] = types
+    many.set_types(t2)
+    many.set_nonbonded_gb(
+        [topo, topo], np.array([s_[0] for s_ in setup], np.int32),
+        np.array([s_[1] for s_ in setup], np.float32), np.array([s_[2] for s_ in setup], np.float32),
+        radii, scales, r_switch=2.0, r_cutoff=2.2,
+    )  # fmt: skip
+    many.compute_forces()
+    for r_, (t, kappa, eps_out) in enumerate(setup):
+        one = _gb_context(
+            core, 1, batch_pos[r_], q, types, topo, radii[t], scales[t], box, kappa, eps_out, 2.0,
+            2.2,
+        )  # fmt: skip
+        assert np.array_equal(one.forces_fixed_point()[:, 0], many.forces_fixed_point()[:, r_]), r_
+        assert np.array_equal(one.energies_fixed_point()[0], many.energies_fixed_point()[r_])
     first = many.forces_fixed_point().copy()
     many.compute_forces()
     assert np.array_equal(first, many.forces_fixed_point())
@@ -347,27 +404,64 @@ def test_gb_padding_batch_determinism(core):
 @pytest.mark.gpu
 @pytest.mark.slow
 def test_gb_nve(core):
-    """NVE 10 ps, Δt = 1 fs, Duplex mit GB-OBC2 (Cutoff aus κ, 0.15 M, Box 8 × 8 nm): Drift
-    < 1e-4 kJ/mol/ps/Atom und Fluktuation < 1e-3·⟨E_kin⟩ (Kriterien aus Phase 3/4)."""
+    """NVE 10 ps, Δt = 0.5 fs, Duplex mit GB-OBC2 bei 1 M (r_c = 2 nm < Molekülgröße 4.4 nm: viele
+    Paare kreuzen Switching-Bereich und Born-Cutoff), Box 8 × 8 nm, ohne Constraints: Drift
+    < 1e-4 kJ/mol/ps/Atom und Fluktuation < 1e-3·⟨E_kin⟩ (Kriterien aus Phase 3/4).
+
+    Δt = 0.5 statt 1 fs: Bei 1 fs ohne Constraints driftet GB mit ≈ 1.5e-4 (DH: 2e-5). Die Drift
+    hängt nicht von r_c oder ACE ab (auch bei r_c = 12 nm) und fällt bei halbiertem Δt um Faktor
+    5–8 – Integrationsfehler der steiferen X–H-Schwingungen (GB wirkt auch zwischen gebundenen
+    Atomen), keine Kraft-Energie-Inkonsistenz (test_gb_force_energy_consistency). Mit H-Constraints
+    und 1 fs liegt GB mit −8e-5 gleichauf mit DH (−7e-5)."""
     system, top, pos = _duplex()
     pos = pos - pos.mean(axis=0) + [4.0, 4.0, 4.0]
     spec = builder.from_openmm(system, top, pos)
     n_rep, n = 2, spec.n_atoms
-    ctx, _ = builder.build_context(spec, n_rep, (8.0, 8.0), 300.0, 0.15, solvent="gb-obc2")
+    ctx, info = builder.build_context(spec, n_rep, (8.0, 8.0), 300.0, 1.0, solvent="gb-obc2")
+    assert info.r_cutoff == 2.0
     rng = np.random.default_rng(93)
     m = spec.masses
     v = rng.normal(0.0, 1.0, (n_rep, n, 3)) * np.sqrt(core.units.KB * 300.0 / m)[None, :, None]
     v -= (v * m[None, :, None]).sum(axis=1, keepdims=True) / m.sum()
     ctx.set_velocities(v)
-    ctx.set_integrator(0.001, 0.0, seed=0)
-    tracker = ctx.add_energy_tracker(stride=10, capacity=1000)
-    ctx.step(10_000)
+    ctx.set_integrator(0.0005, 0.0, seed=0)
+    tracker = ctx.add_energy_tracker(stride=20, capacity=1000)
+    ctx.step(20_000)
     res = tracker.result()
     en = res["energies"]
     total = en[:, :, 0] + en[:, :, 1:].sum(axis=2)
-    t_ps = res["steps"] * 0.001
+    t_ps = res["steps"] * 0.0005
     drift = np.array([np.polyfit(t_ps, total[r], 1)[0] for r in range(n_rep)]) / n
     fluct = total.std(axis=1) / en[:, :, 0].mean(axis=1)
     assert np.all(np.abs(drift) < 1e-4), f"Drift {drift}"
     assert np.all(fluct < 1e-3), f"Fluktuation {fluct}"
     assert ctx.status() == 0
+
+
+@pytest.mark.gpu
+def test_gb_force_energy_consistency(core):
+    """GPU-Kraft = −∇(GPU-Energie) für den Duplex mit GB-OBC2 und r_c = 2 nm: Energiedifferenz
+    zwischen x ± h·u (Zufallsrichtung, h = 1e-4 nm je Atom) vs. Trapezregel −½ Σ (F₊ + F₋)·Δx mit
+    der tatsächlich verwendeten (float32-gerundeten) Verschiebung Δx, rel. < 1e-3. Gleiche Prüfung
+    für Debye-Hückel als Vergleich (beide ≈ 3–4e-4: Fixed-Point-Energie und FP32-Kräfte)."""
+    system, top, pos = _duplex()
+    pos = pos - pos.mean(axis=0) + [4.0, 4.0, 4.0]
+    spec = builder.from_openmm(system, top, pos)
+    rng = np.random.default_rng(94)
+    u = rng.normal(0.0, 1.0, pos.shape)
+    u /= np.linalg.norm(u, axis=1, keepdims=True)
+    h = 1e-4
+    p0 = _f32(pos)
+    for solvent in ("gb-obc2", "debye-huckel"):
+        out = []
+        for p in (p0 + h * u, p0 - h * u):
+            ctx, _ = builder.build_context(
+                spec, 1, (8.0, 8.0), 300.0, 1.0, positions=p, solvent=solvent
+            )
+            ctx.compute_forces()
+            e = ctx.energies_fixed_point()[0].astype(np.float64).sum() / 2.0**32
+            f = ctx.forces()[0, : spec.n_atoms, :3].astype(np.float64)
+            out.append((e, f, ctx.positions_precise()[0, : spec.n_atoms]))
+        (e_p, f_p, x_p), (e_m, f_m, x_m) = out
+        predicted = -0.5 * np.sum((f_p + f_m) * (x_p - x_m))
+        assert e_p - e_m == pytest.approx(predicted, rel=1e-3), solvent

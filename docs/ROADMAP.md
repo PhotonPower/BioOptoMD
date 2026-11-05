@@ -158,7 +158,8 @@ Dokumentation, Verzeichnisstruktur, Agenten-Anweisungen, Build-Entwürfe.
 
 **Abnahmetests (Vorschlag, mit ADR 0010 vom Projektinhaber zu bestätigen)**
 - `test_phase9.py::test_gb_reference_vs_openmm` (`reference`) – NumPy-Referenz vs. OpenMM-`CustomGBForce`
-  (obc2.xml, κ > 0, ACE an/aus): Born-Radien rel. < 1e-6, Energie rel. < 1e-6.
+  (obc2.xml, κ > 0, ACE an/aus): Energie rel. < 1e-6; Born-Radien einzelner Atome (aus dem Selbstterm
+  mit Einzelladung rekonstruiert, OpenMM stellt sie nicht bereit) rel. < 1e-6.
 - `test_phase9.py::test_gb_reference_forces_fd` – Referenzkräfte vs. finite Differenzen, rel. < 1e-5.
 - `test_phase9.py::test_gb_born_radii_vs_numpy` – GPU-Born-Radien vs. Referenz, rel. < 1e-5.
 - `test_phase9.py::test_gb_vs_openmm` (`reference`) – isolierter Duplex (r_c größer als das Molekül):
@@ -166,8 +167,12 @@ Dokumentation, Verzeichnisstruktur, Agenten-Anweisungen, Build-Entwürfe.
 - `test_phase9.py::test_gb_cutoff_and_images_vs_numpy` – r_c < Molekülgröße und L < 2 r_c: GPU vs. Referenz
   (gleiches Switching, Bildsumme), Kräfte < 1e-4 RMS.
 - `test_phase9.py::test_gb_salt_far_field` – zwei Ionen bei r ≫ B: E_C + E_GB → Debye-Hückel, rel. < 1e-3.
-- `test_phase9.py::test_gb_padding_batch_determinism` – Padding ohne Beitrag, Replicas unabhängig, bitidentisch.
-- `test_phase9.py::test_gb_nve` (`slow`) – NVE 10 ps, Δt = 1 fs: Drift im Rahmen von Phase 3.
+- `test_phase9.py::test_gb_padding_batch_determinism` – Padding ohne Beitrag, Replicas mit verschiedenen
+  Topologien, κ und ε_out unabhängig und bitidentisch (Minimum-Image- und Bildsummenpfad).
+- `test_phase9.py::test_gb_force_energy_consistency` – GPU-Kraft = −∇(GPU-Energie) (Richtungsableitung), rel. < 1e-3.
+- `test_phase9.py::test_gb_nve` (`slow`) – NVE 10 ps, Δt = 0.5 fs ohne Constraints, r_c kleiner als das Molekül:
+  Drift im Rahmen von Phase 3. (Bei 1 fs ohne Constraints driftet GB mit ≈ 1.5e-4 – Integrationsfehler, skaliert
+  stark mit Δt, unabhängig von r_c; mit H-Constraints bei 1 fs gleichauf mit DH.)
 
 - Generalized Born OBC2 (ADR 0004)
 - Replica-Exchange-Moves (Temperatur-Austausch auf Host-Seite)

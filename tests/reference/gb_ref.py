@@ -13,7 +13,7 @@ Mit ρ_i (intrinsischer Radius), δ = 0.009 nm, or_i = ρ_i − δ, sr_i = s_i �
     E_LJ   = 4ε[(σ/r)¹² − (σ/r)⁶]  (nur nicht ausgeschlossene Paare)
 
 Cutoff (optional): nicht ausgeschlossene Paare (E_LJ + E_C + E_GB)·S(r) für r < r_c, ausgeschlossene
-Paare E_GB ohne Switching; Born-Integrale hart bei r_c. Periodisch (optional, ``n_max > 0``): Summe
+Paare E_GB ohne Switching; Born-Integrale mit derselben Switching-Funktion: H·S(r) (glatt bei r_c). Periodisch (optional, ``n_max > 0``): Summe
 über Bilder n = (n_x L_x, n_y L_y) der Rohabstände; Exclusions nur für das Minimum-Image-Bild;
 Eigenbilder: I_i += H(|n|, or_i, sr_i), Energie ½ (E_C + E_GB + E_LJ)·S.
 
@@ -25,7 +25,8 @@ from __future__ import annotations
 import numpy as np
 from nonbonded_ref import switch
 
-ONE_4PI_EPS0 = 138.935456
+from biooptomd.units import ONE_4PI_EPS0
+
 OFFSET = 0.009  # nm
 ACE_PREFACTOR = 28.3919551  # 4π γ, kJ/mol/nm²
 ACE_PROBE = 0.14  # nm
@@ -33,7 +34,7 @@ OBC2 = (1.0, 0.8, 4.85)  # α, β, γ
 
 
 def h_integral(r, o, s):
-    """HCT-Integral H(r, or_i, sr_j) und dH/dr (vektorisiert)."""
+    """HCT-Integral H(r, or_i, sr_j) [1/nm] und dH/dr [1/nm²] für r, or, sr in nm (vektorisiert)."""
     r = np.asarray(r, np.float64)
     u = r + s
     d = np.abs(r - s)
@@ -100,6 +101,8 @@ def gb_nonbonded(
         nonbonded_ref; excluded (m, 2); kappa [1/nm]; eps_out, eps_in; box (L_x, L_y) oder None;
         n_max Bilder je Richtung; r_s, r_c [nm] oder None (kein Cutoff).
     """
+    if box is not None and n_max < 1:
+        raise ValueError("gb_nonbonded: periodisch nur mit n_max ≥ 1 (kein Minimum Image)")
     pos = np.asarray(pos, np.float64)
     q = np.asarray(q, np.float64)
     rho = np.asarray(rho, np.float64)
@@ -122,11 +125,13 @@ def gb_nonbonded(
     # Born-Integrale (beide Richtungen; Eigenbild: jede Verschiebung zählt einmal für i)
     h_ij, dh_ij = h_integral(r, o[i], sr[j])  # Beitrag zu I_i durch j
     h_ji, dh_ji = h_integral(r, o[j], sr[i])  # Beitrag zu I_j durch i
+    if r_c is not None:  # geglätteter Cutoff der Born-Integrale (ADR 0010)
+        s_h, ds_h = switch(r, r_s, r_c)
+        h_ij, dh_ij = h_ij * s_h, dh_ij * s_h + h_ij * ds_h
+        h_ji, dh_ji = h_ji * s_h, dh_ji * s_h + h_ji * ds_h
     integral = np.zeros(n)
     np.add.at(integral, i, h_ij)
-    np.add.at(integral, j, np.where(self_img, 0.0, h_ji))
-    if box is not None:  # Eigenbilder mit n und −n: _image_pairs liefert beide, i = j
-        pass
+    np.add.at(integral, j, np.where(self_img, 0.0, h_ji))  # Eigenbilder: n und −n je einmal
     born, dborn = born_radii(integral, rho)
 
     c = ONE_4PI_EPS0

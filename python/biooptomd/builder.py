@@ -223,7 +223,8 @@ def _obc2_parameters(gb, charges):
     """(ρ, s) aus einer OpenMM-``CustomGBForce`` von ``implicit/obc2.xml`` (Parameter charge, or, sr).
 
     Prüft, dass es OBC2 ist (Born-Radius-Ausdruck mit 0.8/4.85) und die Ladungen mit der
-    NonbondedForce übereinstimmen; ρ = or + 0.009 nm, s = sr/or.
+    NonbondedForce übereinstimmen; ρ = or + 0.009 nm, s = sr/or. ε_in, ε_out, κ und der SA-Term des
+    OpenMM-Systems werden nicht übernommen – sie kommen aus :func:`build_context`.
     """
     names = [gb.getPerParticleParameterName(k) for k in range(gb.getNumPerParticleParameters())]
     if names != ["charge", "or", "sr"]:

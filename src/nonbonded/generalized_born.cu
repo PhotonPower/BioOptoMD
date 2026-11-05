@@ -91,19 +91,20 @@ __device__ __forceinline__ bool tile_setup(const DeviceState& s, const int2* til
   return true;
 }
 
-/// Pass (a): I_i += H(r, or_i, sr_j), I_j += H(r, or_j, sr_i) für alle Paare innerhalb r_c
-/// (auch ausgeschlossene); Eigenbild: I_i += H(|n|, or_i, sr_i) je n ≠ 0.
+/// Pass (a): I_i += H(r, or_i, sr_j)·S(r), I_j += H(r, or_j, sr_i)·S(r) für alle Paare innerhalb
+/// r_c (auch ausgeschlossene); Eigenbild: I_i += H(|n|, or_i, sr_i)·S je n ≠ 0. S glättet den
+/// Cutoff (ein harter Schnitt erzeugt bei jedem Kreuzen von r_c einen Energiesprung, ADR 0010).
 template <bool kImages>
 __global__ void __launch_bounds__(kWarpsPerBlock * 32)
     k_gb_integrals(DeviceState s, const int2* tile_pairs, int n_tile_pairs, const float4* gb_atom,
-                   const int* gb_offset, float r_c2, float r_c, const float4* bounds,
+                   const int* gb_offset, SwitchParams sw, const float4* bounds,
                    long long* integral) {
   __shared__ float4 sh_pos[kWarpsPerBlock][32];
   __shared__ float2 sh_gb[kWarpsPerBlock][32];
   __shared__ float sh_acc[kWarpsPerBlock][32];
   const int warp = threadIdx.x / 32, a = threadIdx.x % 32;
   TileSetup t;
-  if (!tile_setup<kImages>(s, tile_pairs, n_tile_pairs, bounds, r_c,
+  if (!tile_setup<kImages>(s, tile_pairs, n_tile_pairs, bounds, sw.r_c,
                            blockIdx.x * kWarpsPerBlock + warp, a, t))
     return;
   const int off = gb_offset[blockIdx.y];
@@ -130,11 +131,12 @@ __global__ void __launch_bounds__(kWarpsPerBlock * 32)
           d.y += static_cast<float>(ny) * t.box.y;
         }
         const float r2 = d.x * d.x + d.y * d.y + d.z * d.z;
-        if (r2 < r_c2 && r2 >= units::EPS_R2) {
+        if (r2 < sw.r_c2 && r2 >= units::EPS_R2) {
           const float dist = sqrtf(r2);
-          float dh;
-          acc_i += h_integral(dist, gi.x, gb_j.y, dh);
-          if (!self_image) sh_acc[warp][b] += h_integral(dist, gb_j.x, gi.y, dh);
+          float dh, sv, ds;
+          detail::switching(dist, sw, sv, ds);
+          acc_i += sv * h_integral(dist, gi.x, gb_j.y, dh);
+          if (!self_image) sh_acc[warp][b] += sv * h_integral(dist, gb_j.x, gi.y, dh);
         }
       }
     }
@@ -263,22 +265,32 @@ __global__ void __launch_bounds__(kWarpsPerBlock * 32)
         const float inv_f = 1.0f / f;
         const float ek = expf(-sc.x * f);
         const float g = inv_eps_in - ek * inv_eps_out;
-        float v = -c * g * qq * inv_f;
         const float dv_df = -c * qq * (sc.x * ek * inv_eps_out * inv_f - g * inv_f * inv_f);
         const float df_dr = dist * (1.0f - 0.25f * ex) * inv_f;
         const float tb = 0.5f * ex * (1.0f + 0.25f * r2 / pp) * inv_f;  // ∂f/∂B_i = B_j·tb
-        float dv_dr = dv_df * df_dr;                                    // dV/dr
+        float v, dv_dr;                                                 // V und dV/dr
         float sv = 1.0f;
-        if (!excluded) {
+        if (excluded) {
+          v = -c * g * qq * inv_f;
+          dv_dr = dv_df * df_dr;
+        } else {
+          // E_C + E_GB = C qq [(1/ε_in)(1/r − 1/f) + e^{−κf}/(ε_out f)] ohne Auslöschung:
+          // 1/r − 1/f = δ/(r f), δ = f − r = P e^{−r²/4P}/(f + r), dδ/dr = −(δ + r e/4)/f.
+          // (Die direkte Summe C qq/(ε_in r) − C qq g/f verliert im Fernfeld ~e^{κr} an Stellen.)
+          const float delta = pp * ex / (f + dist);
+          const float ddelta = -(delta + 0.25f * dist * ex) * inv_f;
+          const float t1 = delta * inv_r * inv_f;
+          const float dt1 = ddelta * inv_r * inv_f - t1 * (inv_r + df_dr * inv_f);
+          const float t2 = ek * inv_f;
+          const float dt2 = -t2 * (sc.x + inv_f) * df_dr;
+          v = c * qq * (inv_eps_in * t1 + inv_eps_out * t2);
+          dv_dr = c * qq * (inv_eps_in * dt1 + inv_eps_out * dt2);
           if (se.y != 0.0f) {  // ε = 0: kein LJ (vermeidet 0·inf = NaN bei r ≪ σ)
             const float sr2 = se.x * se.x * inv_r * inv_r;
             const float sr6 = sr2 * sr2 * sr2;
             v += 4.0f * se.y * (sr6 * sr6 - sr6);
             dv_dr -= 4.0f * se.y * (12.0f * sr6 * sr6 - 6.0f * sr6) * inv_r;
           }
-          const float v_c = c * qq * inv_eps_in * inv_r;
-          v += v_c;
-          dv_dr -= v_c * inv_r;
           float ds;
           detail::switching(dist, sw, sv, ds);
           dv_dr = dv_dr * sv + v * ds;
@@ -320,19 +332,19 @@ __global__ void __launch_bounds__(kWarpsPerBlock * 32)
   detail::warp_add_energy(s, r, kEnergyNonbonded, energy);
 }
 
-/// Pass (e): F_i −= [dE/dI_i ∂H(r, or_i, sr_j)/∂r + dE/dI_j ∂H(r, or_j, sr_i)/∂r] r̂_ij,
-/// F_j = −F_i; dE/dI = ∂E/∂B · dB/dI. Eigenbilder ohne Kraft.
+/// Pass (e): F_i −= [dE/dI_i ∂(H_ij S)/∂r + dE/dI_j ∂(H_ji S)/∂r] r̂_ij, F_j = −F_i;
+/// dE/dI = ∂E/∂B · dB/dI. Eigenbilder ohne Kraft.
 template <bool kImages>
 __global__ void __launch_bounds__(kWarpsPerBlock * 32)
     k_gb_chain(DeviceState s, const int2* tile_pairs, int n_tile_pairs, const float4* gb_atom,
-               const int* gb_offset, float r_c2, float r_c, const float4* bounds,
-               const long long* de_db, const float* db_di) {
+               const int* gb_offset, SwitchParams sw, const float4* bounds, const long long* de_db,
+               const float* db_di) {
   __shared__ float4 sh_pos[kWarpsPerBlock][32];
   __shared__ float4 sh_gb[kWarpsPerBlock][32];  // (or, sr, dE/dI, 0)
   __shared__ float3 sh_fj[kWarpsPerBlock][32];
   const int warp = threadIdx.x / 32, a = threadIdx.x % 32;
   TileSetup t;
-  if (!tile_setup<kImages>(s, tile_pairs, n_tile_pairs, bounds, r_c,
+  if (!tile_setup<kImages>(s, tile_pairs, n_tile_pairs, bounds, sw.r_c,
                            blockIdx.x * kWarpsPerBlock + warp, a, t))
     return;
   const int off = gb_offset[blockIdx.y];
@@ -361,12 +373,14 @@ __global__ void __launch_bounds__(kWarpsPerBlock * 32)
           d.y += static_cast<float>(ny) * t.box.y;
         }
         const float r2 = d.x * d.x + d.y * d.y + d.z * d.z;
-        if (!(r2 < r_c2 && r2 >= units::EPS_R2)) continue;
+        if (!(r2 < sw.r_c2 && r2 >= units::EPS_R2)) continue;
         const float dist = sqrtf(r2);
-        float dh_ij, dh_ji;
-        h_integral(dist, gbi.x, g_j.y, dh_ij);
-        h_integral(dist, g_j.x, gbi.y, dh_ji);
-        const float cf = -(dedi_i * dh_ij + g_j.z * dh_ji) / dist;
+        float dh_ij, dh_ji, sv, ds;
+        const float h_ij = h_integral(dist, gbi.x, g_j.y, dh_ij);
+        const float h_ji = h_integral(dist, g_j.x, gbi.y, dh_ji);
+        detail::switching(dist, sw, sv, ds);
+        const float cf =
+            -(dedi_i * (dh_ij * sv + h_ij * ds) + g_j.z * (dh_ji * sv + h_ji * ds)) / dist;
         const float3 fv = make_float3(cf * d.x, cf * d.y, cf * d.z);
         fi.x += fv.x;
         fi.y += fv.y;
@@ -453,9 +467,9 @@ void TiledGeneralizedBorn::compute(DeviceState& s, cudaStream_t stream) {
 
   const auto run = [&](auto tag) {
     constexpr bool kImg = decltype(tag)::value;
-    k_gb_integrals<kImg><<<grid, block, 0, stream>>>(
-        s, d_tile_pairs_.data(), n_tile_pairs_, d_gb_atom_.data(), d_gb_offset_.data(), sw.r_c2,
-        sw.r_c, d_tile_bounds_.data(), d_integral_.data());
+    k_gb_integrals<kImg><<<grid, block, 0, stream>>>(s, d_tile_pairs_.data(), n_tile_pairs_,
+                                                     d_gb_atom_.data(), d_gb_offset_.data(), sw,
+                                                     d_tile_bounds_.data(), d_integral_.data());
     BOMD_LAUNCH_CHECK();
     k_gb_radii<<<dim3(detail::elementwise_grid(s.n_pad), s.n_replicas), detail::kElementwiseBlock,
                  0, stream>>>(s, d_gb_atom_.data(), d_gb_offset_.data(), d_screening_.data(),
@@ -468,8 +482,8 @@ void TiledGeneralizedBorn::compute(DeviceState& s, cudaStream_t stream) {
         d_born_.data(), d_de_db_.data());
     BOMD_LAUNCH_CHECK();
     k_gb_chain<kImg><<<grid, block, 0, stream>>>(
-        s, d_tile_pairs_.data(), n_tile_pairs_, d_gb_atom_.data(), d_gb_offset_.data(), sw.r_c2,
-        sw.r_c, d_tile_bounds_.data(), d_de_db_.data(), d_db_di_.data());
+        s, d_tile_pairs_.data(), n_tile_pairs_, d_gb_atom_.data(), d_gb_offset_.data(), sw,
+        d_tile_bounds_.data(), d_de_db_.data(), d_db_di_.data());
     BOMD_LAUNCH_CHECK();
   };
   if (images)
