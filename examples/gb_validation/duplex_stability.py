@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import time
 from pathlib import Path
 
@@ -35,6 +36,31 @@ FRAME_STEPS = 25_000  # 100 ps
 CHUNK_FRAMES = 100  # Checkpoint alle 10 ns
 HBOND_CUT = 0.35  # nm
 PURINES = ("DA", "DG")
+
+
+def atomic_savez(path: Path, **arrays) -> None:
+    """np.savez über eine temporäre Datei + os.replace (kein halb geschriebener Stand)."""
+    tmp = path.with_name(path.name + ".tmp")
+    with open(tmp, "wb") as f:
+        np.savez(f, **arrays)
+    os.replace(tmp, path)
+
+
+def atomic_checkpoint(ctx, path: Path, **kw) -> None:
+    tmp = path.with_name(path.name + ".tmp")
+    bio.save_checkpoint(ctx, tmp, **kw)
+    os.replace(tmp, path)
+
+
+def resume_frames(step: int, steps_per_frame: int, n_series: int) -> int:
+    """Frames, die zum Checkpoint gehören. series wird vor dem Checkpoint geschrieben, kann also
+    höchstens einen Block mehr enthalten (Abbruch dazwischen) – der wird verworfen."""
+    n = step // steps_per_frame
+    if step % steps_per_frame or n > n_series:
+        raise RuntimeError(
+            f"Checkpoint (Schritt {step}) passt nicht zur Zeitreihe ({n_series} Frames)"
+        )
+    return n
 
 
 def load(model: str):
@@ -122,9 +148,11 @@ def main(argv=None):
     n_frames = round(args.ns * 1000 / (FRAME_STEPS * DT))
     series_path, ckpt = args.out / "series.npz", args.out / "checkpoint.npz"
     series = np.zeros((0, args.replicas, 5))
-    if ckpt.exists() and series_path.exists():
-        bio.load_checkpoint(ctx, ckpt)
+    if ckpt.exists():
+        if not series_path.exists():
+            raise RuntimeError(f"{ckpt} ohne {series_path}: Ausgabeverzeichnis prüfen")
         series = np.load(series_path)["series"]
+        series = series[: resume_frames(bio.load_checkpoint(ctx, ckpt), FRAME_STEPS, len(series))]
     t0 = time.perf_counter()
     while len(series) < n_frames:
         block = []
@@ -135,8 +163,8 @@ def main(argv=None):
         if ctx.status() != 0:
             raise RuntimeError(f"Statuswort {ctx.status()}")
         series = np.concatenate([series, np.array(block)])
-        np.savez(series_path, series=series, time_ns=np.arange(1, len(series) + 1) * 0.1)
-        bio.save_checkpoint(ctx, ckpt)
+        atomic_savez(series_path, series=series, time_ns=np.arange(1, len(series) + 1) * 0.1)
+        atomic_checkpoint(ctx, ckpt)
         print(
             f"{args.model}: {len(series) * 0.1:.1f} ns, {time.perf_counter() - t0:.0f} s",
             flush=True,
@@ -151,6 +179,16 @@ def main(argv=None):
         "second_half_mean": {k: float(second_half[..., i].mean()) for i, k in enumerate(names)},
         "second_half_replica_means": {
             k: second_half[..., i].mean(axis=0).tolist() for i, k in enumerate(names)
+        },
+        # Standardfehler über die Replicas (gleiche Startstruktur: Rauschmaß, keine Präzision)
+        "second_half_replica_sem": {
+            k: float(second_half[..., i].mean(axis=0).std(ddof=1) / np.sqrt(args.replicas))
+            for i, k in enumerate(names)
+        } if args.replicas > 1 else {},
+        "block_means_10ns": {
+            k: series[: len(series) // CHUNK_FRAMES * CHUNK_FRAMES, :, i]
+            .reshape(-1, CHUNK_FRAMES, args.replicas).mean(axis=(1, 2)).tolist()
+            for i, k in enumerate(names)
         },
     }  # fmt: skip
     (args.out / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")

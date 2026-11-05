@@ -279,6 +279,8 @@ def test_remd_multiple_ladders():
     beta = 1.0 / (KB * temps_all)
     m, n = len(TEMPS), len(temps_all)
     n_acc = np.zeros(2, int)
+    exp_att = np.zeros(n - 1, np.int64)
+    exp_acc = np.zeros(n - 1, np.int64)
     for cycle in range(10):
         ctx.step(100)
         x = ctx.positions_precise()[:, : spec.n_atoms, :3]
@@ -300,13 +302,17 @@ def test_remd_multiple_ladders():
                 - beta[i] * u_old[a]
                 - beta[j] * u_old[b]
             )
+            exp_att[i] += 1
             if delta <= 0.0 or mirror.random() < np.exp(-delta):
                 expected[a], expected[b] = j, i
                 n_acc[i // m] += 1
+                exp_acc[i] += 1
         remd.attempt()
         assert np.array_equal(remd.state, expected), cycle
         assert np.array_equal(remd.state // m, np.arange(n) // m)
         np.testing.assert_array_equal(ctx.temperatures(), temps_all[remd.state].astype(np.float32))
+    np.testing.assert_array_equal(remd.attempts, exp_att)
+    np.testing.assert_array_equal(remd.accepted, exp_acc)
     assert remd.attempts[m - 1] == 0 and remd.accepted[m - 1] == 0
     assert (n_acc > 0).all(), n_acc
     with pytest.raises(ValueError, match="ladders"):
@@ -314,3 +320,31 @@ def test_remd_multiple_ladders():
     with pytest.raises(ValueError, match="temperatures_k"):
         ReplicaExchange(ctx, temps_all, ionic_strength_molar=IONIC, ladders=2)
     assert ctx.status() == 0
+
+
+def test_remd_explicit_screening_ladders():
+    """kappa/eps_r explizit bei ladders=2: (m,) wird je Leiter wiederholt, skalar gilt für alle;
+    der Kontext übernimmt die Werte je Slot (Energie = frischer Kontext mit denselben Werten)."""
+    rng = np.random.default_rng(4)
+    spec = _charged_system(rng)
+    temps_all = np.tile(TEMPS, 2)
+    ctx, _ = _remd_context(spec, temps=temps_all)
+    kappa = np.array([1.30, 1.35, 1.40, 1.45])  # 5/min κ < r_c der Leiter (keine Warnung)
+    remd = ReplicaExchange(ctx, TEMPS, kappa=kappa, eps_r=70.0, ladders=2)
+    np.testing.assert_array_equal(remd.kappa, np.tile(kappa, 2))
+    np.testing.assert_array_equal(remd.eps_r, np.full(8, 70.0))
+    x = ctx.positions_precise()[:, : spec.n_atoms, :3]
+    fresh, _ = builder.build_context(
+        spec, 8, (4.0, 4.0), temps_all, IONIC, positions=x, types=np.ones(spec.n_atoms, np.int32),
+        r_cutoff=ctx.nonbonded_cutoff, kappa=np.tile(kappa, 2), eps_r=70.0,
+    )  # fmt: skip
+    fresh.add_planar_surface(
+        np.array([0.0, 2.0], np.float32), np.array([0.0, 0.3], np.float32), phi0=3.0,
+        kappa=np.tile(kappa, 2).astype(np.float32),
+    )  # fmt: skip
+    fresh.compute_forces()
+    np.testing.assert_allclose(
+        ctx.energies()[:, 1:].sum(axis=1), fresh.energies()[:, 1:].sum(axis=1), rtol=1e-9
+    )
+    with pytest.raises(ValueError, match="kappa/eps_r"):
+        ReplicaExchange(ctx, TEMPS, kappa=np.tile(kappa, 2), eps_r=70.0, ladders=2)

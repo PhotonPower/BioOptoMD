@@ -23,7 +23,7 @@ Die Vorschläge aus den Reviews vom 2026-11-04 (inklusive der Nachträge aus Rev
 | OQ-12 | assumption | Gouy-Chapman-Term für Atome hinter der Wand (ζ < 0): wie fortsetzen? | – | V = q Φ0 konstant, F = 0 (energiekonsistent; die 9-3-Wand verhindert ζ < 0 praktisch). | – (Bestätigung offen) |
 | OQ-13 | resolved | Widerspruch PHYSICS_MODEL §4.1 ↔ ADR 0002: Clamp bei 0.1 σ erzeugte Kräfte ≫ 2³¹, Fixed-Point-Summen konnten überlaufen. | – | Entschieden 2026-11-03 (Projektinhaber): Kraftschranke für ζ_c + Sättigung pro Beitrag + Geräte-Statusflags, siehe ADR 0008. | Projektinhaber (2026-11-03) |
 | OQ-14 | open | Welcher Temperaturschätzer soll gemeldet werden? Die kinetische Temperatur am vollen BAOAB-Schritt ist bei Δt = 4 fs um ~10 % zu niedrig (PHYSICS_MODEL §1), obwohl die Konfigurationen korrekt bei 300 K gesampelt werden. Alternativen: Geschwindigkeiten nach dem O-Schritt (Halbschritt), konfigurationelle Temperatur, oder nur dokumentieren. | – | Unverändert: E_kin am vollen Schritt, Bias dokumentiert. | – (Bestätigung offen) |
-| OQ-15 | assumption | GB-Modell und Radiensatz für Nukleinsäuren: OBC2 (mbondi2, ADR 0004) oder GB-neck2 (GBn2, mbondi3, Nguyen et al. 2014), das für DNA/RNA-Strukturen als deutlich besser gilt? | – | Projektinhaber 2026-11-05: zuerst OBC2 mit mbondi2 und Salzkorrektur (ADR 0010); GBn2 mit mbondi3 und Nukleinsäure-Parametern als zweites Modell ergänzt (ADR 0012, Phase 9.3). **Entschieden 2026-11-05 (§OQ-15):** GBn2 als Default für Nukleinsäure-Systeme; Validierung mit OL21: (a) Duplex-Stabilität bestanden 2026-11-05 (GBn2 stabiler und näher am Kristall als OBC2), (b) Hairpin offen. | Projektinhaber (2026-11-05) |
+| OQ-15 | assumption | GB-Modell und Radiensatz für Nukleinsäuren: OBC2 (mbondi2, ADR 0004) oder GB-neck2 (GBn2, mbondi3, Nguyen et al. 2014), das für DNA/RNA-Strukturen als deutlich besser gilt? | – | Projektinhaber 2026-11-05: zuerst OBC2 mit mbondi2 und Salzkorrektur (ADR 0010); GBn2 mit mbondi3 und Nukleinsäure-Parametern als zweites Modell ergänzt (ADR 0012, Phase 9.3). **Entschieden 2026-11-05 (§OQ-15):** GBn2 als Default für Nukleinsäure-Systeme; Validierung mit OL21: (a) Duplex-Stabilität nach Auswertung auf der 100-ns-Skala bestanden (Claude, 2026-11-05; Bestätigung durch den Projektinhaber offen), (b) Hairpin 1PQT läuft. | Projektinhaber (2026-11-05) |
 | OQ-16 | open | GB nahe der Oberfläche: Die Wand (Graphen/Gold) ist im GB-Modell Lösungsmittel; die dielektrische Grenze (Desolvatation an der Oberfläche, Bildladungen) fehlt. Wie modellieren (Wand als Niedrig-ε-Halbraum in den Born-Integralen, ImageChargeForce)? Folgen: Desolvatation an der Wand fehlt, ACE überschätzt die zugängliche Fläche an der Wand, der Gouy-Chapman-Wandterm arbeitet weiter mit κ (konsistent, aber nicht aus GB abgeleitet). | – | Vorerst nicht modelliert, in ADR 0010 dokumentiert. | – (offen) |
 | OQ-17 | open | Replica Exchange mit Gouy-Chapman: Ist Φ0 der diffusen Schicht über die Temperaturleiter konstant (fest vorgegebenes Potential) oder folgt es bei fester Oberflächenladung der Grahame-Gleichung Φ0(T, κ)? | – | Φ0 fest über alle Zustände; κ folgt dem Zustand (ADR 0011). | – (offen) |
 
@@ -207,7 +207,9 @@ Akzeptanz: GBn2 mindestens so stabil wie OBC2 und strukturell näher am Experime
 bewerten (z. B. GB-Neck3 oder OL21-angepasste Radien).
 
 **Ergebnis (a), 2026-11-05** (`examples/gb_validation/duplex_stability.py`, Seed 2026, RTX 3090;
-Mittel über 50–100 ns, ± Standardfehler über die 4 Replicas). Referenz ist die Startstruktur: 1BNA
+Mittel über 50–100 ns, ± Standardfehler über die 4 Replicas. Alle Replicas starten aus derselben
+Struktur, das ± ist daher ein Rauschmaß, keine Präzision; „0.84 ± 0.00“ heißt: alle 4 Replicas sitzen
+bei 10/12 intakten Paaren fest. Referenz ist die Startstruktur: 1BNA
 mit Wasserstoffen, 300 Schritte minimiert (OL15, Debye-Hückel), 0.068 nm Schweratom-RMSD zum Kristall.
 
 | Größe | GBn2 | OBC2 |
@@ -226,7 +228,8 @@ mit Wasserstoffen, 300 Schritte minimiert (OL15, Debye-Hückel), 0.068 nm Schwer
   ob das ein beginnender Trend oder Schwankung ist, klärt erst ein längerer Lauf.
 - Keine Statusfehler, keine Konstraint-Probleme; Durchsatz ≈ 1000 ns/Tag je Replica (4 Replicas).
 
-**Bewertung (a):** Akzeptanzkriterium erfüllt. GBn2 hält den Duplex stabiler als OBC2 und bleibt
+**Bewertung (a), Einschätzung Claude:** Akzeptanzkriterium auf der 100-ns-Skala erfüllt; ob GBn2 in
+längeren Läufen ebenfalls ausfranst (OBC2 brauchte ≈ 60 ns), ist offen. GBn2 hält den Duplex stabiler als OBC2 und bleibt
 deutlich näher an der Kristallstruktur (Kern 0.15 statt 0.20 nm). Einschränkungen: Furchenbreiten
 wurden nicht direkt ausgewertet, der minimale P–P-Abstand ist nur ein grobes Ersatzmaß und
 unterscheidet die Modelle nicht. Gemessen wurde ein einziges Sequenzsystem bei einem Seed. (b)

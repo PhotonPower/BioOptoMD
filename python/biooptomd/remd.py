@@ -105,7 +105,13 @@ class ReplicaExchange:
     def _per_state(self, values):
         """Skalar oder (Leiterlänge,) → je globalem Zustand."""
         v = np.asarray(values, np.float64)
-        return v if v.ndim == 0 else np.tile(np.broadcast_to(v, (self.ladder_size,)), self.ladders)
+        if v.ndim == 0:
+            return v
+        if v.shape not in ((1,), (self.ladder_size,)):
+            raise ValueError(
+                f"kappa/eps_r: skalar oder je Zustand einer Leiter ({self.ladder_size},)"
+            )
+        return np.tile(np.broadcast_to(v, (self.ladder_size,)), self.ladders)
 
     def _apply(self, state):
         self.ctx.set_temperatures(self.temperatures[state].astype(np.float32))

@@ -11,13 +11,13 @@ REMD: 4 unabhängige Leitern (``ReplicaExchange(ladders=4)``) zu 8 Temperaturen,
 NMR-Struktur, Leitern 2, 3 aus zwei verschiedenen gestreckten, ungepaarten Strukturen.
 
 Gestreckte Startstrukturen: OpenMM (gleiches Kraftfeld und GB-Modell, NoCutoff), Flat-Bottom-Restraint
-k = 1000 kJ/(mol·nm²) auf den Abstand C1'(G1)–C1'(C7) ≥ 3.0 nm, 1 ns bei 300 K, dann 1 ns bei 370 K
-mit verschiedenen Seeds; geprüft wird: kein Stammpaar intakt.
+k = 1000 kJ/(mol·nm²) auf den Abstand C1'(G1)–C1'(C7) ≥ 3.0 nm, 1 ns bei 300 K, 1 ns bei 370 K und
+100 ps bei 300 K (Restraint durchgehend aktiv), zwei Seeds; geprüft wird: kein Stammpaar intakt.
 
 Messgrößen alle 100 ps je Slot, dem Zustand des Slots zugeordnet:
 - RMSD [nm] der Schweratome zu NMR-Modell 1 (Kabsch), alle 7 nt.
 - Stammpaare G1:C7 und C2:G6 intakt (N1(Purin)–N3(Pyrimidin) < 0.35 nm).
-- gefaltet ⇔ beide Stammpaare intakt und RMSD < 0.25 nm. ASSUMPTION: Schwelle; NMR-Ensemble
+- gefaltet ⇔ beide Stammpaare intakt und RMSD < 0.25 nm. ASSUMPTION(OQ-15): Schwelle; NMR-Ensemble
   streut ≤ 0.047 nm um Modell 1, nativ gestartete Läufe 0.05–0.15 nm (300–370 K), gestreckte
   Starts 0.67 und 0.86 nm.
 
@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import time
 import urllib.request
 from pathlib import Path
@@ -51,6 +52,31 @@ CHUNK_FRAMES = 100  # Checkpoint alle 10 ns
 HBOND_CUT = 0.35  # nm
 FOLDED_RMSD = 0.25  # nm
 STEM = ((0, 6), (1, 5))  # G1:C7, C2:G6 (Reste 0-basiert)
+
+
+def atomic_savez(path: Path, **arrays) -> None:
+    """np.savez über eine temporäre Datei + os.replace (kein halb geschriebener Stand)."""
+    tmp = path.with_name(path.name + ".tmp")
+    with open(tmp, "wb") as f:
+        np.savez(f, **arrays)
+    os.replace(tmp, path)
+
+
+def atomic_checkpoint(ctx, path: Path, **kw) -> None:
+    tmp = path.with_name(path.name + ".tmp")
+    bio.save_checkpoint(ctx, tmp, **kw)
+    os.replace(tmp, path)
+
+
+def resume_frames(step: int, steps_per_frame: int, n_series: int) -> int:
+    """Frames, die zum Checkpoint gehören. series wird vor dem Checkpoint geschrieben, kann also
+    höchstens einen Block mehr enthalten (Abbruch dazwischen) – der wird verworfen."""
+    n = step // steps_per_frame
+    if step % steps_per_frame or n > n_series:
+        raise RuntimeError(
+            f"Checkpoint (Schritt {step}) passt nicht zur Zeitreihe ({n_series} Frames)"
+        )
+    return n
 
 
 def load_structure(cache: Path):
@@ -163,10 +189,13 @@ def main(argv=None):
     rmsd = np.zeros((0, n_slots))
     stem = np.zeros((0, n_slots, len(STEM)), bool)
     state = np.zeros((0, n_slots), np.int64)
-    if ckpt.exists() and series_path.exists():
-        bio.load_checkpoint(ctx, ckpt, remd=remd)
+    if ckpt.exists():
+        if not series_path.exists():
+            raise RuntimeError(f"{ckpt} ohne {series_path}: Ausgabeverzeichnis prüfen")
         d = np.load(series_path)
-        rmsd, stem, state = d["rmsd"], d["stem"], d["state"]
+        step = bio.load_checkpoint(ctx, ckpt, remd=remd)
+        k = resume_frames(step, FRAME_CYCLES * EXCHANGE_STEPS, len(d["rmsd"]))
+        rmsd, stem, state = d["rmsd"][:k], d["stem"][:k], d["state"][:k]
     t0 = time.perf_counter()
     while len(rmsd) < n_frames:
         b_rmsd, b_stem, b_state = [], [], []
@@ -187,9 +216,9 @@ def main(argv=None):
         rmsd = np.concatenate([rmsd, b_rmsd])
         stem = np.concatenate([stem, b_stem])
         state = np.concatenate([state, b_state])
-        np.savez(series_path, rmsd=rmsd, stem=stem, state=state, ladder=LADDER,
+        atomic_savez(series_path, rmsd=rmsd, stem=stem, state=state, ladder=LADDER,
                  time_ns=np.arange(1, len(rmsd) + 1) * 0.1)  # fmt: skip
-        bio.save_checkpoint(ctx, ckpt, remd=remd)
+        atomic_checkpoint(ctx, ckpt, remd=remd)
         acc = remd.acceptance_ratio()
         print(
             f"{len(rmsd) * 0.1:.1f} ns, {time.perf_counter() - t0:.0f} s, Akzeptanz "
@@ -208,6 +237,9 @@ def analyse(rmsd, stem, state, m):
     gestreckten Strukturen (Zeit, zu der irgendein Slot der Leiter gefaltet ist)."""
     folded = stem.all(axis=-1) & (rmsd < FOLDED_RMSD)
     n_frames, n_slots = rmsd.shape
+    # Empfindlichkeit gegenüber dem Kriterium (das Endpaar G1:C7 franst aus)
+    variants = {"stem_only": stem.all(axis=-1), "inner_pair_rmsd_0.25": stem[..., 1] & (rmsd < 0.25),
+                **{f"stem_rmsd_{c:.2f}": stem.all(axis=-1) & (rmsd < c) for c in (0.20, 0.30)}}  # fmt: skip
     ladders = n_slots // m
     half = n_frames // 2
     out = {"frames": int(n_frames), "folded_300K_by_ladder": [], "rmsd_300K_median_by_ladder": [],
@@ -219,6 +251,10 @@ def analyse(rmsd, stem, state, m):
         out["rmsd_300K_median_by_ladder"].append(float(np.median(rmsd[half:][cold[half:]])))
         per_state = [float(folded[half:][state[half:] == b * m + k].mean()) for k in range(m)]
         out["folded_by_state_second_half"].append(per_state)
+        for key, v in variants.items():
+            out.setdefault(f"folded_300K_by_ladder_{key}", []).append(
+                float(v[half:][cold[half:]].mean())
+            )
         any_fold = folded[:, b * m : (b + 1) * m].any(axis=1)
         out["first_fold_ns"].append(
             float((np.argmax(any_fold) + 1) * 0.1) if any_fold.any() else None
