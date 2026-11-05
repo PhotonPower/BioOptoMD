@@ -69,22 +69,26 @@ def rattle(x, v, inv_m, clusters, box, tol_v=1e-10, max_iter=1000):
             raise RuntimeError("RATTLE konvergiert nicht")
 
 
-def constrained_positions_after_step(x, v, f, inv_m, clusters, distances, box, dt):
+def constrained_positions_after_step(
+    x, v, f, inv_m, clusters, distances, box, dt, tol=1e-6, tol_v=1e-10
+):
     """Positionen und Geschwindigkeiten nach B, RATTLE, A+SHAKE, RATTLE, A+SHAKE (γ = 0).
 
     Die Positionen am Schrittende hängen nicht von der Kraft am neuen Ort ab (letztes B fehlt).
+    Mit kleinen Toleranzen ist das Ergebnis die (eindeutige) Lösung der Constraint-Gleichungen,
+    unabhängig vom Iterationsverfahren.
     """
     x = np.array(x, np.float64, copy=True)
     v = np.array(v, np.float64, copy=True)
     h = 0.5 * dt
     w = np.asarray(inv_m, np.float64)[:, None]
     v += h * np.asarray(f, np.float64) * w
-    rattle(x, v, inv_m, clusters, box)
+    rattle(x, v, inv_m, clusters, box, tol_v)
     for _ in range(2):  # A + SHAKE, dazwischen O (γ = 0 ⇒ nur RATTLE)
         x_old = x.copy()
         x_un = x + h * v
         x = x_un.copy()
-        shake(x, x_old, inv_m, clusters, distances, box)
+        shake(x, x_old, inv_m, clusters, distances, box, tol)
         v += (x - x_un) / h
-        rattle(x, v, inv_m, clusters, box)
+        rattle(x, v, inv_m, clusters, box, tol_v)
     return x, v

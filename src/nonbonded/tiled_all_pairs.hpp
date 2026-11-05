@@ -61,6 +61,7 @@ class TiledAllPairs final : public NonbondedStrategy {
   DeviceBuffer<std::uint32_t> d_masks_;  // alle Masken konkateniert
   DeviceBuffer<int4> d_replica_;         // (lj_offset, n_types, mask_index_offset, mask_base)
   DeviceBuffer<float2> d_screening_;     // (κ, ε_r) je Replica
+  DeviceBuffer<float4> d_tile_bounds_;   // (Mittelpunkt, Halbbreite) je (Replica, Tile)
 };
 
 }  // namespace bomd

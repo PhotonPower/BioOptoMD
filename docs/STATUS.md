@@ -2,7 +2,8 @@
 
 > Diese Datei wird am Ende **jeder** Arbeitssitzung aktualisiert (AGENTS.md §2.4).
 
-**Aktive Phase:** 8 – Performance & Benchmark (Branch `phase-8/benchmark`, auf PR #10).
+**Aktive Phase:** 9+ – Erweiterungen (Reihenfolge nach Forschungsbedarf, Entscheidung des Projektinhabers).
+**Phase 8 abgenommen** am 2026-11-05 durch den Projektinhaber (RTX 3090, PR #11).
 **Phase 7 abgenommen** am 2026-11-05 durch den Projektinhaber (RTX 3090).
 **Nachrüstung (PR #9) abgenommen** am 2026-11-05 durch den Projektinhaber (RTX 3090).
 **Phase 6 abgenommen** am 2026-11-04 durch den Projektinhaber (RTX 3090), vor den neuen Abnahmetests.
@@ -21,6 +22,26 @@
 
 - Phase 5 (PR #5): HMR, SHAKE/RATTLE auf H-Bindungen, N_dof. Abgenommen 2026-11-03; Nacharbeit nach
   Review siehe unten.
+
+## Phase 8 – erledigt, abgenommen 2026-11-05 (PR #11)
+- `benchmarks/throughput.py`: BioOptoMD vs. OpenMM 8.6.1 (CUDA, mixed) mit gleichem Modell (DH, r_c aus κ
+  = 3.92 nm, HMR, H-Constraints 1e-6, 4 fs). Ergebnis (RTX 3090, 3 Läufe, `benchmarks/README.md`):
+  1 × 20 k Faktor 0.59, **32 × 2 k Faktor 3.52 (3.46–3.68), Ziel ≥ 3 erfüllt**, 128 × 1 k Faktor 9.7.
+- Optimierungen: Tile-Vorauswahl über achsenparallele Hüllen (Minimum-Image-Dreiecksungleichung,
+  bitidentisch; im Bildsummen-Pfad aus), M-SHAKE und direktes RATTLE (gekoppeltes Cluster-System statt
+  Gauss-Seidel; Toleranzen unverändert).
+- Tests: `test_tile_culling_vs_numpy`, `test_constraints_immobile_atoms` (inv_mass = 0, Fallback,
+  STATUS_CONSTRAINT_FAILURE); `test_constraint_step_vs_numpy` vergleicht auf 1e-12 auskonvergierte
+  Lösungen (verfahrensunabhängig, Schranke 1e-9 nm unverändert).
+- Getestet: `pytest` 94/94 grün (inkl. `slow`); compute-sanitizer memcheck 0 Fehler, racecheck 0 Hazards
+  (k_tile_bounds, Tiled-Kernel, SHAKE/RATTLE).
+- Review-Agent: keine Ergebnisfehler; umgesetzt: GPU-Test für unbewegliche Atome, relativer
+  Sicherheitsabstand der Vorauswahl, Randpaar-Relevanz im Culling-Test belegt, gleiche
+  Constraint-Toleranz in OpenMM, Endlichkeitsprüfung, Spanne über 3 Läufe, README-Begründungen
+  (Multi-Process unter WDDM, abweichende Atomzahlen).
+- Für den Vergleich wurde das OpenMM-CUDA-Plugin (`openmm[cuda12]`) ins venv installiert; conda-forge-
+  OpenMM aus `environment.yml` enthält CUDA bereits.
+- Offen: Zellliste für große Einzelsysteme (Phase 9+); Kontrolllauf auf der RTX 6000 Ada; Nsight Compute.
 
 ## Phase 7 – erledigt, abgenommen 2026-11-05 (Branch `phase-7/builder-io`, PR #10)
 1. `biooptomd.builder`: `from_openmm`/`from_parmed` → `SystemSpec`; `build_context` (LJ-Typen,
@@ -114,16 +135,17 @@ ADR 0007 → **0009** (Mixed Precision), unsere OQ-08…11 → **OQ-11…14**.
   das Phase-4-Testsystem nutzt noch OL15 ohne Fluorophor.
 - Build auf der RTX 6000 Ada (laut PR #8: conda-forge-Workaround ohne Anaconda-ToS, CUDA 12.6, Python 3.12)
   ist mit dem leeren Modul belegt; Kontrolllauf der Phasen-Tests dort steht aus.
-- Tiled All-Pairs prüft alle Tile-Paare (keine Cutoff-Vorauswahl); Optimierung/Cell-List später (Phase 8/9).
+- Tiled All-Pairs überspringt Tile-Paare außerhalb r_c (Phase 8), Aufwand aber weiter O(N²) Tile-Paare;
+  Zellliste später (Phase 9+).
 - nanobind-„leaked instances“ nur unter compute-sanitizer mit mehreren Tests pro Prozess (siehe frühere Notiz).
 - Explodierende Trajektorien setzen Statusbits; `step()` prüft sie nicht selbst.
 - clang-format: CI (ubuntu) nutzt Version 21, lokal (pip) Version 18; sie richten nachgestellte Kommentare in
   Structs unterschiedlich aus. Vor dem Push mit beiden prüfen oder Kommentare über die Member setzen.
 
 ## Nächster konkreter Schritt
-1. Projektinhaber: Phase 7 (PR #10) abnehmen; OQ-14 (Temperaturschätzer) entscheiden; PRs #1 → #6, #9,
-   #10 nacheinander mergen (gestapelt, nach jedem Merge Basis des nächsten PR auf `main` umstellen).
-2. Danach Phase 8 (Performance & Benchmark) laut ROADMAP; offen aus Phase 6: zwei `reference`-Tests
+1. Projektinhaber: Phase 8 abnehmen (Push/PR auf Anfrage); OQ-14 (Temperaturschätzer) entscheiden;
+   PRs #1 → #6, #9, #10 nacheinander mergen.
+2. Danach Phase 9+ nach Forschungsbedarf (ROADMAP); offen aus Phase 6: zwei `reference`-Tests
    (dn/dc-Kalibrierung, Clausius-Mossotti-Konsistenz).
 3. Nachholen: Kontrolllauf auf der RTX 6000 Ada; Nsight Compute (Counter-Freigabe).
 
@@ -145,5 +167,7 @@ ADR 0007 → **0009** (Mixed Precision), unsere OQ-08…11 → **OQ-11…14**.
 | 2026-11-05 | Claude Opus 5.5 | `origin/main` (PR #7 Review/ADR-Entscheidungen, PR #8 Build-Umgebung RTX 6000 Ada) in den Phasen-Stapel gemergt. Doppelte Nummern aufgelöst: unsere ADR 0006 → **0008** (Kraftschranke/Statusflags), ADR 0007 → **0009** (Mixed Precision), unsere OQ-08…11 → **OQ-11…14**. ADR 0006/0007 auf `main` (Cutoff aus κ, Wandformen) gelten unverändert. |
 | 2026-11-05 | Projektinhaber | Nachrüstung (PR #9) abgenommen; weiter mit Phase 7. |
 | 2026-11-05 | Projektinhaber | Phase 7 (PR #10) abgenommen; weiter mit Phase 8. |
+| 2026-11-05 | Projektinhaber | Phase 8 (PR #11) abgenommen; weiter mit Phase 9+. |
+| 2026-11-05 | Claude Opus 5.5 | Phase 8: Benchmark vs. OpenMM (32×2k Faktor 3.5), Tile-Vorauswahl, M-SHAKE/RATTLE; Review umgesetzt, 94/94 Tests grün. |
 | 2026-11-05 | Claude Opus 5.5 | Phase 7 implementiert (PR #10): Builder, Checkpoints, DCD/HDF5, Analyse, Beispiel + End-to-End-Test; Review umgesetzt. |
 | 2026-11-05 | Claude Opus 5.5 | Nachrüstung Phasen 2/4/6 (PR #9): Wandformen + Mischungsregeln, nichtlineares GC, κ-Cutoff + Bildsumme, Kugelschnitt-Verschmierung, optische Normierung; Review umgesetzt. Offen: zwei `reference`-Tests aus Phase 6 (s. o.). |

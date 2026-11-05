@@ -36,3 +36,50 @@ Counter muss unter Windows freigeschaltet werden (NVIDIA Control Panel → Deskt
 
 **Erwartete Optimierungen (nicht Teil von Phase 4):** Tile-Paare außerhalb des Cutoffs überspringen
 (Bounding-Box-Test je Tile), Cell-List-Strategie für > 10 k Atome (ARCHITECTURE §6).
+
+## Phase 8 – Durchsatz vs. OpenMM (2026-11-05)
+
+- **Umgebung:** RTX 3090 (CC 8.6), Treiber 610.88, CUDA 12.9, Windows 11 (WDDM), Release-Build,
+  Branch `phase-8/benchmark`. OpenMM 8.6.1 (pip, CUDA-Plugin `openmm[cuda12]`), Platform CUDA,
+  Precision `mixed`.
+- **Modell (in beiden Engines gleich):** AMBER OL15 + Ionen, Debye-Hückel (I = 0.15 M, ε_r(300 K) = 77.6),
+  Switching r_s = r_c − 0.2 nm, **r_c = 3.92 nm aus κ (ADR 0006)**, 1-4 abgeschirmt, HMR (3.024 amu),
+  H-Constraints (relative Toleranz 1e-6 in beiden Engines), Δt = 4 fs, Langevin γ = 1/ps, 300 K.
+  OpenMM: Referenzsystem aus
+  `tests/reference/openmm_nonbonded.py` (CustomNonbondedForce, CutoffPeriodic) + `LangevinMiddleIntegrator`,
+  ein Context pro Replica, nacheinander in einem Prozess (in Blöcken zu 32 Contexts; mehr legt OpenMM
+  unter Windows nicht gleichzeitig an). Mehrere Prozesse wurden nicht gemessen: Unter WDDM ohne MPS
+  teilt der Treiber die GPU zeitlich zwischen Prozessen auf, ein Gewinn gegenüber sequentiellen
+  Contexts ist nicht zu erwarten. In OpenMM bleiben die constrainten H-Bindungen als harmonische
+  Terme im System (Kraft entlang des Constraints, wird herausprojiziert; vernachlässigbarer Aufwand).
+- **Systeme:** Box 8 × 8 nm je Einheit (Bedeckung fest, OQ-09). Die Atomzahlen weichen von den
+  ROADMAP-Größen ab (vollständige Duplexe statt beschnittener Systeme): „1k“ = ein Duplex + 20 Na⁺ (778 Atome),
+  „2k“ = zwei Duplexe + 42 Ionen (1558), „20k“ = 3 × 4 Kopien von „2k“ (18 696 Atome, 24 × 32 nm).
+- **Messung:** `python benchmarks/throughput.py --steps 2000 --warmup 200 --repeat 3` (Commit `6f0a9d2` +
+  Review-Nacharbeit); Gesamt-ns/Tag über alle Replicas, Median und Spanne aus 3 Läufen. Faktor-Spanne =
+  ungünstigstes bzw. günstigstes Paar.
+
+| Fall | Atome/Replica | BioOptoMD [ns/Tag] | OpenMM [ns/Tag] | Faktor |
+|---|---|---|---|---|
+| 1 × 20 k | 18 696 | 636 (634–637) | 1 073 (1 038–1 081) | 0.59 (0.59–0.61) |
+| **32 × 2 k** | 1 558 | **13 362** (13 334–13 383) | 3 799 (3 633–3 850) | **3.52 (3.46–3.68)**, Ziel ≥ 3 |
+| 128 × 1 k | 778 | 40 663 (40 464–40 716) | 4 198 (4 111–4 215) | 9.69 (9.60–9.90) |
+
+BioOptoMD streut zwischen Läufen < 0.5 %, OpenMM um etwa ±3 %. Frühere Einzelläufe derselben
+Konfiguration lagen bei 3.3–3.6.
+
+**Optimierungen in Phase 8** (alle ohne Änderung der Ergebnisse über die Rundung hinaus):
+1. *Tile-Vorauswahl:* je Tile die achsenparallele Hülle der Atome (`k_tile_bounds`); Tile-Paare, deren
+   Hüllen mit Minimum Image weiter als r_c + 1e-3 nm entfernt sind, überspringt der Warp (übersprungene
+   Paare tragen exakt 0 bei, bitidentisch). 1 × 20 k: 305 → 607 ns/Tag. Im Bildsummen-Pfad
+   (L < 2 r_c) nicht aktiv.
+2. *Constraint-Löser:* SHAKE als Newton-Iteration auf dem gekoppelten Cluster-System (M-SHAKE), RATTLE als
+   direkte Lösung des linearen Systems statt Gauss-Seidel. Vorher (Nsight Systems, 32 × 2 k) 5 × 63 µs
+   pro Schritt für SHAKE/RATTLE; Schritt 932 → 785 µs. 32 × 2 k: ≈ 12 500 → ≈ 13 400 ns/Tag.
+
+**Profil pro Schritt (32 × 2 k, vor Optimierung 2):** Nonbonded 428 µs, RATTLE 3 × 63 µs, SHAKE 2 × 63 µs,
+Torsionen 40 µs, übrige Kernels < 20 µs.
+
+**Grenzen:** Ohne Zellliste wächst der Aufwand je Replica mit N²; für ein einzelnes großes System
+(1 × 20 k) ist OpenMM mit Nachbarliste schneller. Zellliste/Nachbarliste: Phase 9+ (ARCHITECTURE §6).
+Nsight Compute (Counter-Rechte) weiterhin ausstehend.
