@@ -267,6 +267,7 @@ def build_context(
     *,
     positions=None,
     eps_r=None,
+    kappa=None,
     hmr: bool = False,
     h_mass: float = 3.024,
     constraints: bool = False,
@@ -288,6 +289,7 @@ def build_context(
         ionic_strength_molar: Ionenstärke [mol/L] aller nicht explizit modellierten Ionen.
         positions: [nm] (n, 3) oder (n_replicas, n, 3); Default ``spec.positions``.
         eps_r: ε_r je Replica; Default ε_r von Wasser bei T_r (ASSUMPTION(OQ-10)).
+        kappa: κ_r [1/nm] je Replica explizit; Default aus Ionenstärke, T_r und ε_r.
         hmr: Hydrogen Mass Repartitioning auf ``h_mass`` [amu].
         constraints: H-Bindungen per SHAKE/RATTLE festhalten (für Δt = 4 fs mit HMR).
         n_kappa: r_c = max(2 nm, n_κ/min κ_r) (ADR 0006); ``r_cutoff`` überschreibt r_c;
@@ -311,8 +313,9 @@ def build_context(
         if eps_r is None
         else np.broadcast_to(np.asarray(eps_r, np.float64), (n_replicas,)).copy()
     )
-    kappa = np.atleast_1d(_nonbonded.debye_kappa(ionic_strength_molar, temps, eps))
-    kappa = np.broadcast_to(kappa, (n_replicas,)).copy()
+    if kappa is None:
+        kappa = np.atleast_1d(_nonbonded.debye_kappa(ionic_strength_molar, temps, eps))
+    kappa = np.broadcast_to(np.asarray(kappa, np.float64), (n_replicas,)).copy()
     if r_cutoff is None:
         r_s, r_c = _nonbonded.cutoff_from_kappa(kappa, n_kappa=n_kappa, width=switch_width)
     else:

@@ -65,6 +65,7 @@ def test_remd_exchange_mechanics():
     mirror = np.random.default_rng(5)
     beta = 1.0 / (KB * TEMPS)
     n_acc = 0
+    max_h_minus_t = 0.0
     for cycle in range(12):
         ctx.step(100)
         x = ctx.positions_precise()[:, : spec.n_atoms, :3]
@@ -95,6 +96,9 @@ def test_remd_exchange_mechanics():
                 - beta[i] * u_old[a]
                 - beta[j] * u_old[b]
             )
+            # Reines Temperaturkriterium (κ, ε, γ fest) zum Vergleich
+            delta_t = (beta[j] - beta[i]) * (u_old[a] - u_old[b])
+            max_h_minus_t = max(max_h_minus_t, abs(delta - delta_t))
             if delta <= 0.0 or mirror.random() < np.exp(-delta):
                 expected[a], expected[b] = j, i
         accepted = remd.attempt()
@@ -113,6 +117,8 @@ def test_remd_exchange_mechanics():
             ctx.velocities()[:, : spec.n_atoms, :3], v_before * factor[:, None, None], rtol=1e-15
         )
     assert 0 < n_acc < 12 * 2, "Test soll angenommene und abgelehnte Tausche enthalten"
+    # Der zustandsabhängige Hamiltonian-Anteil ist nicht vernachlässigbar (Faktor e^{0.1} ≈ 1.1 in p)
+    assert max_h_minus_t > 0.1, max_h_minus_t
     assert ctx.status() == 0
 
 
@@ -143,14 +149,11 @@ def test_set_screening():
             assert e1[1, 4] == e0[1, 4], "GB: 1-4 bleibt unabgeschirmt"
         else:
             assert e1[1, 4] != e0[1, 4], "DH: 1-4 folgt κ/ε"
-        # Gleich einem frisch aufgebauten Kontext mit denselben Parametern
+        # Gleich einem frisch aufgebauten Kontext, der κ/ε direkt beim Aufbau erhält
         fresh, _ = builder.build_context(
             spec, 2, (8.0, 8.0), [300.0, 300.0], 0.15, solvent=solvent,
-            eps_r=[e[0], 0.8 * e[1]], r_cutoff=info.r_cutoff,
+            eps_r=[e[0], 0.8 * e[1]], kappa=[k[0], 2 * k[1]], r_cutoff=info.r_cutoff,
         )  # fmt: skip
-        fresh.set_screening(
-            np.array([k[0], 2 * k[1]], np.float32), np.array([e[0], 0.8 * e[1]], np.float32)
-        )
         fresh.compute_forces()
         np.testing.assert_array_equal(fresh.forces_fixed_point(), ctx.forces_fixed_point())
 
@@ -167,9 +170,12 @@ def test_set_screening():
 @pytest.mark.slow
 def test_remd_sampling_harmonic():
     """N = 20 unabhängige Atome im harmonischen Restraint (k = 100 kJ/mol/nm²) je Slot, 4 Zustände,
-    Langevin, Austausch alle 0.5 ps (dekorreliert): je Zustand ⟨U⟩ = (3/2) N k_B T_k innerhalb 4σ
-    (σ aus der Streuung der Zyklen), Akzeptanzrate je Nachbarpaar vs. Erwartung
-    E[min(1, e^{(β_i − β_j)(U_i − U_j)})] mit U_k ~ Gamma(3N/2, k_B T_k), innerhalb 4σ (binomial)."""
+    Langevin, Austausch alle 1 ps: je Zustand ⟨U⟩ = (3/2) N k_B T_k innerhalb 4σ (σ aus
+    Blockmittelung, 20 Blöcke), Akzeptanzrate je Nachbarpaar vs. Erwartung
+    E[min(1, e^{(β_i − β_j)(U_i − U_j)})] mit U_k ~ Gamma(3N/2, k_B T_k), innerhalb 4σ (binomial;
+    Korrelation der Energie nach 1 ps: ρ_U = C_x² ≈ 0.02 für ω² = 100/12 ps⁻², γ = 5/ps)."""
+    from biooptomd.analysis import block_average
+
     n_atoms, k_spring, n_rep = 20, 100.0, len(TEMPS)
     ctx = _core.SimulationContext(n_rep, n_atoms)
     ctx.set_box(np.full((n_rep, 2), 10.0, np.float32))
@@ -193,26 +199,22 @@ def test_remd_sampling_harmonic():
             samples[state].append(u[slot])
 
     n_cycles = 1200
-    remd.run(n_cycles, 250, callback=record)
+    remd.run(n_cycles, 500, callback=record)
     assert ctx.status() == 0
     for k, t in enumerate(TEMPS):
-        s = np.array(samples[k])
+        mean, sem = block_average(np.array(samples[k]), n_blocks=20)
         expected = 1.5 * n_atoms * KB * t
-        assert abs(s.mean() - expected) < 4 * s.std(ddof=1) / np.sqrt(len(s)), (
-            k,
-            s.mean(),
-            expected,
-        )
+        assert abs(mean - expected) < 4 * sem, (k, mean, expected, sem)
     mc = np.random.default_rng(4)
     beta = 1.0 / (KB * TEMPS)
     for i in range(n_rep - 1):
         ui = mc.gamma(1.5 * n_atoms, KB * TEMPS[i], 400_000)
         uj = mc.gamma(1.5 * n_atoms, KB * TEMPS[i + 1], 400_000)
         p_expected = np.minimum(1.0, np.exp((beta[i] - beta[i + 1]) * (ui - uj))).mean()
+        assert 0.1 < p_expected < 0.9, "Leiter so gewählt, dass die Rate aussagekräftig ist"
         p = remd.accepted[i] / remd.attempts[i]
         sigma = np.sqrt(p_expected * (1 - p_expected) / remd.attempts[i])
         assert abs(p - p_expected) < 4 * sigma, (i, p, p_expected)
-        assert 0.1 < p_expected < 0.9, "Leiter so gewählt, dass die Rate aussagekräftig ist"
 
 
 def test_remd_checkpoint_bitexact(tmp_path):
@@ -229,12 +231,12 @@ def test_remd_checkpoint_bitexact(tmp_path):
     ref.run(2 * m, 100)
     first_ctx, first = make()
     first.run(m, 100)
-    bio.save_checkpoint(first_ctx, tmp_path / "c.npz")
-    saved = first.state_dict()
+    bio.save_checkpoint(first_ctx, tmp_path / "c.npz", remd=first)
     del first_ctx, first
     ctx, remd = make()
-    remd.load_state_dict(saved)
-    bio.load_checkpoint(ctx, tmp_path / "c.npz")
+    with pytest.raises(ValueError):
+        bio.load_checkpoint(ctx, tmp_path / "c.npz")  # REMD-Daten ohne remd=…
+    bio.load_checkpoint(ctx, tmp_path / "c.npz", remd=remd)
     remd.run(m, 100)
     a, b = ref_ctx.save_state(), ctx.save_state()
     for key in ("pos", "pos_corr", "vel", "image"):
@@ -245,3 +247,19 @@ def test_remd_checkpoint_bitexact(tmp_path):
     )
     assert ref.accepted.sum() > 0
     np.testing.assert_array_equal(debye_kappa(IONIC, TEMPS, water_permittivity(TEMPS)), remd.kappa)
+    # Inkonsistenz Temperaturen ↔ Austauschzustand wird erkannt
+    ctx.set_temperatures(np.full(len(TEMPS), 300.0, np.float32))
+    with pytest.raises(RuntimeError):
+        remd.attempt()
+
+
+def test_remd_cutoff_warning():
+    """Kontext mit nur einer Temperatur gebaut (r_c aus deren κ), Leiter mit kleinerem κ:
+    Warnung, weil r_c für die Zustände zu klein ist (ADR 0006)."""
+    spec = _charged_system(np.random.default_rng(7))
+    ctx, _ = builder.build_context(
+        spec, 4, (4.0, 4.0), 370.0, 1.0, types=np.ones(spec.n_atoms, np.int32)
+    )
+    ctx.set_integrator(0.001, 1.0, seed=1)
+    with pytest.warns(UserWarning):
+        ReplicaExchange(ctx, TEMPS, ionic_strength_molar=0.01)

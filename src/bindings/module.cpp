@@ -832,7 +832,16 @@ NB_MODULE(_core, m) {
          "biooptomd.constraints.constraint_topology(); tolerance = relative Längentoleranz.")
       .def("apply_constraints", &SimulationContext::apply_constraints,
            "Projiziert Positionen und Geschwindigkeiten sofort auf die Constraints.")
-      .def_prop_ro("has_constraints", &SimulationContext::has_constraints);
+      .def_prop_ro("has_constraints", &SimulationContext::has_constraints)
+      .def_prop_ro("forces_valid", &SimulationContext::forces_valid,
+                   "true, wenn Kräfte und Energien zum aktuellen Zustand gehören.")
+      .def_prop_ro(
+          "nonbonded_cutoff",
+          [](SimulationContext& c) {
+            auto* t = dynamic_cast<bomd::TiledAllPairs*>(c.nonbonded());
+            return t == nullptr ? 0.0f : t->params().r_cutoff_nm;
+          },
+          "r_c [nm] der Tile-Nonbonded-Strategie (0 ohne).");
 
   // --- Optik-Observer (Phase 6) ---------------------------------------------------------------
   cls.def("observe_now", &SimulationContext::observe_now,

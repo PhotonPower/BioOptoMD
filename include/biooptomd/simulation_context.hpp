@@ -142,6 +142,8 @@ class SimulationContext {
   /// Markiert d_force als veraltet (z. B. nach Schreibzugriff über eine DLPack-Sicht);
   /// step() berechnet die Kräfte dann vor dem ersten B neu.
   void invalidate_forces() { forces_valid_ = false; }
+  /// true, wenn d_force und die Energien dem aktuellen Zustand entsprechen.
+  bool forces_valid() const { return forces_valid_; }
   /// Wird bei jedem set_masses erhöht; Plugins mit massenabhängigen Daten prüfen ihn.
   std::uint64_t masses_version() const { return masses_version_; }
   /// Wird bei jedem set_box erhöht; Plugins mit boxabhängigen Daten prüfen ihn.

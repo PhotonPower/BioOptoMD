@@ -13,13 +13,21 @@ für Slot a im Zustand i und Slot b im Zustand j. Die Kreuzenergien U_j(x_a) lie
 Kraftberechnung mit den vertauschten Zuständen (alle Paare eines Versuchs gleichzeitig). Ohne
 zustandsabhängige Parameter reduziert sich Δ auf (β_i − β_j)(U(x_b) − U(x_a)).
 
-Paarschema: abwechselnd Nachbarpaare (0,1), (2,3), … und (1,2), (3,4), … der Temperaturleiter.
+Paarschema: abwechselnd Nachbarpaare (0,1), (2,3), … und (1,2), (3,4), … der Temperaturleiter;
+jeder einzelne Zug erfüllt die detaillierte Bilanz, die deterministische Abfolge die Balance.
 Zufallszahlen aus ``numpy.random.Generator`` (PCG64, Seed) ⇒ deterministisch.
+
+Nicht zustandsabhängig: die Oberflächenladung bzw. Φ0 der Gouy-Chapman-Wand (κ folgt dem Zustand),
+Voxelgitter. Observer messen je Slot, nicht je Zustand: Zeitreihen über ``state`` je Zyklus den
+Zuständen zuordnen (z. B. per ``callback`` in :meth:`ReplicaExchange.run`).
 
 Einheiten: T in K, κ in 1/nm, Energien in kJ/mol.
 """
 
 from __future__ import annotations
+
+import json
+import warnings
 
 import numpy as np
 
@@ -57,6 +65,14 @@ class ReplicaExchange:
         self.eps_r = None if eps_r is None else np.broadcast_to(np.asarray(eps_r, np.float64), (n,))
         if (self.kappa is None) != (self.eps_r is None):
             raise ValueError("kappa und eps_r nur gemeinsam")
+        if self.kappa is not None and ctx.nonbonded_cutoff > 0:
+            needed = _nonbonded.cutoff_from_kappa(self.kappa)[1]
+            if ctx.nonbonded_cutoff < needed * (1 - 1e-6):
+                warnings.warn(
+                    f"r_c = {ctx.nonbonded_cutoff:.3f} nm < 5/min κ_k = {needed:.3f} nm (ADR 0006): "
+                    "Kontext mit allen Temperaturen der Leiter aufbauen",
+                    stacklevel=2,
+                )
         self.state = np.arange(n)  # Zustand je Slot
         self.rng = np.random.default_rng(seed)
         self.n_cycles = 0
@@ -101,6 +117,14 @@ class ReplicaExchange:
         if not pairs:
             return accepted
         beta = 1.0 / (units.KB * self.temperatures)
+        expected_t = self.temperatures[self.state].astype(np.float32)
+        if not np.array_equal(self.ctx.temperatures(), expected_t):
+            raise RuntimeError(
+                "Temperaturen des Kontexts passen nicht zum Austauschzustand "
+                "(nach load_checkpoint ohne remd=…?)"
+            )
+        if not self.ctx.forces_valid:
+            self.ctx.compute_forces()
         u_old = self._potential()
         slot = self.slot_of_state
         trial = self.state.copy()
@@ -117,6 +141,8 @@ class ReplicaExchange:
             delta = (
                 beta[j] * u_new[a] + beta[i] * u_new[b] - beta[i] * u_old[a] - beta[j] * u_old[b]
             )
+            if not np.isfinite(delta):
+                raise RuntimeError(f"Replica Exchange: Δ nicht endlich (Paar {i}, {j})")
             self.attempts[i] += 1
             if delta <= 0.0 or self.rng.random() < np.exp(-delta):
                 accepted[i] = True
@@ -151,6 +177,27 @@ class ReplicaExchange:
             "accepted": self.accepted.copy(),
             "rng": self.rng.bit_generator.state,
         }
+
+    def to_arrays(self) -> dict:
+        """Austauschzustand als reine NumPy-Arrays (für ``np.savez`` ohne Pickle); der RNG-Zustand
+        (128-bit-Ganzzahlen) als JSON-Bytes."""
+        d = self.state_dict()
+        return {
+            "remd_state": d["state"], "remd_n_cycles": np.int64(d["n_cycles"]),
+            "remd_attempts": d["attempts"], "remd_accepted": d["accepted"],
+            "remd_rng": np.frombuffer(json.dumps(d["rng"]).encode(), np.uint8),
+            "remd_temperatures": self.temperatures,
+        }  # fmt: skip
+
+    def from_arrays(self, a) -> None:
+        """Gegenstück zu :meth:`to_arrays`."""
+        if not np.array_equal(np.asarray(a["remd_temperatures"]), self.temperatures):
+            raise ValueError("Checkpoint: andere Temperaturleiter")
+        self.load_state_dict({
+            "state": np.asarray(a["remd_state"]), "n_cycles": int(a["remd_n_cycles"]),
+            "attempts": np.asarray(a["remd_attempts"]), "accepted": np.asarray(a["remd_accepted"]),
+            "rng": json.loads(bytes(np.asarray(a["remd_rng"], np.uint8)).decode()),
+        })  # fmt: skip
 
     def load_state_dict(self, d: dict) -> None:
         """Stellt den Austauschzustand wieder her und setzt die Zustandsparameter je Slot. Danach

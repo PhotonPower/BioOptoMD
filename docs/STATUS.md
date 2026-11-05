@@ -30,11 +30,17 @@ Abnahme ausstehend. Reihenfolge vom Projektinhaber am 2026-11-05 festgelegt (nac
 - C++: Plugin-Hook `set_screening` (Bonded mit `follow_screening`, PlanarSurface, TiledAllPairs/GB),
   `SimulationContext::set_screening`, `scale_velocities`; Bindings.
 - `biooptomd.remd.ReplicaExchange` (attempt/run, Akzeptanzstatistik, state_dict für Checkpoints).
-- Tests `test_phase9_remd.py` 4/4 grün: Entscheidungen = unabhängige Metropolis-Rechnung mit frischen
+- Tests `test_phase9_remd.py` 5/5 grün: Entscheidungen = unabhängige Metropolis-Rechnung mit frischen
   Kontexten, Parameter/Energie/Geschwindigkeiten nach Tausch, set_screening (DH/GB/Gouy-Chapman),
   Sampling harmonischer Atome (⟨U⟩ und Akzeptanzraten vs. Gamma-Erwartung, 4σ), Checkpoint bitgenau.
-  pytest gesamt 113/113; memcheck 0 Fehler.
+  pytest gesamt 114/114; memcheck 0 Fehler.
 - Hinweis: ε_r(T) von Wasser gilt bis 373 K – Leitern darüber brauchen eine andere Fitformel (OQ-10).
+- Review-Agent: Kriterium korrekt; umgesetzt: REMD-Zustand im npz-Checkpoint (RNG als JSON-Bytes,
+  `save/load_checkpoint(..., remd=…)`), Prüfung Temperaturen ↔ Austauschzustand und Frische der
+  Energien in `attempt()`, Warnung bei zu kleinem r_c, Sampling-Test mit 1 ps Abstand und
+  Blockmittelung, Nachweis des Hamiltonian-Anteils (|Δ_H − Δ_T| > 0.1), nicht zirkulärer
+  set_screening-Vergleich (`build_context(kappa=…)`), `set_temperatures` invalidiert Kräfte,
+  OQ-17 (Φ0(T) bei fester Oberflächenladung).
 
 ## Phase 9.1 – GB-OBC2: abgenommen 2026-11-05 (PR #12)
 - ADR 0010 (Accepted 2026-11-05): Modell, Kopplung an Cutoff/Switching/Bildsumme, Passes; OQ-15 (OBC2 vs. GBn2),

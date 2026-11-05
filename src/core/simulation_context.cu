@@ -289,6 +289,7 @@ void SimulationContext::set_temperatures(const float* t_k) {
   h_temperature_.assign(t_k, t_k + n_replicas());
   temperature_.upload_async(t_k, stream_.get());
   synchronize();
+  forces_valid_ = false;  // nichtlineares Gouy-Chapman hängt über γ(T) von T ab
 }
 
 // --- Kernels ----------------------------------------------------------------------------
