@@ -518,6 +518,17 @@ NB_MODULE(_core, m) {
           "float64 (n_replicas, 1 + N_ENERGY_TERMS) [kJ/mol]: Spalte 0 = E_kin, dann E_pot je\n"
           "Term in der Reihenfolge ENERGY_TERMS (aus dem letzten compute_forces/step).")
       .def(
+          "kinetic_energy_mid",
+          [](SimulationContext& c) {
+            return vector_to_numpy(c.kinetic_energy_mid(),
+                                   {static_cast<std::size_t>(c.n_replicas())});
+          },
+          "float64 (n_replicas,) [kJ/mol]: E_kin der Geschwindigkeiten nach dem O-Schritt "
+          "(+RATTLE)\n"
+          "des letzten step(); NaN vor dem ersten Schritt und nach set_velocities/restore_state;\n"
+          "observe_now() ändert ihn nicht. Bei großem dt unverzerrt, anders als\n"
+          "E_kin am vollen Schritt (OQ-14, PHYSICS_MODEL §1). T = 2 E / (N_dof k_B).")
+      .def(
           "positions_precise",
           [](SimulationContext& c) {
             return vector_to_numpy(c.positions_precise(), {static_cast<std::size_t>(c.n_replicas()),
@@ -530,7 +541,7 @@ NB_MODULE(_core, m) {
             return vector_to_numpy(c.degrees_of_freedom(),
                                    {static_cast<std::size_t>(c.n_replicas())});
           },
-          "int32 (n_replicas,): N_dof = 3 * (Anzahl Atome mit inv_mass > 0).");
+          "int32 (n_replicas,): N_dof = 3 * (Anzahl Atome mit inv_mass > 0) - Anzahl Constraints.");
 
   // --- Observer ------------------------------------------------------------------------------
   nb::class_<bomd::EnergyTracker>(m, "EnergyTracker", "Energie-Zeitreihe im VRAM.")
@@ -550,10 +561,14 @@ NB_MODULE(_core, m) {
                 e.data, {static_cast<std::size_t>(e.shape[0]), static_cast<std::size_t>(e.shape[1]),
                          static_cast<std::size_t>(e.shape[2])});
             d["steps"] = vector_to_numpy(steps, {steps.size()});
+            const auto& mid = res.arrays[2];
+            d["kinetic_mid"] = vector_to_numpy(mid.data, {static_cast<std::size_t>(mid.shape[0]),
+                                                          static_cast<std::size_t>(mid.shape[1])});
             return d;
           },
           "dict: energies float64 (n_replicas, n_frames, 1 + N_ENERGY_TERMS) [kJ/mol],\n"
-          "steps int64 (n_frames,).");
+          "steps int64 (n_frames,), kinetic_mid float64 (n_replicas, n_frames) [kJ/mol]: E_kin\n"
+          "nach dem O-Schritt im beobachteten Schritt (OQ-14).");
   cls.def(
       "add_energy_tracker",
       [](SimulationContext& c, int stride, int capacity) -> bomd::EnergyTracker& {
@@ -635,8 +650,8 @@ NB_MODULE(_core, m) {
       .def_prop_ro("uses_image_sum", &bomd::ImageChargeForce::uses_image_sum,
                    "True, wenn über periodische Bilder summiert wird (Box < 2 r_c).")
       .def("clamp_count", &bomd::ImageChargeForce::clamp_count,
-           "Anzahl geladener Atome mit z - z_image <= zeta_clamp, summiert über Replicas und\n"
-           "Kraftauswertungen.")
+           "Anzahl geladener Atome mit z - z_image < 1.5*zeta_clamp (C1-glattes Clamping,\n"
+           "Übergang zeta_clamp +- zeta_clamp/2), summiert über Replicas und Kraftauswertungen.")
       .def("reset_counters", &bomd::ImageChargeForce::reset_counters);
   cls.def(
       "add_image_charges",
@@ -663,7 +678,7 @@ NB_MODULE(_core, m) {
       "Bildladungen an der Ebene z_image [nm] (ADR 0013): U = -f [sum_{i<j} q_i q_j phi(s_ij)\n"
       "+ 1/2 sum_i q_i^2 phi(2 zeta_i)], phi = Debye-Hückel mit kappa [1/nm], eps_r je Replica\n"
       "(n_replicas,) und Switching r_switch..r_cutoff [nm] (Werte der Nonbonded-Strategie).\n"
-      "factor f: 1 = idealer Leiter, sonst Näherung (OQ-18). zeta = max(z - z_image,\n"
+      "factor f: 1 = idealer Leiter, sonst Näherung (OQ-18). zeta = C1-glattes max(z - z_image,\n"
       "zeta_clamp). image_sum=True erzwingt den Bildsummenpfad (Tests). Energie-Term 'image'.");
 
   nb::class_<bomd::HarmonicRestraintPullingForce>(

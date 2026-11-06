@@ -88,8 +88,9 @@ __global__ void k_scatter_w(DeviceState s, V* dst, const T* src) {
 /// Blockgröße der Energiereduktion (ein Block pro Replica).
 constexpr int kEnergyBlock = 256;
 
-__global__ void k_energy_frame(DeviceState s, double* frame) {
-  __shared__ double partial[kEnergyBlock];
+/// 2·E_kin von Replica r = blockIdx.x, Blockreduktion in fester Reihenfolge (deterministisch);
+/// Ergebnis gültig in Thread 0.
+__device__ double block_twice_kinetic(const DeviceState& s, double* partial) {
   const int r = blockIdx.x;
   double sum = 0.0;
   for (int i_local = threadIdx.x; i_local < s.n_atoms; i_local += blockDim.x) {
@@ -103,11 +104,24 @@ __global__ void k_energy_frame(DeviceState s, double* frame) {
     if (threadIdx.x < stride) partial[threadIdx.x] += partial[threadIdx.x + stride];
     __syncthreads();
   }
+  return partial[0];
+}
+
+__global__ void k_energy_frame(DeviceState s, double* frame) {
+  __shared__ double partial[kEnergyBlock];
+  const int r = blockIdx.x;
+  const double twice_kin = block_twice_kinetic(s, partial);
   double* out = frame + static_cast<long long>(r) * kEnergyFrameColumns;
-  if (threadIdx.x == 0) out[0] = 0.5 * partial[0];
+  if (threadIdx.x == 0) out[0] = 0.5 * twice_kin;
   if (threadIdx.x < kNumEnergyTerms)
     out[1 + threadIdx.x] = static_cast<double>(s.d_energy_fp[r * kNumEnergyTerms + threadIdx.x]) *
                            (1.0 / units::FIXED_POINT_SCALE);
+}
+
+__global__ void k_kinetic_energy(DeviceState s, double* out) {
+  __shared__ double partial[kEnergyBlock];
+  const double twice_kin = block_twice_kinetic(s, partial);
+  if (threadIdx.x == 0) out[blockIdx.x] = 0.5 * twice_kin;
 }
 
 /// Grid für Kernels mit blockIdx.y = Replica: so muss kein Thread r = i / n_atoms berechnen,
@@ -139,6 +153,12 @@ void launch_wrap_xy(const DeviceState& s, cudaStream_t stream) {
 void launch_energy_frame(const DeviceState& s, double* frame, cudaStream_t stream) {
   if (s.n_total() == 0) return;
   k_energy_frame<<<s.n_replicas, kEnergyBlock, 0, stream>>>(s, frame);
+  BOMD_LAUNCH_CHECK();
+}
+
+void launch_kinetic_energy(const DeviceState& s, double* out, cudaStream_t stream) {
+  if (s.n_total() == 0) return;
+  k_kinetic_energy<<<s.n_replicas, kEnergyBlock, 0, stream>>>(s, out);
   BOMD_LAUNCH_CHECK();
 }
 

@@ -73,6 +73,9 @@ struct DeviceState {
   float* d_temperature = nullptr;    ///< T_r [K];                           n_replicas
   int2* d_image = nullptr;           ///< Box-Imagezähler (nx, ny);          n_replicas·n_pad
   unsigned int* d_status = nullptr;  ///< Statuswort (StatusBit, ADR 0008);   1
+  /// E_kin [kJ/mol] der Geschwindigkeiten nach O (+ RATTLE) im letzten Schritt, der sie erfasst hat
+  /// (OQ-14, PHYSICS_MODEL §1); NaN vor dem ersten Schritt.                     n_replicas
+  double* d_ekin_mid = nullptr;
 
   /// Gesamtzahl Atomplätze n_replicas·n_pad.
   __host__ __device__ int n_total() const { return n_replicas * n_pad; }

@@ -26,6 +26,26 @@ Alle PRs #1–#6, #9–#14 am 2026-11-05 nach `main` gemergt (Merge-Commits, Rei
 - Phase 5 (PR #5): HMR, SHAKE/RATTLE auf H-Bindungen, N_dof. Abgenommen 2026-11-03; Nacharbeit nach
   Review siehe unten.
 
+## Phase 9.7 – Folgearbeiten OQ-14 / OQ-18 (d): abgenommen 2026-11-06 (Branch `phase-9/followups`, PR #18)
+- C¹-glattes ζ-Clamping in `ImageChargeForce` (h = ζ_c/2): Referenz `smooth_zeta`, neue Tests
+  `test_image_smooth_clamp_reference` (Stetigkeit, Kraft = −dU/dz) und `test_image_smooth_clamp_gpu`;
+  alle 17 Tests aus 9.5 + neu grün; NVE-Drift 0.7–1.1·10⁻⁵ kJ/mol/ps/Atom (vorher 1–2·10⁻⁵),
+  Testgrenze von 1e-4 auf 3e-5 verschärft. NaN-Positionen werden nicht mehr auf ζ_c maskiert,
+  sondern pflanzen sich fort (vorher `fmaxf(NaN, ζ_c)` = ζ_c).
+- Volle Suite 161/161 grün (vor den Review-Fixes), danach Phase 2, 9.2 (REMD), 9.5 (Image), 9.7: 59/59.
+- Zweite Temperatur (OQ-14): E_kin nach dem O-Schritt (+ RATTLE), `ctx.kinetic_energy_mid()` und
+  `kinetic_mid` im EnergyTracker. Die Reduktion läuft nur in beobachteten Schritten und im letzten
+  Schritt von `step(n)`.
+  - Messung 2k-System (HMR, H-Constraints, γ = 1/ps): 300.4 ± 0.3 / 300.2 / 300.2 K bei 4 / 2 / 1 fs;
+    am vollen Schritt 268.5 / 292.3 / 298.2 K (Bias ∝ Δt²).
+  - Das Kriterium „bei 1 fs stimmen beide überein“ war falsch und ist revidiert (ROADMAP 9.7, vom
+    Projektinhaber bestätigt 2026-11-06).
+  - `tests/python/test_phase9_temperature.py`: 3 Tests grün.
+  - Review (unabhängiger Agent): kein kritischer Befund. Umgesetzt: NaN nach `set_velocities` und
+    `restore_state`, Test „am Stück vs. in Stücken“ (Stride-Auswahl), NVE-Grenze 3e-5, Zähler über
+    ζ_raw statt dζ < 1, Doku. Nicht umgesetzt: Reduktion im letzten Schritt von `step(n)` lazy machen
+    (eine kleine Reduktion je `step()`-Aufruf, vernachlässigbar).
+
 ## Phase 9.6 – Tile-Paarliste (ADR 0014 inkl. Rev. 1 Accepted), implementiert; Abnahme später (OQ-19)
 - Vorab-Messung 1 × 20 k: räumliche Sortierung bringt nichts (Atomreihenfolge 13.3 % lebende
   Tile-Paare, Morton 14.7 %) ⇒ Tile-Paarliste statt Cell-List (Projektinhaber 2026-11-06).
@@ -294,6 +314,7 @@ ADR 0007 → **0009** (Mixed Precision), unsere OQ-08…11 → **OQ-11…14**.
 | 2026-11-06 | Projektinhaber | ADR 0014 (Tile-Paarliste statt Cell-List) angenommen, Rev. 1 bestätigt; Phase 9.6 erst später abnehmen, Kriterium 1.25× bleibt (OQ-19). |
 | 2026-11-06 | Projektinhaber / Claude | ADR 0015 (Constraint-Löser mit gemischter Präzision) angenommen; Prototyp verfehlt das Kriterium (−2 % statt −30 %) ⇒ nach Punkt 4 zurückgezogen (Rejected). |
 | 2026-11-06 | Projektinhaber | Vorschläge angenommen: OQ-15 (a) bestätigt; OQ-14 zweite Temperatur (Schätzer nach Messung); OQ-16 vorerst nicht modelliert; OQ-17 Φ0 fest; OQ-18 (a)–(c) wie Annahme, (d) C¹-glattes Clamping; Phase 9.6 als Entwurf-PR pushen; #15/#16 gemeinsam mergen nach Abnahme 9.4; nächste große Phase MD ↔ FEM-Kopplung (vor Coarse-Grained); Prototyp-Branch ADR 0015 lokal behalten. |
+| 2026-11-06 | Projektinhaber | Revidiertes Kriterium ROADMAP 9.7 (Bias-Verhältnis 4 fs / 2 fs zwischen 3 und 5) bestätigt; Phase 9.7 abgenommen, PR #18 gestapelt auf #17. |
 | 2026-11-06 | Projektinhaber | Phase 9.6: Kriterium nach der Endmessung bei freier GPU gesenkt (1 × 20 k ≥ 1.10×, gemessen 1.12×), Phase 9.6 abgenommen (OQ-19). |
 | 2026-11-05 | Claude Opus 5.5 | Phase 9.2 Replica Exchange implementiert (ADR 0011 Proposed), 113/113 Tests grün. |
 | 2026-11-05 | Claude Opus 5.5 | Phase 9.1 GB-OBC2 implementiert (ADR 0010 Proposed, gb_ref, TiledGeneralizedBorn, Builder), 12/12 Phase-9-Tests grün. |

@@ -45,4 +45,8 @@ inline constexpr int kEnergyFrameColumns = 1 + kNumEnergyTerms;
 /// d_energy_fp (Fixed-Point → double, exakt bis 2^53).
 void launch_energy_frame(const DeviceState& s, double* frame, cudaStream_t stream);
 
+/// out[r] = E_kin = ½ Σ m v² je Replica (gleiche Reduktion wie launch_energy_frame,
+/// deterministisch).
+void launch_kinetic_energy(const DeviceState& s, double* out, cudaStream_t stream);
+
 }  // namespace bomd::detail

@@ -237,9 +237,11 @@ Dokumentation, Verzeichnisstruktur, Agenten-Anweisungen, Build-Entwürfe.
 - `::test_image_gpu_vs_numpy`, `::test_image_lateral_culling` – Energie rel. < 1e-5, Kräfte < 1e-4 RMS, mehrere Replicas mit
   verschiedenem κ/ε_r, Minimum-Image- und Bildsummenpfad, f = 1 und f = −0.5.
 - `::test_image_far_atoms_zero` – Atome mit ζ > r_c erhalten exakt null Bildkraft (Vorauswahl).
-- `::test_image_clamp` – ζ < ζ_c: Energie stetig, Kraft in z null, Zähler zählt.
+- `::test_image_clamp` – ζ < ζ_c: Energie stetig, Kraft in z null, Zähler zählt (seit Phase 9.7:
+  ζ_raw ≤ ζ_c − h, C¹-Übergang darüber, siehe 9.7).
 - `::test_image_set_screening` – nach `set_screening` gleich einem frischen Kontext (REMD).
-- `::test_image_nve` (`slow`) – DH + Wand + Bilder, NVE-Drift < 1e-4 kJ/mol/ps/Atom wie test_gb_nve.
+- `::test_image_nve` (`slow`) – DH + Wand + Bilder, NVE-Drift < 1e-4 kJ/mol/ps/Atom wie test_gb_nve
+  (seit Phase 9.7 < 3e-5).
 - `::test_image_determinism` – zwei Läufe bitidentisch.
 - Messung (kein Kriterium): Kosten des Passes für ein Aptamer auf Gold relativ zu Debye-Hückel.
 
@@ -268,15 +270,21 @@ Dokumentation, Verzeichnisstruktur, Agenten-Anweisungen, Build-Entwürfe.
 - Messung (Kriterium): 1 × 20 k mindestens ~~1.25×~~ 1.10× schneller als vorher (OQ-19); 32 × 2 k und 128 × 1 k nicht
   langsamer (Toleranz 2 %); Vergleich mit OpenMM berichtet, kein Muss. Messung erst bei freier GPU.
 
-### Phase 9.7 – Folgearbeiten aus OQ-14 und OQ-18 (d) (Projektinhaber 2026-11-06; Kriterien Vorschlag)
+### Phase 9.7 – Folgearbeiten aus OQ-14 und OQ-18 (d) (Projektinhaber 2026-11-06; abgenommen 2026-11-06)
 1. Zweite Temperatur (OQ-14): Kandidaten Geschwindigkeiten nach dem O-Schritt und konfigurationelle
    Temperatur messen; der Schätzer, der den Bias bei Δt = 4 fs (HMR, H-Constraints) beseitigt, wird
    zusätzlich gemeldet. E_kin am vollen Schritt bleibt unverändert.
+   *Umgesetzt:* E_kin nach O (+ RATTLE), `ctx.kinetic_energy_mid()` und `kinetic_mid` im
+   EnergyTracker. Die konfigurationelle Temperatur bräuchte die Spur der Hesse-Matrix aller
+   Kraftterme; sie war nicht nötig, weil schon der erste Kandidat den Bias beseitigt.
 2. C¹-glattes Clamping von ζ in `ImageChargeForce` (OQ-18 d), ζ_c = 0.1 nm bleibt.
 
-Abnahmetests (Vorschlag):
-- Zweite Temperatur bei 300 K, Δt = 4 fs, 1 × 2 k mit Constraints: |⟨T⟩ − 300 K| < 1 % (4σ); bei
-  1 fs stimmen beide Schätzer überein (4σ).
+Abnahmetests (revidierte Fassung vom Projektinhaber bestätigt 2026-11-06):
+- Zweite Temperatur bei 300 K, Δt = 4 fs, 1 × 2 k mit Constraints: |⟨T⟩ − 300 K| < 1 % (4σ).
+  ~~Bei 1 fs stimmen beide Schätzer überein (4σ).~~ Revidiert nach der Messung: Auch bei 1 fs liegt
+  E_kin am vollen Schritt noch 1.8 K unter 300 K (Bias ∝ Δt²: 31.5 / 7.7 / 1.8 K bei 4 / 2 / 1 fs).
+  Stattdessen gilt: Das Verhältnis der Bias von 4 fs zu 2 fs liegt zwischen 3 und 5.
+  `tests/python/test_phase9_temperature.py::test_temperature_mid_4fs`.
 - Image: Kraft = −∇E (finite Differenzen) auch im Übergangsbereich um ζ_c; Energie und Kraft stetig
   über ζ_c; NVE-Drift mit H-Atomen nahe Gold nicht schlechter als in Phase 9.5; alle Tests aus 9.5 grün.
 

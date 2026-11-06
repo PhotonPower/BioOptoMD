@@ -62,13 +62,17 @@ Antwort des Metalls auf das Molekül. PHYSICS_MODEL §3 führt `ImageChargeForce
    mit ζ < r_c bei; die Tile-Vorauswahl nutzt zusätzlich die untere Schranke ζ_min,i + ζ_min,j aus den
    Tile-Hüllen (`tile_common.cuh`).
 
-6. **Schutz bei ζ → 0 (ADR 0008).** ζ wird auf ζ_c = 0.1 nm geclampt (Energie stetig, Kraft in z dann 0),
+6. **Schutz bei ζ → 0 (ADR 0008).** ζ wird auf ζ_c = 0.1 nm geclampt (bis Phase 9.6: Energie stetig, Kraft in z dann 0),
    jedes Clamping zählt ein Device-Zähler wie bei der Wand; ζ_c >= 0.02 nm wird erzwungen.
    *Präzisierung nach der Implementierung (vom Projektinhaber am 2026-11-06 bestätigt):* An Gold
    mit d_im = 0 erreichen H-Atome ζ < ζ_c regelmäßig (σ_iw(H) ≈ 0.19 nm); ζ_c ist dort ein
    Modellparameter und keine reine Schutzgrenze, ASSUMPTION(OQ-18) Punkt (d). Für q = 1 und ε_r = 78.5 ist die Eigenbild-
    kraft bei ζ_c ≈ 45 kJ/mol/nm, weit unter F_max. Ankeratome (Oberflächen-Typ 0, OQ-07) nehmen teil,
    sofern sie geladen sind; liegt ihre Höhe unter z_im + ζ_c, greift das Clamping.
+   *Phase 9.7 (OQ-18 d, Projektinhaber 2026-11-06):* Das Clamping ist C¹-glatt. Unter ζ_c − h gilt
+   ζ = ζ_c, über ζ_c + h gilt ζ = z − z_im, dazwischen ζ = ζ_c + (u − ζ_c + h)²/(4h) mit
+   h = ζ_c/2. Damit bleiben Energie und Kraft stetig, und ζ ≥ max(z − z_im, ζ_c) gilt weiter (die
+   Tile-Vorauswahl bleibt gültig). Der Zähler zählt Atome unter ζ_c + h.
 
 7. **Implementierung als ForcePlugin** `src/forces/image_charge.{hpp,cu}`, ein eigener Tile-Pass über
    alle Paare (i ≤ j). j-Koordinaten werden beim Laden in den Shared Memory gespiegelt, sonst wie

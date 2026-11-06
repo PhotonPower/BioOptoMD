@@ -24,9 +24,27 @@ struct ImagePlane {
   float z_image, zeta_clamp, factor;
 };
 
+/// C¹-glattes Clamping (OQ-18 d): ζ = raw für raw ≥ ζ_c + h, ζ = ζ_c für raw ≤ ζ_c − h,
+/// dazwischen ζ = ζ_c + (raw − ζ_c + h)²/(4h); h = ζ_c/2. ζ ≥ max(raw, ζ_c), dζ/draw ∈ [0, 1].
+__device__ __forceinline__ float smooth_zeta(float raw, float zeta_clamp, float& dzeta) {
+  const float h = kZetaSmoothFraction * zeta_clamp;
+  const float u = raw - zeta_clamp + h;  // ∈ [0, 2h] im Übergang
+  if (u >= 2.0f * h) {
+    dzeta = 1.0f;
+    return raw;
+  }
+  if (u <= 0.0f) {
+    dzeta = 0.0f;
+    return zeta_clamp;
+  }
+  dzeta = u / (2.0f * h);
+  return zeta_clamp + u * u / (4.0f * h);
+}
+
 /// Untere Schranke von s = |(Δx, Δy, ζ_i + ζ_j)| für zwei Tiles: ζ ≥ max(z_min − z_im, ζ_c) je
-/// Tile, im Minimum-Image-Pfad zusätzlich die lateralen Lücken der Hüllen (wie
-/// detail::tiles_out_of_range). true ⇔ kein Paar (und kein Bild) liegt innerhalb von r_c.
+/// Tile (gilt auch für das geglättete ζ), im Minimum-Image-Pfad zusätzlich die lateralen Lücken der
+/// Hüllen (wie detail::tiles_out_of_range). true ⇔ kein Paar (und kein Bild) liegt innerhalb von
+/// r_c.
 template <bool kLateral>
 __device__ __forceinline__ bool image_tiles_out_of_range(const float4* bounds, int r, int n_tiles,
                                                          int2 tp, float2 box, float r_c,
@@ -51,10 +69,10 @@ __device__ __forceinline__ bool image_tiles_out_of_range(const float4* bounds, i
 }
 
 /// Ein Warp pro Tile-Paar (I ≤ J), blockIdx.y = Replica; Aufbau wie k_tiled_all_pairs. j-Atome
-/// liegen gespiegelt im Shared Memory: (x, y, ζ = max(z − z_im, ζ_c), q). Keine Exclusions; in
-/// Diagonal-Tiles wird b < a übersprungen, b = a ist das Eigenbild (Energie ½, nur z-Kraft, weil
-/// der laterale Abstand konstant ist). Die z-Kräfte eines Paars haben dasselbe Vorzeichen;
-/// geclampte Atome erhalten keine z-Kraft (∂ζ/∂z = 0).
+/// liegen gespiegelt im Shared Memory: (x, y, ζ = smooth_zeta(z − z_im), q) und dζ/dz. Keine
+/// Exclusions; in Diagonal-Tiles wird b < a übersprungen, b = a ist das Eigenbild (Energie ½, nur
+/// z-Kraft, weil der laterale Abstand konstant ist). Die z-Kräfte eines Paars haben dasselbe
+/// Vorzeichen und tragen den Faktor dζ/dz (0 für geclampte Atome).
 ///
 /// kImages (L < 2 r_c, ADR 0006 Rev. 2): Summe über n = (n_x L_x, n_y L_y), auch für das
 /// Eigenbild (dessen Gitterbilder tragen hier eine z-Kraft bei, anders als im Nonbonded-Kernel).
@@ -64,7 +82,7 @@ __global__ void __launch_bounds__(kWarpsPerBlock * 32)
                     const float2* screening, SwitchParams sw, ImagePlane plane,
                     const float4* tile_bounds, unsigned long long* clamp_counter) {
   __shared__ float4 sh_pos[kWarpsPerBlock][32];
-  __shared__ int sh_free[kWarpsPerBlock][32];
+  __shared__ float sh_dz[kWarpsPerBlock][32];
   __shared__ float3 sh_fj[kWarpsPerBlock][32];
 
   const int r = blockIdx.y;
@@ -82,17 +100,20 @@ __global__ void __launch_bounds__(kWarpsPerBlock * 32)
   const bool valid_j = j_local < s.n_atoms;
   const float4 pi = s.d_pos[base + i_local];
   const float zeta_raw_i = pi.z - plane.z_image;
-  const bool free_i = zeta_raw_i > plane.zeta_clamp;
-  if (diagonal && valid_i && pi.w != 0.0f && !free_i) atomicAdd(clamp_counter, 1ull);
+  float dz_i;
+  const float zeta_i = smooth_zeta(zeta_raw_i, plane.zeta_clamp, dz_i);
+  if (diagonal && valid_i && pi.w != 0.0f &&
+      zeta_raw_i < (1.0f + kZetaSmoothFraction) * plane.zeta_clamp)
+    atomicAdd(clamp_counter, 1ull);
   if (image_tiles_out_of_range<!kImages>(tile_bounds, r, s.n_pad / 32, tp, s.d_box[r], sw.r_c,
                                          plane))
     return;
 
-  const float zeta_i = free_i ? zeta_raw_i : plane.zeta_clamp;
   const float4 pj = s.d_pos[base + j_local];
-  const float zeta_raw_j = pj.z - plane.z_image;
-  sh_free[warp][a] = zeta_raw_j > plane.zeta_clamp;
-  sh_pos[warp][a] = make_float4(pj.x, pj.y, fmaxf(zeta_raw_j, plane.zeta_clamp), pj.w);
+  float dz_j;
+  const float zeta_j = smooth_zeta(pj.z - plane.z_image, plane.zeta_clamp, dz_j);
+  sh_dz[warp][a] = dz_j;
+  sh_pos[warp][a] = make_float4(pj.x, pj.y, zeta_j, pj.w);
   sh_fj[warp][a] = make_float3(0.0f, 0.0f, 0.0f);
 
   unsigned int skip = ~__ballot_sync(0xffffffffu, valid_j && pj.w != 0.0f);
@@ -116,7 +137,7 @@ __global__ void __launch_bounds__(kWarpsPerBlock * 32)
     if (!((skip >> b) & 1u)) {
       const float4 q_j = sh_pos[warp][b];
       const bool self_image = diagonal && b == a;
-      const bool free_j = sh_free[warp][b] != 0;
+      const float dz_j = sh_dz[warp][b];
       const float qq = pi.w * q_j.w;
       const float dx0 = detail::minimum_image_1d(pi.x, q_j.x, box.x);
       const float dy0 = detail::minimum_image_1d(pi.y, q_j.y, box.y);
@@ -141,16 +162,16 @@ __global__ void __launch_bounds__(kWarpsPerBlock * 32)
           const float c = -plane.factor * qq * dphi * inv_s;  // (∂U/∂s)/s
           if (self_image) {
             energy -= 0.5f * plane.factor * qq * phi;
-            if (free_i) fi.z -= c * sz;
+            fi.z -= c * sz * dz_i;
           } else {
             energy -= plane.factor * qq * phi;
             fi.x -= c * sx;
             fi.y -= c * sy;
-            if (free_i) fi.z -= c * sz;
+            fi.z -= c * sz * dz_i;
             float3& fj = sh_fj[warp][b];
             fj.x += c * sx;
             fj.y += c * sy;
-            if (free_j) fj.z -= c * sz;
+            fj.z -= c * sz * dz_j;
           }
         }
       }

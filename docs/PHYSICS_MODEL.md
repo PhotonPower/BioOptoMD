@@ -24,6 +24,12 @@ B:  v ← v + (Δt/2) F/m
 - Atome mit `inv_mass = 0` bewegen sich nicht und erhalten kein Rauschen.
 - Freiheitsgrade pro Replica: `N_dof = 3·N_mobile − N_constraints` (kein Abzug für Schwerpunkt, da die Wand Translationsinvarianz in z bricht und Langevin ohnehin keinen Impuls erhält).
 - **Bekannte Eigenschaft (gemessen in Phase 5):** BAOAB sampelt Konfigurationen sehr genau, die kinetische Temperatur aus den Geschwindigkeiten am vollen Schritt ist aber um O(Δt²) zu niedrig (harmonischer Oszillator: ⟨p²⟩/m = kT·(1 − ω²Δt²/4)). Duplex-System, HMR + H-Constraints, 300 K: T_kin = 268 / 292 / 298 / 299.5 K bei Δt = 4 / 2 / 1 / 0.5 fs, ⟨E_pot⟩ dagegen unabhängig von Δt. Konfigurationsgrößen (E_pot, Geometrie, n(z)) sind daher die verlässlichen Observablen; die „Temperatur“ aus `energies()` ist bei 4 fs kein Maß für die Thermostat-Temperatur (OQ-14).
+- **Zweite Temperatur (Phase 9.7, OQ-14):** E_kin der Geschwindigkeiten nach dem O-Schritt
+  (+ RATTLE), `ctx.kinetic_energy_mid()` bzw. `kinetic_mid` im EnergyTracker, T = 2 E / (N_dof k_B).
+  Für den harmonischen Oszillator ist sie exakt. Im 2k-System (HMR, H-Constraints, γ = 1/ps) liegt sie
+  bei 300.4 ± 0.3 / 300.2 / 300.2 K für Δt = 4 / 2 / 1 fs; E_kin am vollen Schritt ergibt dort
+  268.5 / 292.3 / 298.2 K (Bias ∝ Δt²). Für die Energiebilanz (NVE) bleibt E_kin am vollen Schritt
+  maßgeblich.
 
 ## 2. Kovalente Terme (Phase 3)
 
@@ -114,13 +120,16 @@ Abgeschirmte Bildladungen an einer leitfähigen Ebene z = z_im (Dirichlet-Rand d
 Poisson-Boltzmann-Problems; im Debye-Hückel-Modell für f = 1 exakt):
 ```
 U = −f [ Σ_{i<j} q_i q_j φ(s_ij) + ½ Σ_i q_i² φ(2ζ_i) ],   φ(s) = k_e e^{−κs}/(ε_r s) · S(s)
-s_ij = |(Δx_ij, Δy_ij, ζ_i + ζ_j)|,   ζ_i = max(z_i − z_im, ζ_c)
+s_ij = |(Δx_ij, Δy_ij, ζ_i + ζ_j)|,   ζ_i = smax(z_i − z_im)  (C¹-glattes max(·, ζ_c))
+smax(u) = u (u ≥ ζ_c + h),  ζ_c + (u − ζ_c + h)²/(4h) (|u − ζ_c| < h),  ζ_c (u ≤ ζ_c − h),  h = ζ_c/2
 ```
 Alle Paare ohne Exclusions, Eigenbild mit ½; Δx, Δy mit Minimum Image bzw. Bildsumme (L < 2 r_c,
 auch für das Eigenbild, dessen Gitterbilder hier eine z-Kraft liefern); r_s, r_c, S(r), κ_r, ε_r wie
 die Nonbonded-Strategie (bei GB ε_out, Näherung nach OQ-16). Die z-Kräfte eines Paars zeigen in dieselbe
-Richtung (externe Wand, kein Impulserhalt in z). Für ζ < ζ_c = 0.1 nm wird geclampt (Energie stetig,
-z-Kraft 0, Zähler `clamp_count`); H-Atome an Gold erreichen das regelmäßig. Bildfaktor f ∈ [−1, 1]:
+Richtung (externe Wand, kein Impulserhalt in z). Unter ζ_c − h wird geclampt (ζ = ζ_c, z-Kraft 0),
+zwischen ζ_c ± h geht ζ C¹-glatt in z − z_im über (Energie und Kraft stetig, OQ-18 d, Phase 9.7);
+ζ_c = 0.1 nm, h = 0.05 nm; der Zähler `clamp_count` zählt Atome unter ζ_c + h. H-Atome an Gold
+erreichen das regelmäßig. Bildfaktor f ∈ [−1, 1]:
 1 = idealer Leiter (Gold), f < 1 Näherung für dielektrische Wände, für Graphen ohne Default (OQ-18).
 Bildebene z_im = z0 + z_top + d_im, ASSUMPTION(OQ-18): d_im = 0 und ζ_c = 0.1 nm (an Gold ein
 Modellparameter, weil H-Atome ζ < ζ_c erreichen). Gouy-Chapman hat seinen Ursprung bei z0, nicht bei

@@ -1,6 +1,7 @@
 // BioOptoMD – SimulationContext: Allokation, Host-Setter, Kernel-Aufrufe, Plugin-Pipeline.
 #include <climits>
 #include <cmath>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -47,6 +48,7 @@ SimulationContext::SimulationContext(int n_replicas, int n_atoms, int device) : 
   status_ = DeviceBuffer<unsigned int>(1);
   energy_frame_ =
       DeviceBuffer<double>(static_cast<std::size_t>(n_replicas) * detail::kEnergyFrameColumns);
+  ekin_mid_ = DeviceBuffer<double>(n_replicas);
   // Blockierender Stream ⇒ implizit geordnet mit dem Legacy-Default-Stream (z. B. von CuPy).
   stream_ = CudaStream::create();
 
@@ -77,6 +79,8 @@ SimulationContext::SimulationContext(int n_replicas, int n_atoms, int device) : 
   state_.d_temperature = temperature_.data();
   state_.d_image = image_.data();
   state_.d_status = status_.data();
+  state_.d_ekin_mid = ekin_mid_.data();
+  invalidate_ekin_mid();
 
   synchronize();
 }
@@ -179,6 +183,14 @@ void SimulationContext::scatter_vel_w(const double* src) {
 void SimulationContext::set_velocities(const double* v_nm_ps) {
   scatter_vel_xyz(v_nm_ps);
   constraints_dirty_ = true;
+  invalidate_ekin_mid();
+}
+
+void SimulationContext::invalidate_ekin_mid() {
+  activate();
+  const std::vector<double> nan(ekin_mid_.size(), std::numeric_limits<double>::quiet_NaN());
+  ekin_mid_.upload_async(nan.data(), stream_.get());
+  synchronize();  // Host-Vektor lebt bis hier
 }
 
 void SimulationContext::set_constraints(ConstraintParams params) {
@@ -361,6 +373,7 @@ void SimulationContext::restore_dynamic_state(const DynamicState& state) {
   vel_.upload_async(state.vel.data(), stream_.get());
   image_.upload_async(state.image.data(), stream_.get());
   synchronize();
+  invalidate_ekin_mid();  // E_kin nach O gehört zur verworfenen Trajektorie
   step_ = state.step;
   time_ps_ = state.time_ps;
   previous_time_ps_ = state.previous_time_ps;
@@ -379,6 +392,10 @@ void SimulationContext::step(std::int64_t n) {
   const cudaStream_t st = stream_.get();
   const LangevinIntegrator& li = *integrator_;
   for (std::int64_t k = 0; k < n; ++k) {
+    // E_kin nach O nur in Schritten, deren Ende ein Observer sieht, und im letzten (OQ-14).
+    bool record_mid = k == n - 1;
+    for (const auto& observer : observers_)
+      record_mid = record_mid || (step_ + 1) % observer->stride() == 0;
     if (constraints_) {
       // B, RATTLE, A+SHAKE, O, RATTLE, A+SHAKE (PHYSICS_MODEL.md §1)
       const ConstraintSet& cs = *constraints_;
@@ -388,10 +405,12 @@ void SimulationContext::step(std::int64_t n) {
       cs.drift_and_shake(state_, li.half_dt(), st);
       li.thermostat(state_, step_, st);
       cs.rattle(state_, st);
+      if (record_mid) detail::launch_kinetic_energy(state_, state_.d_ekin_mid, st);
       li.drift(state_, cs.d_in_cluster(), st);
       cs.drift_and_shake(state_, li.half_dt(), st);
     } else {
-      li.first_half(state_, step_, st);
+      li.first_half(state_, step_, st);  // v danach = v nach O (das zweite A ändert nur x)
+      if (record_mid) detail::launch_kinetic_energy(state_, state_.d_ekin_mid, st);
     }
     detail::launch_wrap_xy(state_, st);
     ++step_;
@@ -410,6 +429,14 @@ std::vector<double> SimulationContext::energy_frame() {
   detail::launch_energy_frame(state_, energy_frame_.data(), stream_.get());
   std::vector<double> out(energy_frame_.size());
   energy_frame_.download_async(out.data(), stream_.get());
+  synchronize();
+  return out;
+}
+
+std::vector<double> SimulationContext::kinetic_energy_mid() {
+  activate();
+  std::vector<double> out(ekin_mid_.size());
+  ekin_mid_.download_async(out.data(), stream_.get());
   synchronize();
   return out;
 }
