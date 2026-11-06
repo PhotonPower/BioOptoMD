@@ -207,7 +207,7 @@ Dokumentation, Verzeichnisstruktur, Agenten-Anweisungen, Build-Entwürfe.
 - `test_phase9_gbn2.py::test_gbn2_vs_openmm` (`reference`) – Builder-Weg gesamt vs. OpenMM, Energie/Kräfte < 1e-4.
 - `test_phase9_gbn2.py::test_gbn2_nve` (`slow`) – NVE wie test_gb_nve (0.5 fs), Drift < 1e-4.
 
-### Phase 9.4 – Validierung GBn2 + OL21 (OQ-15; vom Projektinhaber am 2026-11-05 gewählt, in Arbeit)
+### Phase 9.4 – Validierung GBn2 + OL21 (OQ-15; vom Projektinhaber am 2026-11-05 gewählt; abgenommen 2026-11-06)
 
 **Aufgaben**
 1. (a) Duplex 1BNA, GBn2 vs. OBC2, 4 × 100 ns, 0.15 M, 300 K (`examples/gb_validation/duplex_stability.py`).
