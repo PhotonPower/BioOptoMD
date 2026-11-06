@@ -355,7 +355,7 @@ Abnahmetests (Vorschlag): siehe ADR 0016, Konsequenzen (`test_polarizability_gri
 2. Builder: Cα-ENM/Gō aus PDB (`biooptomd.cg.enm_go_from_pdb`), Domänen und native Kontakte,
    Ladungen je Residuum, Optiktabellen je Perle (Summenregel der kalibrierten Atomwerte).
    *Umgesetzt 2026-11-06* (`test_cg_builder_ubiquitin`, `test_cg_builder_domains`,
-   `test_cg_forces_vs_openmm`: max |ΔF|/RMS 4.6e-7).
+   `test_cg_builder_chains_disulfide`, `test_cg_forces_vs_openmm` je Term: ≤ 5.5e-6 der RMS-Kraft).
 3. Wand und Bildladungen für Perlen (λ unkalibriert, OQ-29).
 4. Beispiel IgG über Gold mit REMD, Durchsatz.
 5. (Stufe 1b, optional) gemischte Auflösung (OQ-28); (Stufe 2) CG-Aptamere nach OQ-27.

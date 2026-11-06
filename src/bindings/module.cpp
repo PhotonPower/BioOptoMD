@@ -756,7 +756,8 @@ NB_MODULE(_core, m) {
       "bond_r0 [nm], angles (n,3), angle_k [kJ/mol/rad^2], angle_theta0 [rad], torsions (n,4),\n"
       "torsion_k [kJ/mol], torsion_n, torsion_phase [rad], pairs14 (n,2), pair_qq [e^2],\n"
       "pair_sigma [nm], pair_eps [kJ/mol] (lokale Atomindizes); optional angle_form (0 = θ,\n"
-      "1 = cos θ, ADR 0017) und pair_form (0 = LJ 12-6, 1 = 12-10). replica_topology int32\n"
+      "1 = cos θ, ADR 0017; angle_k dann in kJ/mol) und pair_form (0 = LJ 12-6, 1 = 12-10).\n"
+      "replica_topology int32\n"
       "(n_replicas,), kappa [1/nm] und eps_r (n_replicas,) für die 1-4-Debye-Hückel-Abschirmung;\n"
       "follow_screening=False hält sie bei set_screening fest (GB: kappa = 0, eps_r = 1).");
 

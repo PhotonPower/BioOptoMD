@@ -79,7 +79,7 @@ __global__ void k_bonds(DeviceState s, const int4* index, const float4* param, c
 /// (kosinus-harmonisch, ADR 0017): V = ½k(cos θ − cos θ0)² mit dV/dθ = −k(cos θ − cos θ0) sin θ.
 /// F_i = −V'(a×n)/(|a|²|n|), F_k = −V'(n×b)/(|b|²|n|), F_j = −F_i − F_k. Form 0: |n|² < EPS_CROSS2
 /// ⇒ F = 0. Form 1: V'/|n| = −k(cos θ − cos θ0)/(|a||b|) bleibt endlich, die Kraft geht mit |n|
-/// stetig gegen 0 (θ = 0, π).
+/// stetig gegen 0 (θ = 0, π); |a||b| < EPS_R2 (Atome aufeinander) ⇒ V = 0, F = 0.
 __global__ void k_angles(DeviceState s, const int4* index, const float4* param, const int2* range) {
   const int t = blockIdx.x * blockDim.x + threadIdx.x;
   const int r = blockIdx.y;

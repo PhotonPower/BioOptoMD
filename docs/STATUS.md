@@ -33,8 +33,12 @@ Alle PRs #1–#6, #9–#14 am 2026-11-05 nach `main` gemergt (Merge-Commits, Rei
   OQ-27/28/29. Phase-10-PRs #19–#21 gepusht (gestapelt auf #18).
 - 11.1: `BondedForce` mit `angle_form` (kosinus-harmonisch) und `pair_form` (12-10 Gō); Tests gegen
   FP64-Referenz (rel. 1e-5, Referenz gegen finite Differenzen), θ → 0/π endlich.
-- 11.2: `biooptomd.cg.enm_go_from_pdb` (Ubiquitin 1UBQ als Testeingabe); gegen OpenMM
-  max |ΔF|/RMS 4.6e-7 an einer thermischen Konfiguration; Massen, Ladung, Summenregel geprüft.
+- 11.2: `biooptomd.cg.enm_go_from_pdb` (Ubiquitin 1UBQ als Testeingabe). Review umgesetzt: Cα-Winkel
+  (kosinus-harmonisch, auch im Gelenk), Disulfide als Bindungen, Lückenwarnung, je Kette eine Domäne
+  als Default, Protonierungs-Aliase/MSE, H₂O am C-Terminus (Masse = Summenformel exakt), go_form.
+  Gegen OpenMM je Term (σ = 0.015 nm): Bindungen+Winkel 1.1e-6, Gō 5.5e-6, Nonbonded 8.9e-7 der
+  jeweiligen RMS-Kraft. Frühere Begründung im Test (Gō-Auslöschung) war falsch: der absolute
+  Fehler kam aus den steifen Kettenbindungen (FP32-Rundung von r · k). OQ-30 (CG-Parameter).
 
 ## Phase 10.6 – Replica Exchange im Treiber: abgenommen 2026-11-06, Branch `phase-10/coupling-remd`
 - `SelfConsistentOptics(remd=..., exchange_steps=..., target_states=...)`: Zyklen mit Austausch,
