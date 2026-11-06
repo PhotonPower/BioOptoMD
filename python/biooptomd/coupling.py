@@ -688,6 +688,203 @@ def _bilinear_periodic_x(values, xc, zc, x, z, period):
     return a * (1 - fz) + b * fz
 
 
+@dataclass
+class HpFemSolver3D:
+    """hp-FEM ``Scattering3D`` im selben Prozess für Strukturen, die in x und y variieren (ADR 0016
+    Punkt 4b, ROADMAP 10.5): Bloch-periodische Einheitszelle [x₀, x₀ + L_x) × [y₀, y₀ + L_y) (Box;
+    x₀, y₀ = Herkunft des ε-Gitters), Streufeld-Formulierung mit dem Schichtstapel Einfallsmedium
+    (Prisma, ``n_incident``) | ``substrate`` [(ε, Dicke nm), …] bis z = ``z_surface`` | Wasser als
+    analytischem Hintergrund (``LayerStack3D``), PML nur oben und unten.
+
+    ⟨ε⟩ je Tetraeder im Molekülbereich: Wert der ε-Zelle, die den Schwerpunkt enthält (Netzlinien
+    auf allen ε-Zellgrenzen, ``n_per_cell`` Unterteilungen je Zelle und Achse). |E|² an den Knoten
+    des Kraftgitters über ``Scattering3D.sample`` (Gesamtfeld); Knoten auf Netzlinien erhalten das
+    Mittel der angrenzenden Zellen (bis zu 8). Koordinaten und Amplitude wie
+    :class:`HpFemGratingSolver` (hp-FEM-z = z_first − z, einfallende Welle 1 V/m, Einfallsebene x–z).
+
+    Aufwand: strukturiertes Tetraedernetz (6 je Quader) mit allen ε-Spalten über die ganze Höhe;
+    Polynomgrad ``order`` (Nédélec 3D, <= 4), im Molekülbereich optional ``order_region`` (kleine
+    Zellen, dort genügt ein niedrigerer Grad). Die Unbekannten wachsen etwa mit
+    n_x · n_y · n_z · order³; Messwerte in docs/ROADMAP.md 10.5. Das Windows-Wheel von hp-FEM 0.4.0
+    rechnet einfädig mit SparseLU (ohne OpenMP, MUMPS, cuDSS); feinere laterale Auflösungen brauchen
+    einen Build mit diesen Backends.
+    """
+
+    wavelength_nm: float
+    angle_deg: float
+    pol: str
+    n_incident: float
+    substrate: list = field(default_factory=list)
+    intensity_w_m2: float = 1e10
+    z_surface: float = 0.0
+    order: int = 2
+    order_region: int | None = None
+    h_far: float = 40.0
+    h_layer: float = 5.0
+    n_per_cell: int = 1
+    pml_nm: float | None = None
+    water_nm: float = 400.0
+    prism_nm: float = 300.0
+    last_problem: object = field(default=None, repr=False)
+    last_unknowns: int = 0
+
+    def solve(self, eps: EpsGrid, grid: ForceGrid) -> np.ndarray:
+        import hpfem
+
+        nm = 1e-9
+        if not grid.periodic_xy:
+            raise ValueError("HpFemSolver3D: Kraftgitter periodisch in x/y (Periode = Box)")
+        nz_e, ny_e, nx_e = eps.eps.shape
+        lx, ly = grid.shape[0] * grid.spacing[0], grid.shape[1] * grid.spacing[1]
+        if (
+            abs(nx_e * eps.spacing[0] - lx) > 1e-6 * lx
+            or abs(ny_e * eps.spacing[1] - ly) > 1e-6 * ly
+        ):
+            raise ValueError("HpFemSolver3D: ε-Gitter und Kraftgitter brauchen dieselbe Periode")
+        x0, y0 = float(eps.origin[0]), float(eps.origin[1])
+        d_sub = [float(d) for _, d in self.substrate]
+        z_first = self.z_surface - sum(d_sub)
+        z0, dz = eps.origin[2], eps.spacing[2]
+        z_top_region = z0 + nz_e * dz
+        if z0 < self.z_surface - 1e-9:
+            raise ValueError("HpFemSolver3D: Beobachtergitter beginnt unterhalb der Oberfläche")
+        z_nodes = grid.nodes(2)
+        z_prism = z_first - self.prism_nm
+        if z_nodes.min() <= z_prism:
+            raise ValueError("HpFemSolver3D: Kraftgitterknoten liegen in der oberen PML")
+        pml = self.pml_nm
+        if pml is None:
+            h_pml = 0.5 * self.h_far
+            lam_local = self.wavelength_nm / min(self.n_incident, eps.n_water)
+            pml = float(np.ceil(1.25 * lam_local / h_pml) * h_pml)
+        z_bottom = max(z_top_region, float(z_nodes.max())) + self.water_nm
+
+        def lin(a, b, h):
+            n = max(1, int(np.ceil((b - a) / h - 1e-9)))
+            return np.linspace(a, b, n + 1)
+
+        pieces = [lin(z_prism - pml, z_prism, 0.5 * self.h_far), lin(z_prism, z_first, self.h_far)]
+        z = z_first
+        for d in d_sub:
+            pieces.append(lin(z, z + d, self.h_layer))
+            z += d
+        if z0 > self.z_surface:
+            pieces.append(lin(self.z_surface, z0, min(self.h_layer, z0 - self.z_surface)))
+        pieces.append(np.linspace(z0, z_top_region, nz_e * self.n_per_cell + 1))
+        pieces.append(lin(z_top_region, z_bottom, self.h_far))
+        pieces.append(lin(z_bottom, z_bottom + pml, 0.5 * self.h_far))
+        zs = np.sort(np.concatenate(pieces))
+        zs = zs[np.concatenate([[True], np.diff(zs) > 1e-6])]
+        zhp = (z_first - zs)[::-1]  # hp-FEM-z aufsteigend
+        nx, ny, nz = nx_e * self.n_per_cell, ny_e * self.n_per_cell, len(zhp) - 1
+        xs = x0 + np.arange(nx + 1) * (lx / nx)
+        ys = y0 + np.arange(ny + 1) * (ly / ny)
+        mesh = hpfem.box(nx, ny, nz, np.zeros(3), np.ones(3))
+        for v in range(mesh.num_vertices):
+            u = np.asarray(mesh.vertex(v))
+            i, j, k = int(np.rint(u[0] * nx)), int(np.rint(u[1] * ny)), int(np.rint(u[2] * nz))
+            mesh.set_vertex(v, np.array([xs[i], ys[j], zhp[k]]) * nm)
+        stack = hpfem.LayerStack3D(
+            hpfem.Material.dielectric(self.n_incident),
+            [hpfem.Layer(hpfem.Material(complex(e)), float(d) * nm) for e, d in self.substrate],
+            hpfem.Material(complex(eps.n_water**2)),
+            0.0,
+        )
+        mm = hpfem.MaterialMap(stack.incidence_medium)
+        cent = np.asarray(mesh.cell_centroids) / nm
+        orders = np.full(mesh.num_cells, self.order, np.int64)
+        for c in range(mesh.num_cells):
+            xc, yc, zc_hp = cent[c]
+            zc = z_first - zc_hp
+            if z0 < zc < z_top_region:
+                if self.order_region is not None:
+                    orders[c] = self.order_region
+                i = int(np.floor((xc - x0) / eps.spacing[0])) % nx_e
+                j = int(np.floor((yc - y0) / eps.spacing[1])) % ny_e
+                k = min(int(np.floor((zc - z0) / dz)), nz_e - 1)
+                mm.set_cell(c, hpfem.Material(complex(eps.eps[k, j, i])))
+            else:
+                mm.set_cell(c, stack.material_at([xc * nm, yc * nm, zc_hp * nm]))
+        k0 = 2.0 * np.pi / (self.wavelength_nm * nm)
+        polarisation = hpfem.Polarisation.P if self.pol == "p" else hpfem.Polarisation.S
+        wave = stack.plane_wave(k0, np.deg2rad(self.angle_deg), polarisation, 1.0)
+        setup = hpfem.ScatteringSetup3D()
+        setup.omega = k0 * units.C_LIGHT
+        setup.materials = mm
+        setup.background = stack
+        setup.incident = wave.field
+        setup.formulation = hpfem.Formulation.SCATTERED_FIELD
+        lower = np.array([x0, y0, zhp[0] + pml]) * nm
+        upper = np.array([x0 + lx, y0 + ly, zhp[-1] - pml]) * nm
+        setup.pml = hpfem.PmlBox3D(
+            lower, upper, [0.0, 0.0, 0.0, 0.0, pml * nm, pml * nm], k0,
+            min(self.n_incident, eps.n_water),
+        )  # fmt: skip
+        kx = k0 * self.n_incident * np.sin(np.deg2rad(self.angle_deg))
+        bt = hpfem.box_tag
+        setup.periodic = [
+            hpfem.PeriodicPair3D(
+                bt.X_MIN,
+                bt.X_MAX,
+                np.array([lx * nm, 0.0, 0.0]),
+                complex(np.exp(1j * kx * lx * nm)),
+            ),
+            hpfem.PeriodicPair3D(bt.Y_MIN, bt.Y_MAX, np.array([0.0, ly * nm, 0.0]), 1.0 + 0j),
+        ]
+        dofs = hpfem.NedelecDofMap3D(mesh, [int(o) for o in orders])
+        problem = hpfem.Scattering3D(dofs, setup)
+        solution = problem.solve()
+        self.last_problem, self.last_unknowns = problem, int(dofs.num_dofs)
+        locator = hpfem.PointLocator3D(mesh)
+
+        # Auswertepunkte: Knoten in die Einheitszelle, auf Netzlinien ±δ in jeder betroffenen Achse.
+        delta = 1e-4  # nm
+        z_lines = z_first - zhp
+        xo = _line_offsets(grid.nodes(0), x0, lx, nx, delta)
+        yo = _line_offsets(grid.nodes(1), y0, ly, ny, delta)
+        zo = [
+            (zk - delta, zk + delta) if np.any(np.abs(z_lines - zk) <= 1e-9) else (zk,)
+            for zk in z_nodes
+        ]
+        pts, owner = [], []
+        for k, zz in enumerate(zo):
+            for j, yy in enumerate(yo):
+                for i, xx in enumerate(xo):
+                    node = (k * len(yo) + j) * len(xo) + i
+                    for a in xx:
+                        for b in yy:
+                            for c in zz:
+                                pts.append((a, b, z_first - c))
+                                owner.append(node)
+        values, _ = problem.sample(solution, locator, np.array(pts) * nm)
+        intensity = (np.abs(values) ** 2).sum(axis=1)
+        owner = np.array(owner)
+        n_nodes = len(zo) * len(yo) * len(xo)
+        w = np.bincount(owner, intensity, n_nodes) / np.bincount(owner, minlength=n_nodes)
+        if not np.all(np.isfinite(w)):
+            raise RuntimeError("HpFemSolver3D: Feld an Kraftgitterknoten nicht endlich")
+        e0 = field_amplitude_sq(self.intensity_w_m2, self.n_incident)
+        return (e0 * w).reshape(grid.zyx_shape)
+
+
+def _line_offsets(values, origin, length, n, delta):
+    """Je Knoten die Auswertekoordinaten in der Einheitszelle: einer, oder links/rechts einer
+    Netzlinie (Linien origin + i·length/n; origin ≡ origin + length)."""
+    h = length / n
+    m = origin + np.mod(values - origin, length)
+    frac = (m - origin) / h
+    out = []
+    for vi, fi in zip(m, frac, strict=True):
+        if abs(fi - np.rint(fi)) * h > 1e-9:
+            out.append((vi,))
+            continue
+        line = origin + np.rint(fi) * h
+        left = line - delta if line - origin > 0.5 * h else origin + length - delta
+        right = line + delta if line - origin < length - 0.5 * h else origin + delta
+        out.append((left, right))
+    return out
+
+
 # --- Datei-Adapter (ADR 0016 Punkt 4c) -----------------------------------------------------------
 
 

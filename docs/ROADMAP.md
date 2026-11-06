@@ -314,6 +314,24 @@ Abnahmetests (revidierte Fassung vom Projektinhaber bestätigt 2026-11-06):
    invarianten Struktur gleiches W wie `HpFemGratingSolver` (rel. < 1 %); planar gegen TMM
    (rel. < 1 %); Speicher und Laufzeit je Lösung über der ε-Auflösung im Molekülbereich dokumentiert.
    Offen daneben: Replica Exchange im Treiber.
+   *Umgesetzt 2026-11-06:* `HpFemSolver3D` (Streufeld auf `LayerStack3D`, Bloch-Paare in x und y,
+   PML oben/unten, ε je Tetraeder zellkonstant, Mittel an Netzlinien). Tests: `test_hpfem3d_planar`
+   (gegen TMM: p 1.3e-4, s 1.9e-6), `test_hpfem3d_vs_grating` (gegen 2.5D: 3.9e-3; Verschiebung in y,
+   slow). Aufwand (Box 6 × 6 nm, Bereich 8 nm, Kretschmann p, hp-FEM-0.4.0-Wheel einfädig, SparseLU;
+   Speicher nicht gemessen):
+
+   | ε-Zelle lateral × Δz | Grad (außen/Bereich) | Unbekannte | Zeit je Lösung |
+   |---|---|---|---|
+   | 2.0 nm × 0.5 nm | 2 | 42 522 | 11.5 s |
+   | 2.0 nm × 0.25 nm | 2 | 48 986 | 7.8 s |
+   | 2.0 nm × 0.5 nm | 3 | 118 647 | 44 s |
+   | 2.0 nm × 0.5 nm | 3 / 1 | 101 737 | 59 s |
+   | 1.0 nm × 0.5 nm | 2 | 156 834 | 328 s |
+   | 1.0 nm × 0.5 nm | 3 | 447 147 | 1433 s |
+
+   Genauigkeit über dem Grad (planar gegen TMM, p): Grad 3 5e-5, Grad 2 1.3e-4, Grad 1 im Bereich
+   1.5e-3 → Default Grad 2. Laterale ε-Zellen ≤ 1 nm brauchen einen hp-FEM-Build mit OpenMP und
+   MUMPS bzw. cuDSS (OQ-26).
 
 Abnahmetests (Vorschlag): siehe ADR 0016, Konsequenzen (`test_polarizability_grid_vs_numpy`,
 `test_voxel_set_values`, `test_tmm_reference`, `test_coupling_fixed_point`, `test_coupling_scaling`,

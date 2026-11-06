@@ -132,6 +132,9 @@ lassen Padding-Atome unverändert. Test-Hooks ohne Produktionsphysik liegen in `
 - `HpFemGratingSolver`: hp-FEM im selben Prozess (2.5D-Einheitszelle, Netz aus `hpfem.rectangle`,
   ⟨ε⟩ je Zelle über `MaterialMap.set_cell`, |E|² über `GratingResult.field`); `NpzFileSolver`:
   externer Solver über `eps_k.npz` → `field_k.npz` (`read_eps_file` für Python-Skripte).
+- `HpFemSolver3D`: `Scattering3D` (Streufeld auf `LayerStack3D`, Bloch-Paare in x und y, PML
+  oben/unten), strukturiertes Tetraedernetz aus `hpfem.box`, ε je Tetraeder über `set_cell`,
+  |E|² über `Scattering3D.sample` (Phase 10.5).
 
 ## 4. Module
 
