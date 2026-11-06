@@ -1,5 +1,6 @@
 // BioOptoMD – Optik-Observer, siehe optics.hpp. Formeln: PHYSICS_MODEL.md §6 und
 // tests/reference/observers_ref.py.
+#include <climits>
 #include <cmath>
 #include <stdexcept>
 #include <string>
@@ -529,11 +530,16 @@ PolarizabilityGridObserver::PolarizabilityGridObserver(PolarizabilityGridParams 
   require(std::isfinite(p.n_water) && p.n_water >= 1.0f, who + "n_water >= 1");
   require(p.smearing == LayerSmearing::kGauss || p.smearing == LayerSmearing::kPoint,
           who + "Verschmierung 'gauss' oder 'point'");
+  const long long n_vox = static_cast<long long>(p.shape[0]) * p.shape[1] * p.shape[2];
+  require(4 * n_vox <= INT_MAX, who + "zu viele Voxel (4·n_vox muss in int passen)");
   if (p.smearing == LayerSmearing::kGauss) {
     for (float v : p.volume_nm3) {
-      const double reach = 4.0 * std::cbrt(3.0 * v / (4.0 * kPi)) / std::sqrt(5.0);
+      // Wie im Kernel aus dem float-gerundeten R; eine Zelle Reserve, damit axis_weights nie kürzt
+      // (Fensterbreite floor(b) − floor(a) + 1 <= floor(b − a) + 2).
+      const float radius = static_cast<float>(std::cbrt(3.0 * v / (4.0 * kPi)));
+      const double reach = 4.0 * radius / std::sqrt(5.0);
       for (int d = 0; d < 3; ++d)
-        require(std::floor(2.0 * reach / p.spacing_nm[d]) + 2.0 <= kGridWindow,
+        require(std::floor(2.0 * reach / p.spacing_nm[d]) + 3.0 <= kGridWindow,
                 who +
                     "Voxel zu klein für das Gauß-Fenster (Fenster 4σ je Seite, höchstens 16 Zellen "
                     "je Achse)");
@@ -554,6 +560,7 @@ void PolarizabilityGridObserver::check_box() const {
 void PolarizabilityGridObserver::initialize(SimulationContext& ctx) {
   ctx_ = &ctx;
   check_box();
+  box_version_ = ctx.box_version();
   const std::size_t n_types = params_.alpha_nm3.size();
   std::vector<float4> tp(n_types);
   for (std::size_t t = 0; t < n_types; ++t) {
@@ -573,7 +580,10 @@ void PolarizabilityGridObserver::initialize(SimulationContext& ctx) {
 }
 
 void PolarizabilityGridObserver::observe(const DeviceState& s, std::int64_t, cudaStream_t stream) {
-  check_box();  // Periodizität hängt an der aktuellen Box; das Voxelvolumen nicht
+  if (box_version_ != ctx_->box_version()) {  // Periodizität hängt an der Box, V_k nicht
+    check_box();
+    box_version_ = ctx_->box_version();
+  }
   const auto& p = params_;
   GridAxes g{};
   for (int d = 0; d < 3; ++d) {

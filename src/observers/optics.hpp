@@ -140,6 +140,9 @@ struct PolarizabilityGridParams {
 
 /// Histogramme S_α, S_V je Voxel und Frame (Fixed-Point, deterministisch), über Frames als Summe
 /// und Quadratsumme akkumuliert; ε = n² nach Lorentz-Lorenz mit Wasser-Hintergrund beim Download.
+/// Speicher: 48 B je Voxel und Replica auf dem Gerät (Histogramm 16 B, Summen 32 B), beim Download
+/// zusätzlich 5 Felder à 8 B auf dem Host. Aufwand je Atom und Frame bis zu m_x·m_y·m_z Atomics
+/// (Fensterzellen je Achse); bei kleinen Voxeln ``stride`` entsprechend wählen.
 class PolarizabilityGridObserver final : public ObserverPlugin {
  public:
   PolarizabilityGridObserver(PolarizabilityGridParams params, int stride);
@@ -160,6 +163,7 @@ class PolarizabilityGridObserver final : public ObserverPlugin {
   PolarizabilityGridParams params_;
   int stride_;
   int n_frames_ = 0;
+  std::uint64_t box_version_ = 0;
   SimulationContext* ctx_ = nullptr;
   DeviceBuffer<float4> d_type_params_;    // (α′, v, R, 0)
   DeviceBuffer<long long> d_frame_hist_;  // (n_replicas, 2, n_vox) Fixed-Point

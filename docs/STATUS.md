@@ -38,6 +38,9 @@ Alle PRs #1–#6, #9–#14 am 2026-11-05 nach `main` gemergt (Merge-Commits, Rei
   `VoxelGridForce3D.set_values`. `test_phase10.py` (7 Tests) grün: Histogramme/Varianz/ε gegen NumPy
   (rel. 1e-6, periodisch und nicht, Gauß und Punkt), x/y-Summe = 1D-Profiler (rel. 1e-5),
   deterministisch, `set_values` bitgleich zu neu angelegtem Gitter (Kräfte, Energien, Trajektorie).
+  Review umgesetzt (int-Grenze, Fensterreserve, Box-Prüfung nur bei Änderung, Padding-/Typ-Test).
+  **Zur Bestätigung (Projektinhaber):** Gauß-Fenster ±4σ statt der im ADR 0016 vorgeschlagenen 3σ,
+  damit die x/y-Summe den 1D-Profiler exakt reproduziert.
 - Phase 10.0 (b): `test_phase6.py::test_refractive_index_dn_dc[protein|dna]` grün (GPU-Profiler,
   c = 10 mg/mL: dn/dc 0.1901 bzw. 0.1701 mL/g). `builder.calibrate_optics`: s_α = 0.983 / 1.002,
   s_v = 0.666 / 0.654; unkalibriert 0.064 / 0.065. DNA bezogen auf das Na-Salz (OQ-23); Ionen mit

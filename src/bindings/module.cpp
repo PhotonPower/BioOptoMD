@@ -1125,6 +1125,7 @@ NB_MODULE(_core, m) {
                 values.shape(2) != static_cast<std::size_t>(shape[0]))
               throw nb::value_error("set_values: Shape (nz, ny, nx, 4) des bestehenden Gitters");
             g.set_values(std::vector<float>(values.data(), values.data() + values.size()));
+            // forces()/energies() bleiben bis zum nächsten compute_forces()/step() die alten.
           },
           "values"_a,
           "Neue Werte float32 (nz, ny, nx, 4) gleicher Shape (ADR 0016 Punkt 3); Kräfte werden\n"

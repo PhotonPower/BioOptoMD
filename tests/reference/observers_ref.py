@@ -174,7 +174,8 @@ def grid_histograms(pos, alpha, volume, origin, spacing, shape, periodic_xy=Fals
         iy, wy = _axis_weights(p[1], origin[1], spacing[1], ny, periodic_xy, sigma)
         iz, wz = _axis_weights(p[2], origin[2], spacing[2], nz, False, sigma)
         w = np.einsum("k,j,i->kji", np.asarray(wz), np.asarray(wy), np.asarray(wx))
-        if w.size:
-            s_a[np.ix_(iz, iy, ix)] += w * a
-            s_v[np.ix_(iz, iy, ix)] += w * v
+        if w.size:  # add.at summiert auch mehrfach getroffene Zellen (Fenster > Periode)
+            sel = np.ix_(iz, iy, ix)
+            np.add.at(s_a, sel, w * a)
+            np.add.at(s_v, sel, w * v)
     return s_a, s_v

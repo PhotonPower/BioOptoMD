@@ -131,7 +131,7 @@ void VoxelGridForce3D::initialize(SimulationContext& ctx) {
   const cudaChannelFormatDesc desc = cudaCreateChannelDesc<float4>();
   const cudaExtent extent = make_cudaExtent(p.shape[0], p.shape[1], p.shape[2]);
   BOMD_CUDA_CHECK(cudaMalloc3DArray(&array_, &desc, extent));
-  upload_values();
+  upload_values(p.values);
 
   cudaResourceDesc res = {};
   res.resType = cudaResourceTypeArray;
@@ -148,29 +148,29 @@ void VoxelGridForce3D::initialize(SimulationContext& ctx) {
   ctx.synchronize();
 }
 
-void VoxelGridForce3D::upload_values() {
+void VoxelGridForce3D::upload_values(const std::vector<float>& values) {
   const auto& p = params_;
   cudaMemcpy3DParms copy = {};
-  copy.srcPtr = make_cudaPitchedPtr(const_cast<float*>(p.values.data()),
-                                    p.shape[0] * sizeof(float4), p.shape[0], p.shape[1]);
+  copy.srcPtr = make_cudaPitchedPtr(const_cast<float*>(values.data()), p.shape[0] * sizeof(float4),
+                                    p.shape[0], p.shape[1]);
   copy.dstArray = array_;
   copy.extent = make_cudaExtent(p.shape[0], p.shape[1], p.shape[2]);
   copy.kind = cudaMemcpyHostToDevice;
-  // Stream-geordnet: Kernel davor lesen noch die alten Werte. params_.values bleibt bis zur
-  // Synchronisation gültig (Host-Quelle des asynchronen Kopierens).
+  // Stream-geordnet: Kernel davor lesen noch die alten Werte. Die Host-Quelle bleibt bis zur
+  // Synchronisation gültig.
   BOMD_CUDA_CHECK(cudaMemcpy3DAsync(&copy, ctx_->stream()));
   ctx_->synchronize();
 }
 
-void VoxelGridForce3D::set_values(const std::vector<float>& values) {
+void VoxelGridForce3D::set_values(std::vector<float> values) {
   require(ctx_ != nullptr, "set_values vor initialize()");
   require(values.size() == params_.values.size(),
           "set_values: Shape muss (nz, ny, nx, 4) des bestehenden Gitters sein");
   for (float v : values) require(std::isfinite(v), "values endlich");
   ctx_->activate();
-  ctx_->synchronize();  // laufende Kernel lesen die Textur noch; Host-Puffer erst danach ersetzen
-  params_.values = values;
-  upload_values();
+  ctx_->synchronize();    // laufende Kernel lesen die Textur noch
+  upload_values(values);  // erst nach erfolgreichem Upload die Host-Kopie ersetzen
+  params_.values = std::move(values);
   ctx_->invalidate_forces();
 }
 

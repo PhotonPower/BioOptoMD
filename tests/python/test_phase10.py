@@ -223,3 +223,38 @@ def test_voxel_set_values():
         grid_a.set_values(new[:-1])
     with pytest.raises(ValueError):
         grid_a.set_values(np.full_like(new, np.nan))
+
+
+def test_polarizability_grid_padding_and_unknown_type():
+    """Padding-Atome (bei (0, 0, 0), n kein Vielfaches der Blockgröße) tragen nichts bei, obwohl das
+    Gitter den Ursprung abdeckt (AGENTS.md Regel 6); ein unbekannter Optik-Typ setzt
+    STATUS_UNKNOWN_TYPE und trägt nichts bei."""
+    pos, types = _system(n=37, seed=12, z_range=(0.3, 1.5))
+    shape, origin, spacing = (16, 16, 10), (0.0, 0.0, -0.5), (0.25, 0.25, 0.25)
+    ctx = _ctx(1, len(types))
+    obs = ctx.add_polarizability_grid(shape, origin, spacing, ALPHA, VOLUME, periodic_xy=True)
+    _set(ctx, pos, types)
+    ctx.observe_now()
+    ref_a, ref_v = oref.grid_histograms(
+        pos, ALPHA[types].astype(np.float64), VOLUME[types].astype(np.float64), origin, spacing,
+        shape, periodic_xy=True,
+    )  # fmt: skip
+    res = obs.result()
+    np.testing.assert_allclose(res["s_alpha_mean"][0], ref_a, rtol=1e-6, atol=1e-6 * ref_a.max())
+    np.testing.assert_allclose(res["s_volume_mean"][0], ref_v, rtol=1e-6, atol=1e-6 * ref_v.max())
+    assert ctx.status() == 0
+
+    bad = types.copy()
+    bad[0] = len(ALPHA)  # unbekannter Typ
+    ctx2 = _ctx(1, len(types))
+    obs2 = ctx2.add_polarizability_grid(shape, origin, spacing, ALPHA, VOLUME, periodic_xy=True)
+    _set(ctx2, pos, bad)
+    ctx2.observe_now()
+    assert ctx2.status() & _core.STATUS_UNKNOWN_TYPE
+    keep = np.arange(len(types)) != 0
+    ref_a2, _ = oref.grid_histograms(
+        pos[keep], ALPHA[types[keep]].astype(np.float64), VOLUME[types[keep]].astype(np.float64),
+        origin, spacing, shape, periodic_xy=True,
+    )  # fmt: skip
+    np.testing.assert_allclose(obs2.result()["s_alpha_mean"][0], ref_a2, rtol=1e-6,
+                               atol=1e-6 * ref_a2.max())  # fmt: skip
