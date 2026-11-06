@@ -294,8 +294,9 @@ Abnahmetests (revidierte Fassung vom Projektinhaber bestätigt 2026-11-06):
    Skalierung `builder.calibrate_optics`; Kopplung Profiler ↔ Kraft: `test_optical_force_dilute_solution`).
    Ohne eigene Messwerte: Literaturwerte, deren Unsicherheit
    als Toleranz dient (ADR 0016 Punkt 7).
-1. `PolarizabilityGridObserver` (3D-ε-Karte, Gauß-Verschmierung, Lorentz-Lorenz).
-2. `VoxelGridForce3D::set_values` (Laufzeit-Update).
+1. `PolarizabilityGridObserver` (3D-ε-Karte, Gauß-Verschmierung, Lorentz-Lorenz). *Umgesetzt
+   2026-11-06* (`ctx.add_polarizability_grid`, `test_phase10.py`).
+2. `VoxelGridForce3D::set_values` (Laufzeit-Update). *Umgesetzt 2026-11-06* (`test_voxel_set_values`).
 3. `biooptomd.coupling`: Solver-Protokoll, TMM-Referenzsolver (1D), hp-FEM-Adapter `HpFemSolver`
    (im selben Prozess; npz-Datei-Adapter als Rückfall), Treiber `SelfConsistentOptics` (Picard mit
    Dämpfung β, Checkpoint je Iteration).

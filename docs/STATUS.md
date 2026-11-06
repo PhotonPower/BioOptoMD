@@ -34,6 +34,10 @@ Alle PRs #1–#6, #9–#14 am 2026-11-05 nach `main` gemergt (Merge-Commits, Rei
   α′, v auf n_p ab; die GPU-Kraft ist die additive Summe (rel. 1e-5); das Verhältnis CM/additiv ist
   analytisch 1.638 bei n_p = 1.5 in Wasser und exakt 1 in Vakuum. OQ-22 (b): `optical_scale`
   multipliziert per Default mit ((n_w² + 2)/3)² (`local_field=False` für das additive Modell).
+- Phase 10.1/10.2: `PolarizabilityGridObserver` (`ctx.add_polarizability_grid`) und
+  `VoxelGridForce3D.set_values`. `test_phase10.py` (7 Tests) grün: Histogramme/Varianz/ε gegen NumPy
+  (rel. 1e-6, periodisch und nicht, Gauß und Punkt), x/y-Summe = 1D-Profiler (rel. 1e-5),
+  deterministisch, `set_values` bitgleich zu neu angelegtem Gitter (Kräfte, Energien, Trajektorie).
 - Phase 10.0 (b): `test_phase6.py::test_refractive_index_dn_dc[protein|dna]` grün (GPU-Profiler,
   c = 10 mg/mL: dn/dc 0.1901 bzw. 0.1701 mL/g). `builder.calibrate_optics`: s_α = 0.983 / 1.002,
   s_v = 0.666 / 0.654; unkalibriert 0.064 / 0.065. DNA bezogen auf das Na-Salz (OQ-23); Ionen mit
@@ -289,8 +293,8 @@ ADR 0007 → **0009** (Mixed Precision), unsere OQ-08…11 → **OQ-11…14**.
 ## Nächster konkreter Schritt
 1. Hairpin-Lauf (OQ-15 b) auswerten, PR #15 aktualisieren, Phase 9.4 zur Abnahme; danach
    Schlussmessung 9.6 auf freier GPU (OQ-19).
-2. Phase 10.1–10.4: `PolarizabilityGridObserver`, `VoxelGridForce3D::set_values`,
-   `biooptomd.coupling` (TMM, `HpFemSolver`, `SelfConsistentOptics`), Kretschmann-Beispiel.
+2. Phase 10.3–10.4: `biooptomd.coupling` (TMM, `HpFemSolver`, `SelfConsistentOptics`),
+   Kretschmann-Beispiel.
 3. Nachholen: Kontrolllauf auf der RTX 6000 Ada; Nsight Compute (Counter-Freigabe).
 
 ## Sitzungslog

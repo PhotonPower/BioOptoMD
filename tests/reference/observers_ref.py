@@ -131,3 +131,50 @@ def layer_histograms_sphere(z, alpha, volume, z_min, dz, n_bins):
         s_a += w * a
         s_v += w * v
     return s_a, s_v
+
+
+def _axis_weights(x, x0, d, n, periodic, sigma):
+    """Zellen und Gewichte eines Atoms entlang einer Achse wie k_grid_histogram (ADR 0016):
+    Gauß-Fenster ±4σ, normiert auf das Fenster; sigma = 0 ⇒ Punkt."""
+    from scipy.special import erf
+
+    if periodic:
+        length = n * d
+        x = x - length * np.floor((x - x0) / length)
+    if sigma <= 0.0:
+        k = int(np.floor((x - x0) / d))
+        if periodic:
+            return [k % n], [1.0]
+        return ([k], [1.0]) if 0 <= k < n else ([], [])
+    inv = 1.0 / (sigma * np.sqrt(2.0))
+    lo_k = int(np.floor((x - 4 * sigma - x0) / d))
+    hi_k = int(np.floor((x + 4 * sigma - x0) / d))
+    norm = 0.5 * (erf((x0 + (hi_k + 1) * d - x) * inv) - erf((x0 + lo_k * d - x) * inv))
+    idx, w = [], []
+    for k in range(lo_k, hi_k + 1):
+        if not periodic and not 0 <= k < n:
+            continue
+        lo = x0 + k * d
+        idx.append(k % n)
+        w.append(0.5 * (erf((lo + d - x) * inv) - erf((lo - x) * inv)) / norm)
+    return idx, w
+
+
+def grid_histograms(pos, alpha, volume, origin, spacing, shape, periodic_xy=False, point=False):
+    """S_α, S_V je Voxel (nz, ny, nx) des PolarizabilityGridObserver: separables Gauß-Gewicht mit
+    σ_i = R_i/√5 (R aus v_i) bzw. Punkt (``point`` oder v_i = 0)."""
+    nx, ny, nz = shape
+    s_a = np.zeros((nz, ny, nx))
+    s_v = np.zeros((nz, ny, nx))
+    for p, a, v in zip(np.asarray(pos, np.float64), alpha, volume, strict=True):
+        if a == 0.0 and v == 0.0:
+            continue
+        sigma = 0.0 if point or v <= 0.0 else float(sphere_radius(v)) / np.sqrt(5.0)
+        ix, wx = _axis_weights(p[0], origin[0], spacing[0], nx, periodic_xy, sigma)
+        iy, wy = _axis_weights(p[1], origin[1], spacing[1], ny, periodic_xy, sigma)
+        iz, wz = _axis_weights(p[2], origin[2], spacing[2], nz, False, sigma)
+        w = np.einsum("k,j,i->kji", np.asarray(wz), np.asarray(wy), np.asarray(wx))
+        if w.size:
+            s_a[np.ix_(iz, iy, ix)] += w * a
+            s_v[np.ix_(iz, iy, ix)] += w * v
+    return s_a, s_v

@@ -44,8 +44,16 @@ class VoxelGridForce3D final : public ForcePlugin {
   void initialize(SimulationContext& ctx) override;
   void compute(DeviceState& s, cudaStream_t stream) override;
 
+  /// Neue Gitterwerte zur Laufzeit (ADR 0016 Punkt 3): gleiche Shape (nz, ny, nx, 4), Herkunft und
+  /// Abstände; Upload in das bestehende Array, stream-geordnet auf dem Kontext-Stream. Markiert die
+  /// Kräfte als veraltet (step() rechnet sie vor dem nächsten B neu). Die Energie ist nur innerhalb
+  /// eines Segments konstanter Werte erhalten.
+  void set_values(const std::vector<float>& values);
+  const VoxelGridParams& params() const { return params_; }
+
  private:
   void check_box() const;
+  void upload_values();
 
   VoxelGridParams params_;
   SimulationContext* ctx_ = nullptr;

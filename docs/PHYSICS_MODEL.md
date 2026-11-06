@@ -166,7 +166,7 @@ Donor- und Akzeptor-Dipole wie oben, `R_DA` mit Minimum Image in x/y,
 ```
 Ausgabe: **Rohzeitreihen** R_DA(t), κ²(t). Die Effizienz `E = 1/(1 + (R/R₀)⁶ · (2/3)/κ²)` mit R₀ für κ² = 2/3 wird nur optional ausgegeben. Mittelung (dynamisch vs. statisch) erfolgt in `biooptomd.analysis`, da sie vom Verhältnis Rotations-/Fluoreszenzzeit abhängt.
 
-### 6.3 `RefractiveIndexProfiler`
+### 6.3 `RefractiveIndexProfiler` (3D: `PolarizabilityGridObserver`)
 Schichten Δz über der Oberfläche, Fläche A = L_x L_y. Pro Schicht k (Volumen V_k = A Δz), Histogramme per `atomicAdd` (Fixed-Point):
 - `S_α(k) = Σ_i α′_i` (Polarisierbarkeitsvolumen bei Wellenlänge λ, Typtabelle)
 - `S_V(k) = Σ_i v_i` (van-der-Waals-Volumen des Atoms)
@@ -182,5 +182,7 @@ Ausgabe: n(z), sowie die Rohhistogramme S_α, S_V und ihre Varianz, damit andere
 **Verschmierung (OQ-02):** Default ist der exakte Kugelschnitt: Atom i mit R_i = (3 v_i/4π)^{1/3} trägt zu Schicht [z_a, z_b] den Volumenanteil π∫(R_i² − (z − z_i)²) dz bei (analytisch, kompakter Träger, keine Beiträge unter z = 0 durch Ausläufer). Option: Gauß-Verschmierung mit σ_i = R_i/√5 (gleiche z-Varianz wie eine homogene Kugel). Bei Δz = 0,05 nm sind Schichten deutlich dünner als ein Atom; mit Punktatomen greift das `max(0, …)` in f_w häufig und verzerrt n(z) systematisch. Punktatome bleiben als Option für Tests. API: `add_refractive_index_profiler(..., smearing="sphere" | "gauss" | "point")`; Atomtypen mit v_i = 0 werden immer als Punkt gezählt.
 
 **Parameter (OQ-01/02):** v_i aus Voronoi-Volumina (ProtOr für Proteine, NucProt für Nukleinsäuren; Summe ≈ partielles spezifisches Volumen nur bei Proteinen), α′_i aus Typtabelle mit klassenweisem Skalierungsfaktor, gemeinsam kalibriert an dn/dc (Proteine ≈ 0,185–0,19 mL/g, DNA ≈ 0,17 mL/g), Dispersion über Cauchy-Term. Fluorophore erhalten eine separate, resonanzbewusste Polarisierbarkeit oder werden per Option ausgeschlossen.
+
+**3D-Karte (Phase 10.1, ADR 0016):** `PolarizabilityGridObserver` wendet dieselbe Mischung je Voxel (V_k = Δx Δy Δz, Zellen ab der unteren Ecke) an und liefert ε = n². Verschmierung separabel w = w_x w_y w_z mit dem Gauß-Gewicht des 1D-Profilers je Achse (σ = R/√5, Fenster ±4σ, normiert auf das Fenster) oder Punktatome; die Summe über x/y ergibt exakt das Gauß-Profil des 1D-Profilers. Voxel ≥ 0.2 nm empfohlen (Bias durch max(0, ·) in f_w).
 
 **Stand Phase 10.0:** Klassenweise Kalibrierung (`builder.calibrate_optics`, Projektinhaber 2026-11-06): Volumina kovalenter Elemente mit s_v auf v̄ skaliert (Protein 0.73 mL/g, DNA 0.58 mL/g nach NucProt, Zahlenwert nicht verifiziert, OQ-23), α′ mit s_α an dn/dc (Protein 0.190 ± 0.003 mL/g bei 589 nm, DNA 0.170 ± 0.005 mL/g bei 633 nm bezogen auf das Na-Salz, OQ-23); Ionen (Na⁺, Mg²⁺, Shannon-Radien) bleiben unkalibriert. Ergebnis: s_α = 0.983 bzw. 1.002, s_v = 0.666 bzw. 0.654 (Bondi-Überlappung); unkalibriert lag dn/dc bei 0.064 bzw. 0.065. Dass s_α nahe 1 liegt, stützt die Miller-Werte nur für die gewählten v̄ (s_α hängt an v̄: DNA v̄ = 0.50 / 0.55 / 0.58 → s_α = 0.93 / 0.97 / 1.00). `test_refractive_index_dn_dc` und `test_optical_force_dilute_solution` grün. Grenzen: Elementtypen erfassen Aromatizität nicht; eine Tabelle je System (keine gemischten Protein-DNA-Systeme). ProtOr/NucProt je Atomtyp und Cauchy-Dispersion folgen, wenn eigene Messwerte vorliegen.

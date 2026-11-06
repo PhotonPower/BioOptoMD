@@ -1071,8 +1071,64 @@ NB_MODULE(_core, m) {
       "volume (v [nm^3]) je Optik-Typ types[..., 1]; n_water. smearing (OQ-02): 'sphere'\n"
       "(Default, Kugelschnitt mit R = (3v/4π)^(1/3)), 'gauss' (σ = R/√5) oder 'point'.");
 
+  nb::class_<bomd::PolarizabilityGridObserver>(
+      m, "PolarizabilityGridObserver", "3D-Permittivitätskarte ε = n² (Lorentz-Lorenz), ADR 0016.")
+      .def_prop_ro("n_frames", &bomd::PolarizabilityGridObserver::n_frames)
+      .def("reset", &bomd::PolarizabilityGridObserver::reset)
+      .def(
+          "result",
+          [](const bomd::PolarizabilityGridObserver& p) { return result_to_dict(p.download()); },
+          "dict: x (nx,), y (ny,), z (nz,) Zellmitten [nm]; eps, s_alpha_mean/var,\n"
+          "s_volume_mean/var (n_replicas, nz, ny, nx) [1, nm^3 bzw. nm^6]; n_frames.");
+  cls.def(
+      "add_polarizability_grid",
+      [](SimulationContext& c, std::array<int, 3> shape, std::array<float, 3> origin,
+         std::array<float, 3> spacing, HostInput<float> alpha, HostInput<float> volume,
+         float n_water, const std::string& smearing, bool periodic_xy,
+         int stride) -> bomd::PolarizabilityGridObserver& {
+        bomd::PolarizabilityGridParams p;
+        p.shape = shape;
+        p.origin_nm = origin;
+        p.spacing_nm = spacing;
+        p.alpha_nm3 = to_vector(alpha);
+        p.volume_nm3 = to_vector(volume);
+        p.n_water = n_water;
+        if (smearing == "gauss") {
+          p.smearing = bomd::LayerSmearing::kGauss;
+        } else if (smearing == "point") {
+          p.smearing = bomd::LayerSmearing::kPoint;
+        } else {
+          throw nb::value_error("smearing: 'gauss' oder 'point'");
+        }
+        p.periodic_xy = periodic_xy;
+        return static_cast<bomd::PolarizabilityGridObserver&>(c.add_observer(
+            std::make_unique<bomd::PolarizabilityGridObserver>(std::move(p), stride)));
+      },
+      "shape"_a, "origin"_a, "spacing"_a, "alpha"_a, "volume"_a, "n_water"_a = 1.333f,
+      "smearing"_a = "gauss", "periodic_xy"_a = false, "stride"_a = 1,
+      nb::rv_policy::reference_internal,
+      "3D-Permittivitätskarte (ADR 0016): Zellen (nx, ny, nz) ab der unteren Ecke origin [nm] mit\n"
+      "spacing [nm]; alpha (α′ [nm^3]) und volume (v [nm^3]) je Optik-Typ types[..., 1]; n_water.\n"
+      "smearing: 'gauss' (Default, σ = R/√5 je Achse, Fenster ±4σ) oder 'point'. periodic_xy\n"
+      "verlangt nx·Δx = L_x und ny·Δy = L_y.");
+
   // --- VoxelGridForce3D -------------------------------------------------------------------------
-  nb::class_<bomd::VoxelGridForce3D>(m, "VoxelGridForce3D", "Externes Gitterpotential, §4.3.");
+  nb::class_<bomd::VoxelGridForce3D>(m, "VoxelGridForce3D", "Externes Gitterpotential, §4.3.")
+      .def(
+          "set_values",
+          [](bomd::VoxelGridForce3D& g,
+             nb::ndarray<const float, nb::shape<-1, -1, -1, 4>, nb::c_contig, nb::device::cpu>
+                 values) {
+            const auto& shape = g.params().shape;
+            if (values.shape(0) != static_cast<std::size_t>(shape[2]) ||
+                values.shape(1) != static_cast<std::size_t>(shape[1]) ||
+                values.shape(2) != static_cast<std::size_t>(shape[0]))
+              throw nb::value_error("set_values: Shape (nz, ny, nx, 4) des bestehenden Gitters");
+            g.set_values(std::vector<float>(values.data(), values.data() + values.size()));
+          },
+          "values"_a,
+          "Neue Werte float32 (nz, ny, nx, 4) gleicher Shape (ADR 0016 Punkt 3); Kräfte werden\n"
+          "vor dem nächsten Schritt neu berechnet.");
   cls.def(
       "add_voxel_grid",
       [](SimulationContext& c,

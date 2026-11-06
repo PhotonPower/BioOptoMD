@@ -70,7 +70,9 @@ Randbedingungen:
    - Er ist das 3D-Gegenstück zum `RefractiveIndexProfiler`: Fixed-Point-Histogramme S_α und S_V je
      Voxel, deterministisch, mit Summe und Quadratsumme über Frames.
    - ε = n² je Voxel nach derselben Lorentz-Lorenz-Mischung mit Wasser-Hintergrund (§6.3).
-   - Atome werden gaußförmig verschmiert (σ = R_i/√5, abgeschnitten bei 3σ). Ein exakter
+   - Atome werden gaußförmig verschmiert (σ = R_i/√5, separabel je Achse, Fenster ±4σ wie im
+     1D-Profiler, damit die x/y-Summe dessen Gauß-Profil exakt reproduziert; umgesetzt 2026-11-06
+     statt der ursprünglich vorgeschlagenen 3σ). Ein exakter
      Kugel-Voxel-Schnitt in 3D wäre teuer.
    - Das Gitter ist unabhängig vom Kraftgitter. Voxelgröße ≥ 0.2 nm wird empfohlen (kleinere Voxel
      verstärken den Bias durch max(0, ·), siehe OQ-02).

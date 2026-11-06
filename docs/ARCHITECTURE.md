@@ -203,7 +203,9 @@ x = sim.positions(dlpack=True)   # Zero-Copy nach CuPy/PyTorch
 - Observer (`src/observers/optics.*`) mit Ringpuffer im VRAM (`DeviceRingBuffer`: älteste Frames werden
   überschrieben, `overwritten` zählt sie; Download chronologisch, nur auf Anfrage):
   `add_dipole_tracker` (R_F, μ̂, d), `add_fret_tracker` (R_DA, κ², optional E), `add_refractive_index_profiler`
-  (S_α, S_V je Schicht, Mittel und Varianz über Frames; n(z) nach Lorentz-Lorenz beim Download).
+  (S_α, S_V je Schicht, Mittel und Varianz über Frames; n(z) nach Lorentz-Lorenz beim Download),
+  `add_polarizability_grid` (3D-Gegenstück, ADR 0016: S_α, S_V je Voxel, separable Gauß-Verschmierung
+  ±4σ oder Punkt, optional periodisch in x/y; ε = n² beim Download).
 - `ctx.observe_now()` führt alle Observer am aktuellen Zustand aus (statische Auswertungen, Tests).
 - Gruppen/Achsen der Sonden pro Replica als CSR (ADR 0005); Schwerpunkte in FP64 aus der Mixed-Precision-
   Position und den Imagezählern (ungewrappt).
