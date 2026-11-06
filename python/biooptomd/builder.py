@@ -424,7 +424,7 @@ def _gb_model_kwargs(spec: SystemSpec) -> dict:
 
 
 def add_anchors(ctx, anchor_atoms, height_nm: float, z_top_nm: float = 0.0, k_z: float = 1.0e4,
-                xy=None, k_xy: float = 10.0):  # fmt: skip
+                xy=None, k_xy: float = 10.0, z0_nm: float = 0.0):  # fmt: skip
     """Thiol-Anker (OQ-07): z-Restraint des Ankeratoms auf z_top + height (Chemisorptionshöhe über
     der obersten Atomlage, ADR 0007 Punkt 5). Das Ankeratom muss Oberflächen-Typ 0 haben (keine
     Wandwechselwirkung, siehe :func:`assign_types`).
@@ -434,6 +434,8 @@ def add_anchors(ctx, anchor_atoms, height_nm: float, z_top_nm: float = 0.0, k_z:
         height_nm: Höhe über z_top [nm] (nicht über z = 0); ASSUMPTION(OQ-07): Literatur
             uneinheitlich, typ. 0.2–0.25 für Thiol auf Au(111).
         z_top_nm: Höhe der obersten Atomlage über z = 0 der Wand [nm] (``wall_table(...)['z_top']``).
+        z0_nm: Lage der Wand (``add_planar_surface(z0=...)``); Ankerhöhe z0 + z_top + height,
+            gleiche Bezugsebene wie :func:`add_image_charges`.
         k_z: Federkonstante in z [kJ/mol/nm²].
         xy: optional (m, 2) Ankerpositionen in x/y [nm] (nur bei mehreren Rezeptoren pro Box);
             dann zusätzlich ein xy-Restraint mit ``k_xy`` [kJ/mol/nm²].
@@ -446,7 +448,7 @@ def add_anchors(ctx, anchor_atoms, height_nm: float, z_top_nm: float = 0.0, k_z:
     rep = np.repeat(np.arange(n_rep, dtype=np.int32), len(atoms))
     atom = np.tile(atoms, n_rep)
     ref = np.zeros((len(atom), 3), np.float32)
-    ref[:, 2] = z_top_nm + height_nm
+    ref[:, 2] = z0_nm + z_top_nm + height_nm
     plugins = [
         ctx.add_position_restraints(
             rep, atom, ref, np.full(len(atom), k_z, np.float32), dims=(False, False, True)
@@ -461,6 +463,50 @@ def add_anchors(ctx, anchor_atoms, height_nm: float, z_top_nm: float = 0.0, k_z:
             )
         )
     return plugins
+
+
+# ASSUMPTION(OQ-18): Bildfaktor je Material; Gold als idealer Leiter. Graphen/Graphit sind
+# unvollständige Leiter ohne Default (Faktor muss angegeben werden).
+IMAGE_FACTOR = {"gold": 1.0}
+
+
+def add_image_charges(ctx, info: BuildInfo, material: str | None = None, *, z0_nm: float = 0.0,
+                      z_top_nm: float | None = None, d_image_nm: float = 0.0,
+                      factor: float | None = None, zeta_clamp_nm: float = 0.1):  # fmt: skip
+    """Abgeschirmte Bildladungen der Wand (ADR 0013) mit κ, ε_r, r_s, r_c aus ``info``.
+
+    Die Bildebene liegt bei z_im = z0 + z_top + d_image: z0 = Kontinuumsgrenze der Wand wie in
+    ``add_planar_surface``, z_top = oberste Atomlage (``surface.MATERIALS[material].z_top_nm``),
+    d_image = Abstand der Bildebene über der Atomlage (ASSUMPTION(OQ-18): Default 0). Bei GB ist
+    ``info.eps_r`` das ε_out des Lösungsmittels; der Bildterm beschreibt dann nur das Fernfeld
+    (ASSUMPTION(OQ-16), ADR 0013 Punkt 8).
+
+    Args:
+        material: Name aus :data:`biooptomd.surface.MATERIALS` (liefert z_top und, für Gold, f = 1).
+        z_top_nm: überschreibt z_top des Materials (oder ohne Material: Pflicht).
+        factor: Bildfaktor f ∈ [−1, 1]; Pflicht für Materialien ohne Default (Graphen, Graphit).
+        zeta_clamp_nm: ζ_c [nm] (ADR 0013 Punkt 6), ASSUMPTION(OQ-18): 0.1 nm.
+
+    Returns:
+        Das ``ImageChargeForce``-Plugin.
+    """
+    from . import surface as _surface
+
+    if z_top_nm is None:
+        if material is None:
+            raise ValueError("material oder z_top_nm angeben")
+        z_top_nm = _surface.MATERIALS[material].z_top_nm
+    if factor is None:
+        if material not in IMAGE_FACTOR:
+            raise ValueError(f"Bildfaktor für {material!r} ohne Default (OQ-18): factor angeben")
+        factor = IMAGE_FACTOR[material]
+    kappa = np.broadcast_to(np.asarray(info.kappa, np.float32), (ctx.n_replicas,))
+    eps_r = np.broadcast_to(np.asarray(info.eps_r, np.float32), (ctx.n_replicas,))
+    return ctx.add_image_charges(
+        z_image=float(z0_nm + z_top_nm + d_image_nm), factor=float(factor),
+        kappa=np.ascontiguousarray(kappa), eps_r=np.ascontiguousarray(eps_r),
+        r_switch=info.r_switch, r_cutoff=info.r_cutoff, zeta_clamp=zeta_clamp_nm,
+    )  # fmt: skip
 
 
 def assign_types(spec: SystemSpec, classes, anchor_atoms=()):

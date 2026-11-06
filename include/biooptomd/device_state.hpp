@@ -45,6 +45,7 @@ enum EnergyTerm : int {
   kEnergySurface,
   kEnergyRestraint,
   kEnergyExternal,  // z. B. VoxelGridForce3D
+  kEnergyImage,     // ImageChargeForce (ADR 0013)
   kNumEnergyTerms
 };
 

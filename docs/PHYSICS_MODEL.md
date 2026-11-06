@@ -60,7 +60,7 @@ Grenze an der Oberfläche (OQ-16).
 
 **Bekannte Grenzen (bewusst akzeptiert für V1):**
 - Mit Debye-Hückel (V1) keine Desolvatationsenergie → Faltungsgleichgewichte von Aptameren sind qualitativ. V2: Generalized Born (OBC2), ADR 0004/0010, ab Phase 9.1 verfügbar.
-- Keine Bildladungen an Metalloberflächen → V2: `ImageChargeForce`.
+- Bildladungen an Metalloberflächen: seit Phase 9.5 optional (`ImageChargeForce`, §4.4, ADR 0013).
 - Wasserstruktur an der Oberfläche (Hydratationsschichten) fehlt.
 
 ## 4. Oberflächen- und Umgebungsplugins
@@ -108,6 +108,29 @@ s_i = −α′_i · FARADAY² / (4 · ONE_4PI_EPS0)      ⇒  U_i = s_i W,  F_i 
 Bei RMS-Feldern ist der Vorfaktor ½ statt ¼; die Lade-Funktion verlangt daher das Pflichtargument `amplitude="peak" | "rms"`. Implementierung: `biooptomd.voxel.optical_scale(alpha, volume, n_water, amplitude=...)` liefert s_i je Optik-Typ für `add_voxel_grid`; das Gitter selbst baut `values_from_potential(W, spacing)`.
 
 **Überschusspolarisierbarkeit (OQ-04):** In s_i steht α′_eff,i = α′_i − (3/4π) v_i (n_w² − 1)/(n_w² + 2), d. h. der Kontrast gegenüber dem verdrängten Wasser, mit denselben v_i wie im `RefractiveIndexProfiler`. Ohne Korrektur wäre die Kraft um rund Faktor 2 zu groß. Streu-/Absorptionskräfte (Im α) sind nicht konservativ und nicht abgebildet; Fluorophore sind im Optikmodus per Default ausgenommen. Größenordnung: 1 MW/cm² in Wasser, α′ ≈ 10⁻³ nm³ → U ≈ 10⁻⁷ kJ/mol pro Atom; relevant erst in plasmonischen Hotspots (Feldverstärkung ≳ 10³).
+
+### 4.4 `ImageChargeForce` (Phase 9.5, ADR 0013)
+Abgeschirmte Bildladungen an einer leitfähigen Ebene z = z_im (Dirichlet-Rand des linearisierten
+Poisson-Boltzmann-Problems; im Debye-Hückel-Modell für f = 1 exakt):
+```
+U = −f [ Σ_{i<j} q_i q_j φ(s_ij) + ½ Σ_i q_i² φ(2ζ_i) ],   φ(s) = k_e e^{−κs}/(ε_r s) · S(s)
+s_ij = |(Δx_ij, Δy_ij, ζ_i + ζ_j)|,   ζ_i = max(z_i − z_im, ζ_c)
+```
+Alle Paare ohne Exclusions, Eigenbild mit ½; Δx, Δy mit Minimum Image bzw. Bildsumme (L < 2 r_c,
+auch für das Eigenbild, dessen Gitterbilder hier eine z-Kraft liefern); r_s, r_c, S(r), κ_r, ε_r wie
+die Nonbonded-Strategie (bei GB ε_out, Näherung nach OQ-16). Die z-Kräfte eines Paars zeigen in dieselbe
+Richtung (externe Wand, kein Impulserhalt in z). Für ζ < ζ_c = 0.1 nm wird geclampt (Energie stetig,
+z-Kraft 0, Zähler `clamp_count`); H-Atome an Gold erreichen das regelmäßig. Bildfaktor f ∈ [−1, 1]:
+1 = idealer Leiter (Gold), f < 1 Näherung für dielektrische Wände, für Graphen ohne Default (OQ-18).
+Bildebene z_im = z0 + z_top + d_im, ASSUMPTION(OQ-18): d_im = 0 und ζ_c = 0.1 nm (an Gold ein
+Modellparameter, weil H-Atome ζ < ζ_c erreichen). Gouy-Chapman hat seinen Ursprung bei z0, nicht bei
+z_im. Energie-Term `image`.
+Builder: `biooptomd.builder.add_image_charges(ctx, info, "gold")`. NumPy-Referenz:
+`tests/reference/image_charge_ref.py`. Größenordnung (ε_r = 78.5, 0.15 M): −0.7 kJ/mol für eine
+Elementarladung 0.3 nm über der Ebene; kollektiv für Polyelektrolyte (12 Phosphate in 0.6 nm Höhe
+≈ −5.6 kJ/mol ohne Cutoff, davon ≈ 66 % Paarterme). Kosten gemessen: +4 % (DH) bzw. +7 % (GBn2) je
+Schritt für einen aufrecht stehenden Duplex (758 Atome, 8 Replicas; GPU dabei geteilt, Verhältnis
+indikativ).
 
 ### Replica Exchange (Phase 9.2, ADR 0011)
 Temperatur-Austausch auf dem Host (`biooptomd.remd.ReplicaExchange`): Zustände (T_k, κ_k, ε_k) wandern
