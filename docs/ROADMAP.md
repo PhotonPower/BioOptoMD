@@ -340,6 +340,9 @@ Abnahmetests (revidierte Fassung vom Projektinhaber bestätigt 2026-11-06):
    ε-Zellen bis 0.5 nm; die PML (600 nm je Seite, ≈ 60 % der z-Zeilen) ist der nächste Hebel.
 6. Replica Exchange im Treiber (ADR 0016 Punkt 5): Austauschzyklen während der Segmente, ⟨ε⟩ nur aus
    dem Zielzustand (Slots über die Austauschpermutation verfolgt), REMD-Zustand im Checkpoint.
+   *Umgesetzt 2026-11-06:* `SelfConsistentOptics(remd=..., exchange_steps=..., target_states=...)`;
+   `test_coupling_remd` (Breite des Zielzustands 300 K gemessen 0.1695 nm = Theorie 0.1695 nm, 400 K
+   wäre 0.1925; Akzeptanz 0.54–0.63; Feld 0 bitgleich zu `remd.run`), `test_coupling_remd_resume`.
 
 Abnahmetests (Vorschlag): siehe ADR 0016, Konsequenzen (`test_polarizability_grid_vs_numpy`,
 `test_voxel_set_values`, `test_tmm_reference`, `test_coupling_fixed_point`, `test_coupling_scaling`,

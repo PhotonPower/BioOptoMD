@@ -116,7 +116,9 @@ Randbedingungen:
    - Ein Checkpoint je Iteration (Kontext über `io.save_checkpoint` plus W, ⟨ε⟩, Verlauf), damit
      teure FEM-Iterationen fortsetzbar sind.
    - Bei Replica Exchange werden nur die Replicas im Zielzustand (T, κ) gemittelt, nicht die ganze
-     Leiter. Das Feld gilt für alle Replicas gleich (ein Gitter je Kontext).
+     Leiter. Das Feld gilt für alle Replicas gleich (ein Gitter je Kontext). *Umgesetzt 2026-11-06
+     (ROADMAP 10.6):* Zyklen aus `exchange_steps` Schritten und einem Austauschversuch, je Zyklus
+     Observer-Reset und Mittel nur über `slot_of_state[target_states]`.
 6. **Grenzen, unverändert aus OQ-04:**
    - Nur die konservative Gradientenkraft (Re α); keine Streu- oder Absorptionskraft (Im α).
    - Keine Erwärmung in Hotspots; Fluorophore im Optikmodus ausgeschlossen.

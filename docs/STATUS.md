@@ -2,7 +2,7 @@
 
 > Diese Datei wird am Ende **jeder** Arbeitssitzung aktualisiert (AGENTS.md §2.4).
 
-**Aktive Phase:** 10 – MD ↔ FEM-Kopplung (Branch `phase-10/md-fem`, lokal), 10.0–10.4 abgenommen 2026-11-06, 10.5 (3D-hp-FEM-Adapter) abgenommen 2026-11-06, als Nächstes REMD im Treiber (10.6); offen 9.4 (Hairpin-Lauf (b)) und 9.6 (Schlussmessung). Phasen 9.5 und 9.7 abgenommen 2026-11-06.
+**Aktive Phase:** 10 – MD ↔ FEM-Kopplung (Branch `phase-10/md-fem`, lokal), 10.0–10.4 abgenommen 2026-11-06, 10.5 (3D-hp-FEM-Adapter) abgenommen 2026-11-06, 10.6 (REMD im Treiber) umgesetzt, Abnahme ausstehend; offen 9.4 (Hairpin-Lauf (b)) und 9.6 (Schlussmessung). Phasen 9.5 und 9.7 abgenommen 2026-11-06.
 Alle PRs #1–#6, #9–#14 am 2026-11-05 nach `main` gemergt (Merge-Commits, Reihenfolge des Stapels).
 **Phase 9.3 (GB-neck2) abgenommen** am 2026-11-05, ADR 0012 und Abnahmekriterien bestätigt.
 **Phase 9.2 (Replica Exchange) abgenommen** am 2026-11-05, ADR 0011 und Abnahmekriterien bestätigt.
@@ -25,6 +25,11 @@ Alle PRs #1–#6, #9–#14 am 2026-11-05 nach `main` gemergt (Merge-Commits, Rei
 
 - Phase 5 (PR #5): HMR, SHAKE/RATTLE auf H-Bindungen, N_dof. Abgenommen 2026-11-03; Nacharbeit nach
   Review siehe unten.
+
+## Phase 10.6 – Replica Exchange im Treiber: umgesetzt, Abnahme ausstehend, Branch `phase-10/coupling-remd`
+- `SelfConsistentOptics(remd=..., exchange_steps=..., target_states=...)`: Zyklen mit Austausch,
+  ⟨ε⟩ nur aus dem Zielzustand. Zielzustand 300 K: Breite 0.1695 nm = Theorie; Feld 0 bitgleich zu
+  `remd.run`; Fortsetzen mit REMD-Zustand bitgleich.
 
 ## Phase 10.5 – 3D-hp-FEM-Adapter: abgenommen 2026-11-06, Branch `phase-10/hpfem-3d`
 - `HpFemSolver3D`: planar gegen TMM p 1.3e-4 / s 1.9e-6 (Grad 2, Default); lateral strukturiert
