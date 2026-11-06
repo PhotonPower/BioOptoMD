@@ -100,6 +100,11 @@ Randbedingungen:
        - Dann lösen und |E|² an den Punkten des Kraftgitters über `problem.sample` auswerten.
        - Umrechnung: nm ↔ m (Faktor 10⁻⁹), W[(V/nm)²] = Σ_c |E_c[V/m]|² · 10⁻¹⁸.
        - Die Eingangsamplitude folgt aus der Intensität: I = ½ n c ε₀ |E₀|².
+       - *Umsetzung 2026-11-06:* zuerst `HpFemGratingSolver` (`hpfem.grating.solve`, 2.5D: in x
+         periodisch mit der Box, in y invariant, ⟨ε⟩ über y gemittelt; strukturiertes Netz aus
+         `hpfem.rectangle`, da hp-FEM 0.4.0 ohne gmsh kommt). ε je FEM-Zelle als Wert der ε-Zelle
+         (Default, ⟨ε⟩ ist ein Zellmittel und so konsistent mit dem TMM; bilinear als Option statt
+         trilinear). Der allgemeine 3D-Adapter (`Scattering3D`) folgt bei Bedarf.
      - (c) **Datei-Adapter** (npz auf regulärem Gitter) als Rückfall, falls hp-FEM nicht im selben
        Interpreter läuft. *Geprüft 2026-11-06:* Das Release-Wheel hp-FEM 0.4.0 (cp311-win_amd64, für
        python.org-CPython) importiert zusammen mit BioOptoMD im selben Interpreter, mit
@@ -170,7 +175,8 @@ Randbedingungen:
     - Bei Feldstärke 0 ist es identisch mit der ungekoppelten MD (bitgleich).
   - **Größenordnung:** `test_coupling_scaling`. Die Verschiebung von ⟨z⟩ einer Testschicht skaliert
     im schwachen Feld linear mit der Intensität.
-  - **hp-FEM-Adapter:** `test_hpfem_adapter_planar` (`reference`, nur wenn hp-FEM installiert ist).
+  - **hp-FEM-Adapter:** `test_hpfem_adapter_planar` (nur wenn hp-FEM installiert ist; umgesetzt mit
+    `pytest.importorskip("hpfem")` statt des Markers `reference`, der an OpenMM hängt).
     Planare Schicht über Gold: W aus hp-FEM gegen den TMM-Referenzsolver, rel. < 1 % nach
     hp-Verfeinerung; Einheiten und Amplitudenkonvention über den Fall ohne Schicht (Fresnel).
   - **Fortsetzen:** `test_coupling_resume`. Abbruch und Fortsetzen nach Iteration k liefern dasselbe

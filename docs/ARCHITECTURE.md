@@ -129,6 +129,9 @@ lassen Padding-Atome unverändert. Test-Hooks ohne Produktionsphysik liegen in `
 - `SelfConsistentOptics`: legt `PolarizabilityGridObserver` und `VoxelGridForce3D` an, iteriert
   MD-Segment → ⟨ε⟩ → Solver → gedämpftes W → `set_values`; Konvergenz über Δε (relativ zum Kontrast)
   und das Residuum ΔW; Checkpoint je Iteration (`resume`).
+- `HpFemGratingSolver`: hp-FEM im selben Prozess (2.5D-Einheitszelle, Netz aus `hpfem.rectangle`,
+  ⟨ε⟩ je Zelle über `MaterialMap.set_cell`, |E|² über `GratingResult.field`); `NpzFileSolver`:
+  externer Solver über `eps_k.npz` → `field_k.npz` (`read_eps_file` für Python-Skripte).
 
 ## 4. Module
 

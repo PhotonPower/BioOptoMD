@@ -42,7 +42,11 @@ Alle PRs #1–#6, #9–#14 am 2026-11-05 nach `main` gemergt (Merge-Commits, Rei
   Befund OQ-24 (Selbstfeld dichter Schichten bei p-Polarisation).
   Review 10.3 umgesetzt: stabile TMM-Rückwärtsrekursion (dicke Metallschichten), p-Feld gegen
   Fresnel-t_E, Rauschen aus Blockmitteln (ADR Punkt 1), NaN-/W-Prüfung, atomare Checkpoints,
-  Konstanten C_LIGHT/EPS0_SI in units, `test_coupling_fixed_point` als slow; Treiber noch ohne REMD. Offen: `HpFemSolver` (hp-FEM ohne
+  Konstanten C_LIGHT/EPS0_SI in units, `test_coupling_fixed_point` als slow; Treiber noch ohne REMD.
+- Phase 10.3 abgeschlossen: `HpFemGratingSolver` (hp-FEM 0.4.0 im selben Interpreter; Kretschmann mit
+  Schicht: max. Abweichung zu TMM p 1.0e-3, s 1.7e-7; ohne Schicht 1e-6) und `NpzFileSolver`
+  (externer Prozess bitgleich). hp-FEM ist nicht in der venv installiert; der Test läuft mit
+  PYTHONPATH auf das Wheel und wird sonst übersprungen. Offen: `HpFemSolver` (hp-FEM ohne
   gmsh: Einheitszellennetz selbst bauen), npz-Adapter, Beispiel 10.4.
 - Phase 10.1/10.2: `PolarizabilityGridObserver` (`ctx.add_polarizability_grid`) und
   `VoxelGridForce3D.set_values`. `test_phase10.py` (7 Tests) grün: Histogramme/Varianz/ε gegen NumPy
@@ -305,8 +309,7 @@ ADR 0007 → **0009** (Mixed Precision), unsere OQ-08…11 → **OQ-11…14**.
 ## Nächster konkreter Schritt
 1. Hairpin-Lauf (OQ-15 b) auswerten, PR #15 aktualisieren, Phase 9.4 zur Abnahme; danach
    Schlussmessung 9.6 auf freier GPU (OQ-19).
-2. Phase 10.3–10.4: `biooptomd.coupling` (TMM, `HpFemSolver`, `SelfConsistentOptics`),
-   Kretschmann-Beispiel.
+2. Phase 10.4: Beispiel Aptamerschicht über Gold im Kretschmann-Aufbau; danach Abnahme Phase 10.
 3. Nachholen: Kontrolllauf auf der RTX 6000 Ada; Nsight Compute (Counter-Freigabe).
 
 ## Sitzungslog

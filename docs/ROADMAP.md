@@ -301,8 +301,10 @@ Abnahmetests (revidierte Fassung vom Projektinhaber bestätigt 2026-11-06):
    (im selben Prozess; npz-Datei-Adapter als Rückfall), Treiber `SelfConsistentOptics` (Picard mit
    Dämpfung β, Checkpoint je Iteration). *Umgesetzt 2026-11-06:* Protokoll, `tmm`/`TmmSolver`,
    `SelfConsistentOptics` (`test_tmm_reference`, `test_tmm_solver_grid`, `test_coupling_fixed_point`,
-   `test_coupling_scaling`, `test_coupling_resume`). Offen: `HpFemSolver`, npz-Adapter, Treiber mit
-   Replica Exchange (Zielzustand über die Slots verfolgen, ADR 0016 Punkt 5).
+   `test_coupling_scaling`, `test_coupling_resume`). hp-FEM-Adapter `HpFemGratingSolver` (in x
+   periodisch, in y invariant; `test_hpfem_adapter_planar`, rel. 1e-3 gegen TMM) und
+   `NpzFileSolver` (`test_npz_file_solver`). Offen: allgemeiner 3D-Adapter (`Scattering3D` mit
+   `LayerStack3D`), Treiber mit Replica Exchange (Zielzustand über die Slots, ADR 0016 Punkt 5).
 4. Beispiel: Aptamerschicht über Gold im Kretschmann-Aufbau mit dem TMM-Adapter.
 
 Abnahmetests (Vorschlag): siehe ADR 0016, Konsequenzen (`test_polarizability_grid_vs_numpy`,

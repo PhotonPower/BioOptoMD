@@ -472,3 +472,226 @@ class SelfConsistentOptics:
             raise ValueError("resume: coupling- und iter-Checkpoint passen nicht zusammen")
         self.w, self.eps, self.history = w, eps, history
         self.voxel.set_values(self._values(self.w))
+
+
+# --- hp-FEM-Adapter (ADR 0016 Punkt 4b, OQ-20) ------------------------------------------------
+
+
+@dataclass
+class HpFemGratingSolver:
+    """hp-FEM (https://github.com/PhotonPower/hp-FEM, ``hpfem.grating.solve``) im selben Prozess für
+    Strukturen, die in x periodisch (Periode = Box L_x) und in y invariant sind: Einfallsmedium
+    (Prisma, ``n_incident``) | ``substrate`` [(ε, Dicke nm), …] bis z = ``z_surface`` | Wasser mit
+    dem Molekülbereich des Beobachtergitters. ⟨ε⟩ wird über y gemittelt und je FEM-Zelle im
+    Bereich über ``MaterialMap.set_cell`` gesetzt: ``interpolation="cell"`` (Default) nimmt den Wert
+    der ε-Zelle, die den Schwerpunkt enthält (⟨ε⟩ ist ein Zellmittel; konsistent mit dem TMM),
+    ``"linear"`` interpoliert bilinear in (x, z) zwischen den Zellmitten; |E|² wird an
+    den Knoten (x, z) des Kraftgitters über ``GratingResult.field`` ausgewertet und auf y übertragen.
+
+    Koordinaten: hp-FEM-y = z_first − z (Licht von oben, ``stack.top`` = 0 an der ersten
+    Grenzfläche), Einheiten m ↔ nm. Die einfallende Welle hat in hp-FEM die Amplitude 1 V/m, daher
+    W = |E₀|² · Σ|E_c|² mit |E₀|² aus ``intensity_w_m2`` (W/m², im Einfallsmedium).
+
+    Netz: strukturiert, Zeilen an allen Stapel-Grenzflächen und ε-Zellgrenzen, Zellhöhe ``h_far``
+    [nm] in Prisma und Wasser, ``h_layer`` in den Substratschichten, die ε-Zellen im Bereich
+    (``refine_region`` Zeilen je Zelle); in x ``nx_per_cell`` Spalten je ε-Zelle; Polynomgrad
+    ``order``; PML ``pml_nm`` oben und unten, Wasserpuffer ``water_nm`` unter dem Bereich. Knoten des
+    Kraftgitters auf einer Netzlinie im Bereich erhalten das Mittel beider Seiten (wie
+    :meth:`TmmResult.intensity`).
+    """
+
+    wavelength_nm: float
+    angle_deg: float
+    pol: str
+    n_incident: float
+    substrate: list = field(default_factory=list)
+    intensity_w_m2: float = 1e10
+    z_surface: float = 0.0
+    order: int = 4
+    h_far: float = 40.0
+    h_layer: float = 5.0
+    refine_region: int = 1
+    nx_per_cell: int = 1
+    pml_nm: float = 280.0
+    water_nm: float = 400.0
+    prism_nm: float = 300.0
+    interpolation: str = "cell"
+    last_result: object = field(default=None, repr=False)
+
+    def solve(self, eps: EpsGrid, grid: ForceGrid) -> np.ndarray:
+        import hpfem
+        import hpfem.grating as hg
+
+        if self.interpolation not in ("cell", "linear"):
+            raise ValueError("HpFemGratingSolver: interpolation 'cell' oder 'linear'")
+
+        nm = 1e-9
+        if not grid.periodic_xy:
+            raise ValueError("HpFemGratingSolver: Kraftgitter periodisch in x/y (Periode = Box)")
+        period = grid.shape[0] * grid.spacing[0]
+        nx_e = eps.eps.shape[2]
+        if abs(nx_e * eps.spacing[0] - period) > 1e-6 * period:
+            raise ValueError(
+                "HpFemGratingSolver: ε-Gitter und Kraftgitter brauchen dieselbe Periode in x"
+            )
+        eps_xz = eps.eps.mean(axis=1)  # (nz, nx), Mittel über y (in hp-FEM invariant)
+        eps_w = eps.n_water**2
+        d_sub = [float(d) for _, d in self.substrate]
+        z_first = self.z_surface - sum(d_sub)
+        # z-Stützstellen (unser z): Wasser ab Oberfläche, ε-Bereich, Wasserpuffer, PML
+        z0, dz, nz_e = eps.origin[2], eps.spacing[2], eps.eps.shape[0]
+        z_top_region = z0 + nz_e * dz
+        if z0 < self.z_surface - 1e-9:
+            raise ValueError(
+                "HpFemGratingSolver: Beobachtergitter beginnt unterhalb der Oberfläche"
+            )
+        z_nodes = grid.nodes(2)
+        z_bottom = max(z_top_region, float(z_nodes.max())) + self.water_nm
+        pieces = []
+
+        def lin(a, b, h):
+            n = max(1, int(np.ceil((b - a) / h - 1e-9)))
+            return np.linspace(a, b, n + 1)
+
+        pieces.append(lin(z_first - self.prism_nm - self.pml_nm, z_first, self.h_far))
+        z = z_first
+        for d in d_sub:
+            pieces.append(lin(z, z + d, self.h_layer))
+            z += d
+        if z0 > self.z_surface:
+            pieces.append(lin(self.z_surface, z0, min(self.h_layer, z0 - self.z_surface)))
+        pieces.append(np.linspace(z0, z_top_region, nz_e * self.refine_region + 1))
+        pieces.append(lin(z_top_region, z_bottom + self.pml_nm, self.h_far))
+        zs = np.unique(np.round(np.concatenate(pieces), 9))
+        ys = (z_first - zs)[::-1]  # hp-FEM-y aufsteigend
+        nx = nx_e * self.nx_per_cell
+        ny = len(ys) - 1
+        mesh = hpfem.rectangle(nx, ny, np.array([0.0, 0.0]), np.array([period * nm, 1.0]))
+        for v in range(mesh.num_vertices):
+            x, y = mesh.vertex(v)
+            mesh.set_vertex(v, np.array([x, ys[int(np.rint(y * ny))] * nm]))
+        stack = hpfem.LayerStack2D(
+            hpfem.Material.dielectric(self.n_incident),
+            [hpfem.Layer(hpfem.Material(complex(e)), float(d) * nm) for e, d in self.substrate],
+            hpfem.Material(complex(eps_w)),
+            0.0,
+        )
+        mm = hpfem.MaterialMap(stack.incidence_medium)
+        cent = np.asarray(mesh.cell_centroids)
+        xe = eps.origin[0] + (np.arange(nx_e) + 0.5) * eps.spacing[0]
+        ze = z0 + (np.arange(nz_e) + 0.5) * dz
+        for c in range(mesh.num_cells):
+            xc, yc = float(cent[c][0]), float(cent[c][1])
+            zc = z_first - yc / nm
+            if z0 < zc < z_top_region:
+                if self.interpolation == "cell":
+                    i = int(np.floor((xc / nm - eps.origin[0]) / eps.spacing[0])) % nx_e
+                    k = min(int(np.floor((zc - z0) / dz)), nz_e - 1)
+                    value = eps_xz[k, i]
+                else:
+                    value = _bilinear_periodic_x(eps_xz, xe, ze, xc / nm, zc, period)
+                mm.set_cell(c, hpfem.Material(complex(value)))
+            else:
+                mm.set_cell(c, stack.material_at([xc, yc]))
+        res = hg.solve(
+            mesh, mm, stack, self.pol, np.deg2rad(self.angle_deg), 0.0,
+            2.0 * np.pi * units.C_LIGHT / (self.wavelength_nm * nm), order=self.order,
+            cover_line=0.5 * self.prism_nm * nm,
+            substrate_line=(z_first - z_bottom + 0.5 * self.water_nm) * nm,
+            pml={"top": self.pml_nm * nm, "bottom": self.pml_nm * nm},
+        )  # fmt: skip
+        self.last_result = res
+        xs = grid.nodes(0)
+        lines = z_first - ys  # unser z der Netzlinien
+        on_line = np.any(np.abs(z_nodes[:, None] - lines[None, :]) <= 1e-9, axis=1)
+        delta = 1e-4  # nm
+        w_z_x = np.empty((len(z_nodes), len(xs)))
+        for k, zk in enumerate(z_nodes):
+            shifts = (-delta, delta) if on_line[k] else (0.0,)
+            acc = np.zeros(len(xs))
+            for s in shifts:
+                pts = np.stack([np.mod(xs, period), np.full(len(xs), -(zk + s - z_first))], 1) * nm
+                e_field = res.field(pts)
+                acc += (np.abs(e_field) ** 2).sum(axis=1)
+            w_z_x[k] = acc / len(shifts)
+        e0 = field_amplitude_sq(self.intensity_w_m2, self.n_incident)
+        w = e0 * w_z_x
+        return np.broadcast_to(w[:, None, :], grid.zyx_shape).copy()
+
+
+def _bilinear_periodic_x(values, xc, zc, x, z, period):
+    """Bilineare Interpolation auf Zellmitten (xc periodisch, zc am Rand konstant fortgesetzt)."""
+    nx, nz = len(xc), len(zc)
+    dx = period / nx
+    u = (x - xc[0]) / dx
+    i0 = int(np.floor(u))
+    fx = u - i0
+    i0, i1 = i0 % nx, (i0 + 1) % nx
+    if nz == 1:
+        k0 = k1 = 0
+        fz = 0.0
+    else:
+        dz = zc[1] - zc[0]
+        v = np.clip((z - zc[0]) / dz, 0.0, nz - 1.0)
+        k0 = min(int(np.floor(v)), nz - 2)
+        k1, fz = k0 + 1, v - k0
+    a = values[k0, i0] * (1 - fx) + values[k0, i1] * fx
+    b = values[k1, i0] * (1 - fx) + values[k1, i1] * fx
+    return a * (1 - fz) + b * fz
+
+
+# --- Datei-Adapter (ADR 0016 Punkt 4c) -----------------------------------------------------------
+
+
+@dataclass
+class NpzFileSolver:
+    """Rückfall für Solver außerhalb des Prozesses (anderer Interpreter, entfernter Rechner).
+
+    Je Aufruf wird ``workdir/eps_{k:03d}.npz`` geschrieben (``eps`` (nz, ny, nx), ``eps_origin``,
+    ``eps_spacing`` [nm], ``n_water``, Kraftgitter ``grid_shape`` (nx, ny, nz), ``grid_origin``,
+    ``grid_spacing`` [nm], ``grid_periodic_xy``), dann ``command`` ausgeführt (Liste von Argumenten;
+    ``{input}`` und ``{output}`` werden ersetzt; alternativ eine Python-Funktion ``(input, output)``).
+    Der Solver schreibt ``workdir/field_{k:03d}.npz`` mit ``w`` = |E₀|² [(V/nm)²] (nz, ny, nx).
+    """
+
+    workdir: object
+    command: object
+    timeout_s: float | None = None
+    calls: int = 0
+
+    def solve(self, eps: EpsGrid, grid: ForceGrid) -> np.ndarray:
+        import subprocess
+
+        work = Path(self.workdir)
+        work.mkdir(parents=True, exist_ok=True)
+        k = self.calls
+        self.calls += 1
+        inp, out = work / f"eps_{k:03d}.npz", work / f"field_{k:03d}.npz"
+        _save_npz_atomic(
+            inp, eps=np.asarray(eps.eps, np.float64), eps_origin=np.asarray(eps.origin, np.float64),
+            eps_spacing=np.asarray(eps.spacing, np.float64), n_water=np.float64(eps.n_water),
+            grid_shape=np.asarray(grid.shape, np.int64), grid_origin=np.asarray(grid.origin, np.float64),
+            grid_spacing=np.asarray(grid.spacing, np.float64),
+            grid_periodic_xy=np.bool_(grid.periodic_xy),
+        )  # fmt: skip
+        if out.exists():
+            out.unlink()
+        if callable(self.command):
+            self.command(str(inp), str(out))
+        else:
+            args = [str(a).format(input=inp, output=out) for a in self.command]
+            subprocess.run(args, check=True, timeout=self.timeout_s)
+        if not out.exists():
+            raise RuntimeError(f"NpzFileSolver: {out} wurde nicht geschrieben")
+        with np.load(out, allow_pickle=False) as d:
+            return np.array(d["w"], np.float64)
+
+
+def read_eps_file(path) -> tuple[EpsGrid, ForceGrid]:
+    """Liest eine Eingabedatei von :class:`NpzFileSolver` (für externe Solver-Skripte in Python)."""
+    with np.load(path, allow_pickle=False) as d:
+        eps = EpsGrid(np.array(d["eps"]), tuple(d["eps_origin"]), tuple(d["eps_spacing"]),
+                      float(d["n_water"]))  # fmt: skip
+        grid = ForceGrid(tuple(int(v) for v in d["grid_shape"]), tuple(d["grid_origin"]),
+                         tuple(d["grid_spacing"]), bool(d["grid_periodic_xy"]))  # fmt: skip
+    return eps, grid

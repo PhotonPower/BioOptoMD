@@ -544,3 +544,80 @@ def test_coupling_self_field_warning():
     with pytest.warns(RuntimeWarning, match="OQ-24"):
         drv.step()
     assert drv.history[-1]["self_field"] > 1e-3
+
+
+# --- 10.3 hp-FEM-Adapter -----------------------------------------------------------------------
+
+
+def test_hpfem_adapter_planar():
+    """hp-FEM-Adapter (ADR 0016, OQ-20): Kretschmann Prisma | Au 50 nm | Wasser mit einer planaren
+    Schicht im Beobachtergitter (ε-Profil über 5 Zellen, Kontrast bis 0.3). W aus hp-FEM gegen den
+    TMM-Referenzsolver an allen Knoten des Kraftgitters, rel. < 1 % (ADR); Einheiten und Amplitude
+    über den Fall ohne Schicht (gleiche Normierung I = ½ n c ε₀ |E₀|²). p und s. Nur mit hp-FEM."""
+    pytest.importorskip("hpfem")
+    from biooptomd.coupling import EpsGrid, ForceGrid, HpFemGratingSolver, TmmSolver
+
+    grid = ForceGrid((4, 2, 13), (0.0, 0.0, 0.0), (1.0, 2.0, 0.25), periodic_xy=True)
+    profile = EPS_W633 + np.array([0.05, 0.3, 0.2, 0.1, 0.0])
+    layer = EpsGrid(
+        np.broadcast_to(profile[:, None, None], (5, 1, 2)).copy(), (0.0, 0.0, 0.5), (2.0, 4.0, 0.4),
+        1.3317,
+    )  # fmt: skip
+    water = EpsGrid(np.full((5, 1, 2), EPS_W633), (0.0, 0.0, 0.5), (2.0, 4.0, 0.4), 1.3317)
+    for pol in ("p", "s"):
+        kw = {"substrate": [(EPS_AU, 50.0)], "intensity_w_m2": 1e10}
+        tmm_solver = TmmSolver(LAM, 72.6, pol, N_PRISM, **kw)
+        fem_solver = HpFemGratingSolver(LAM, 72.6, pol, N_PRISM, **kw)
+        for eps in (water, layer):
+            w_ref = tmm_solver.solve(eps, grid)
+            w_fem = fem_solver.solve(eps, grid)
+            rel = np.abs(w_fem - w_ref).max() / np.abs(w_ref).max()
+            print(f"{pol}: max |W_FEM − W_TMM| / max W = {rel:.2e}")
+            assert w_fem.shape == w_ref.shape
+            np.testing.assert_allclose(w_fem, w_ref, rtol=1e-2)
+        assert fem_solver.last_result.R == pytest.approx(tmm_solver_r(tmm_solver, layer), rel=1e-2)
+
+
+def tmm_solver_r(solver, eps):
+    from biooptomd.coupling import tmm
+
+    e, d, _ = solver.stack(eps)
+    return tmm(e, d, solver.wavelength_nm, np.deg2rad(solver.angle_deg), solver.pol).R
+
+
+def test_npz_file_solver(tmp_path):
+    """Datei-Adapter (ADR 0016 Punkt 4c): ein externer Prozess (eigener Python-Interpreter) liest
+    ``eps_k.npz``, rechnet mit dem TMM und schreibt ``field_k.npz``; das Ergebnis ist bitgleich zum
+    TmmSolver im selben Prozess. Fehlt die Ausgabe, gibt es einen Fehler."""
+    import subprocess
+    import sys
+
+    from biooptomd.coupling import EpsGrid, ForceGrid, NpzFileSolver, TmmSolver
+
+    grid = ForceGrid((4, 2, 13), (0.0, 0.0, 0.0), (1.0, 2.0, 0.25), periodic_xy=True)
+    eps = EpsGrid(EPS_W633 + np.linspace(0.0, 0.2, 10)[:, None, None] * np.ones((10, 1, 2)),
+                  (0.0, 0.0, 0.5), (2.0, 4.0, 0.2), 1.3317)  # fmt: skip
+    script = tmp_path / "ext_solver.py"
+    script.write_text(
+        "import sys\nimport numpy as np\n"
+        "from biooptomd.coupling import TmmSolver, read_eps_file\n"
+        "eps, grid = read_eps_file(sys.argv[1])\n"
+        f"s = TmmSolver({LAM}, 72.6, 'p', {N_PRISM}, [({EPS_AU!r}, 50.0)], intensity_w_m2=1e10)\n"
+        "np.savez(sys.argv[2], w=s.solve(eps, grid))\n",
+        encoding="utf-8",
+    )
+    solver = NpzFileSolver(tmp_path / "work", [sys.executable, str(script), "{input}", "{output}"])
+    w_ext = solver.solve(eps, grid)
+    w_ref = TmmSolver(LAM, 72.6, "p", N_PRISM, [(EPS_AU, 50.0)], intensity_w_m2=1e10).solve(
+        eps, grid
+    )
+    np.testing.assert_array_equal(w_ext, w_ref)
+    assert (tmp_path / "work" / "eps_000.npz").exists() and solver.calls == 1
+
+    broken = NpzFileSolver(tmp_path / "w2", lambda inp, out: None)
+    with pytest.raises(RuntimeError):
+        broken.solve(eps, grid)
+    with pytest.raises(subprocess.CalledProcessError):
+        NpzFileSolver(tmp_path / "w3", [sys.executable, "-c", "raise SystemExit(3)"]).solve(
+            eps, grid
+        )
