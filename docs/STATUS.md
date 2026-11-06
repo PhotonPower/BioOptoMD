@@ -2,7 +2,7 @@
 
 > Diese Datei wird am Ende **jeder** Arbeitssitzung aktualisiert (AGENTS.md §2.4).
 
-**Aktive Phase:** 9.4 – Validierung GBn2 + OL21 (OQ-15), Hairpin-Lauf (b) läuft, Branch `phase-9/gb-validation`. Phase 9.5 (ImageChargeForce) abgenommen 2026-11-06.
+**Aktive Phase:** 9.6 – Tile-Paarliste (Branch `phase-9/tile-list`); parallel 9.4 Hairpin-Lauf (b). Phase 9.5 (ImageChargeForce) abgenommen 2026-11-06.
 Alle PRs #1–#6, #9–#14 am 2026-11-05 nach `main` gemergt (Merge-Commits, Reihenfolge des Stapels).
 **Phase 9.3 (GB-neck2) abgenommen** am 2026-11-05, ADR 0012 und Abnahmekriterien bestätigt.
 **Phase 9.2 (Replica Exchange) abgenommen** am 2026-11-05, ADR 0011 und Abnahmekriterien bestätigt.
@@ -26,12 +26,17 @@ Alle PRs #1–#6, #9–#14 am 2026-11-05 nach `main` gemergt (Merge-Commits, Rei
 - Phase 5 (PR #5): HMR, SHAKE/RATTLE auf H-Bindungen, N_dof. Abgenommen 2026-11-03; Nacharbeit nach
   Review siehe unten.
 
-## Phase 9.6 – Tile-Paarliste (Auftrag „Cell-List“), Entwurf (Branch `phase-9/tile-list`)
-- Messung 1 × 20 k (GPU geteilt, Verhältnisse): räumliche Sortierung bringt nichts (Atomreihenfolge
-  13.3 % lebende Tile-Paare, Morton 14.7 %); Leerlauf durch 171 k Warps / 42.8 k Blöcke ≈ 300 von
-  922 µs je compute_forces. Nsight Systems: Nonbonded 70 %, SHAKE 16 %, RATTLE 8 % (FP64).
-- ADR 0014 (Proposed): kompakte Tile-Paarliste je Auswertung, persistenter Kernel, bitidentisch.
-  Kriterien als Vorschlag in ROADMAP 9.6. Implementierung nach Annahme.
+## Phase 9.6 – Tile-Paarliste (ADR 0014, Accepted; Rev. 1 offen), implementiert, Endmessung offen
+- Vorab-Messung 1 × 20 k: räumliche Sortierung bringt nichts (Atomreihenfolge 13.3 % lebende
+  Tile-Paare, Morton 14.7 %) ⇒ Tile-Paarliste statt Cell-List (Projektinhaber 2026-11-06).
+- Implementiert: Listenaufbau (Thread je Tile-Paar, warpweise Atomics), persistenter Kernel je
+  Replica für DH und die drei GB-Passes; Rechnung je Tile-Paar als gemeinsame Gerätefunktion
+  `tile_pair`; Auswahl `tile_list = "auto" | "on" | "off"`, Property `ctx.nonbonded_uses_tile_list`.
+- `tests/python/test_phase9_tile_list.py`: 11 Tests, alle bitidentisch zu `"off"` (DH, GB-OBC2/GBn2,
+  20k, per-Replica-Topologien, Grenzfälle, Auto); memcheck/racecheck ohne Befund.
+- Messung bei geteilter GPU (Verhältnisse): 1 × 20 k **1.14×** (Liste immer 1.18×), 32 × 2 k 1.01×,
+  128 × 1 k 1.00×. Kriterium 1.25× nicht erreicht; i-Tile-Akkumulation gemessen und verworfen
+  (0.77× bzw. neutral). Details ADR 0014 Rev. 1. Endmessung bei freier GPU.
 
 ## Phase 9.5 – ImageChargeForce: abgenommen 2026-11-06 (Branch `phase-9/image-charge`, PR #16)
 - ADR 0013 Accepted (Projektinhaber 2026-11-05, Kriterien und Defaults OQ-18 bestätigt).

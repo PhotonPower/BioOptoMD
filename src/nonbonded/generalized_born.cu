@@ -80,14 +80,13 @@ struct TileSetup {
 
 template <bool kImages>
 __device__ __forceinline__ bool tile_setup(const DeviceState& s, const int2* tile_pairs,
-                                           int n_tile_pairs, const float4* bounds, float r_c, int p,
-                                           int a, TileSetup& t) {
-  if (p >= n_tile_pairs) return false;  // ganzer Warp
+                                           const float4* bounds, float r_c, int p, int a,
+                                           bool listed, TileSetup& t) {
   const int r = blockIdx.y;
   t.tp = tile_pairs[p];
   t.box = s.d_box[r];
-  if constexpr (!kImages) {
-    if (tiles_out_of_range(bounds, r, s.n_pad / 32, t.tp, t.box, r_c)) return false;
+  if constexpr (!kImages) {  // mit Liste (ADR 0014) schon vorausgewählt
+    if (!listed && tiles_out_of_range(bounds, r, s.n_pad / 32, t.tp, t.box, r_c)) return false;
   }
   t.base = r * s.n_pad;
   t.i_local = t.tp.x * 32 + a;
@@ -114,59 +113,63 @@ template <bool kImages>
 __global__ void __launch_bounds__(kWarpsPerBlock * 32)
     k_gb_integrals(DeviceState s, const int2* tile_pairs, int n_tile_pairs, const float4* gb_atom,
                    const int* gb_offset, const float2* neck, const int2* neck_info, SwitchParams sw,
-                   const float4* bounds, long long* integral) {
+                   const float4* bounds, long long* integral, detail::TileList list) {
   __shared__ float4 sh_pos[kWarpsPerBlock][32];
   __shared__ float4 sh_gb[kWarpsPerBlock][32];  // (or, sr, ρ, Neck-Index)
   __shared__ float sh_acc[kWarpsPerBlock][32];
   const int warp = threadIdx.x / 32, a = threadIdx.x % 32;
-  TileSetup t;
-  if (!tile_setup<kImages>(s, tile_pairs, n_tile_pairs, bounds, sw.r_c,
-                           blockIdx.x * kWarpsPerBlock + warp, a, t))
-    return;
-  const int off = gb_offset[blockIdx.y];
-  const float4 pi = s.d_pos[t.base + t.i_local];
-  const float4 gi = gb_atom[off + t.i_local];
-  sh_pos[warp][a] = s.d_pos[t.base + t.j_local];
-  sh_gb[warp][a] = gb_atom[off + t.j_local];
-  sh_acc[warp][a] = 0.0f;
-  const int2 ni = neck_info[blockIdx.y];
-  float acc_i = 0.0f;
-  __syncwarp();
-  for (int k = 0; k < 32; ++k) {
-    const int b = (a + k) & 31;
-    const float3 d0 = detail::minimum_image_delta(pi, sh_pos[warp][b], t.box);
-    const float4 gb_j = sh_gb[warp][b];
-    for (int nx = -t.n_img_x; nx <= t.n_img_x; ++nx) {
-      for (int ny = -t.n_img_y; ny <= t.n_img_y; ++ny) {
-        const bool zero_image = nx == 0 && ny == 0;
-        if (((zero_image ? t.skip0 : t.skip_image) >> b) & 1u) continue;
-        const bool self_image = kImages && !zero_image && t.tp.x == t.tp.y && b == a;
-        float3 d = d0;
-        if constexpr (kImages) {
-          d.x += static_cast<float>(nx) * t.box.x;
-          d.y += static_cast<float>(ny) * t.box.y;
-        }
-        const float r2 = d.x * d.x + d.y * d.y + d.z * d.z;
-        if (r2 < sw.r_c2 && r2 >= units::EPS_R2) {
-          const float dist = sqrtf(r2);
-          float dh, dn, sv, ds;
-          detail::switching(dist, sw, sv, ds);
-          const int idx_i = static_cast<int>(gi.w), idx_j = static_cast<int>(gb_j.w);
-          acc_i += sv * (h_integral(dist, gi.x, gb_j.y, dh) +
-                         neck_term(dist, gi.z, gb_j.z, idx_i, idx_j, neck, ni, dn));
-          if (!self_image)
-            sh_acc[warp][b] += sv * (h_integral(dist, gb_j.x, gi.y, dh) +
-                                     neck_term(dist, gb_j.z, gi.z, idx_j, idx_i, neck, ni, dn));
+  const detail::TileCursor cur = detail::tile_cursor(list, n_tile_pairs, warp);
+  for (int k = cur.k; k < cur.n; k += cur.stride) {
+    const int p = detail::tile_pair_index(list, n_tile_pairs, k);
+    TileSetup t;
+    if (!tile_setup<kImages>(s, tile_pairs, bounds, sw.r_c, p, a, list.count != nullptr, t))
+      continue;
+    __syncwarp();  // Shared Memory des vorigen Tile-Paars ist gelesen
+    const int off = gb_offset[blockIdx.y];
+    const float4 pi = s.d_pos[t.base + t.i_local];
+    const float4 gi = gb_atom[off + t.i_local];
+    sh_pos[warp][a] = s.d_pos[t.base + t.j_local];
+    sh_gb[warp][a] = gb_atom[off + t.j_local];
+    sh_acc[warp][a] = 0.0f;
+    const int2 ni = neck_info[blockIdx.y];
+    float acc_i = 0.0f;
+    __syncwarp();
+    for (int k = 0; k < 32; ++k) {
+      const int b = (a + k) & 31;
+      const float3 d0 = detail::minimum_image_delta(pi, sh_pos[warp][b], t.box);
+      const float4 gb_j = sh_gb[warp][b];
+      for (int nx = -t.n_img_x; nx <= t.n_img_x; ++nx) {
+        for (int ny = -t.n_img_y; ny <= t.n_img_y; ++ny) {
+          const bool zero_image = nx == 0 && ny == 0;
+          if (((zero_image ? t.skip0 : t.skip_image) >> b) & 1u) continue;
+          const bool self_image = kImages && !zero_image && t.tp.x == t.tp.y && b == a;
+          float3 d = d0;
+          if constexpr (kImages) {
+            d.x += static_cast<float>(nx) * t.box.x;
+            d.y += static_cast<float>(ny) * t.box.y;
+          }
+          const float r2 = d.x * d.x + d.y * d.y + d.z * d.z;
+          if (r2 < sw.r_c2 && r2 >= units::EPS_R2) {
+            const float dist = sqrtf(r2);
+            float dh, dn, sv, ds;
+            detail::switching(dist, sw, sv, ds);
+            const int idx_i = static_cast<int>(gi.w), idx_j = static_cast<int>(gb_j.w);
+            acc_i += sv * (h_integral(dist, gi.x, gb_j.y, dh) +
+                           neck_term(dist, gi.z, gb_j.z, idx_i, idx_j, neck, ni, dn));
+            if (!self_image)
+              sh_acc[warp][b] += sv * (h_integral(dist, gb_j.x, gi.y, dh) +
+                                       neck_term(dist, gb_j.z, gi.z, idx_j, idx_i, neck, ni, dn));
+          }
         }
       }
+      __syncwarp();
     }
-    __syncwarp();
+    if (t.valid_i && acc_i != 0.0f)
+      detail::atomic_add_fixed_point(integral + t.base + t.i_local, acc_i, s.d_status);
+    const float acc_j = sh_acc[warp][a];
+    if (t.valid_j && acc_j != 0.0f)
+      detail::atomic_add_fixed_point(integral + t.base + t.j_local, acc_j, s.d_status);
   }
-  if (t.valid_i && acc_i != 0.0f)
-    detail::atomic_add_fixed_point(integral + t.base + t.i_local, acc_i, s.d_status);
-  const float acc_j = sh_acc[warp][a];
-  if (t.valid_j && acc_j != 0.0f)
-    detail::atomic_add_fixed_point(integral + t.base + t.j_local, acc_j, s.d_status);
 }
 
 /// Pass (b): B_i, dB_i/dI_i, Selbst- und ACE-Energie, ∂E/∂B_i (Selbstanteil) in FP64.
@@ -225,7 +228,7 @@ __global__ void __launch_bounds__(kWarpsPerBlock * 32)
     k_gb_pairs(DeviceState s, const int2* tile_pairs, int n_tile_pairs, const float2* lj,
                const int* mask_index, const std::uint32_t* masks, const int4* replica,
                const float2* screening, float eps_in, SwitchParams sw, const float4* bounds,
-               const float* born, long long* de_db) {
+               const float* born, long long* de_db, detail::TileList list) {
   extern __shared__ float2 sh_lj[];  // T × T (σ, ε)
   __shared__ float4 sh_pos[kWarpsPerBlock][32];
   __shared__ int sh_type[kWarpsPerBlock][32];
@@ -238,123 +241,128 @@ __global__ void __launch_bounds__(kWarpsPerBlock * 32)
   __syncthreads();
 
   const int warp = threadIdx.x / 32, a = threadIdx.x % 32;
-  const int p = blockIdx.x * kWarpsPerBlock + warp;
-  TileSetup t;
-  if (!tile_setup<kImages>(s, tile_pairs, n_tile_pairs, bounds, sw.r_c, p, a, t)) return;
-  const float4 pi = s.d_pos[t.base + t.i_local];
-  int ti = s.d_types[t.base + t.i_local].x;
-  int tj = s.d_types[t.base + t.j_local].x;
-  if (ti >= n_types || tj >= n_types) atomicOr(s.d_status, kStatusUnknownType);
-  ti = ti < n_types ? ti : 0;
-  sh_pos[warp][a] = s.d_pos[t.base + t.j_local];
-  sh_type[warp][a] = tj < n_types ? tj : 0;
-  sh_born[warp][a] = born[t.base + t.j_local];
-  sh_acc[warp][a] = make_float4(0.0f, 0.0f, 0.0f, 0.0f);
-  const float b_i = born[t.base + t.i_local];
-  const int mi = mask_index[rep.z + p];
-  const unsigned int excl = (mi >= 0 && t.valid_i) ? masks[rep.w + mi * 32 + a] : 0u;
-  const float2 sc = screening[r];  // (κ, ε_out)
-  const float inv_eps_in = 1.0f / eps_in, inv_eps_out = 1.0f / sc.y;
-  const float c = units::ONE_4PI_EPS0_F;
-  float3 fi = make_float3(0.0f, 0.0f, 0.0f);
-  float de_db_i = 0.0f, energy = 0.0f;
-  __syncwarp();
+  const detail::TileCursor cur = detail::tile_cursor(list, n_tile_pairs, warp);
+  for (int k = cur.k; k < cur.n; k += cur.stride) {
+    const int p = detail::tile_pair_index(list, n_tile_pairs, k);
+    TileSetup t;
+    if (!tile_setup<kImages>(s, tile_pairs, bounds, sw.r_c, p, a, list.count != nullptr, t))
+      continue;
+    __syncwarp();  // Shared Memory des vorigen Tile-Paars ist gelesen
+    const float4 pi = s.d_pos[t.base + t.i_local];
+    int ti = s.d_types[t.base + t.i_local].x;
+    int tj = s.d_types[t.base + t.j_local].x;
+    if (ti >= n_types || tj >= n_types) atomicOr(s.d_status, kStatusUnknownType);
+    ti = ti < n_types ? ti : 0;
+    sh_pos[warp][a] = s.d_pos[t.base + t.j_local];
+    sh_type[warp][a] = tj < n_types ? tj : 0;
+    sh_born[warp][a] = born[t.base + t.j_local];
+    sh_acc[warp][a] = make_float4(0.0f, 0.0f, 0.0f, 0.0f);
+    const float b_i = born[t.base + t.i_local];
+    const int mi = mask_index[rep.z + p];
+    const unsigned int excl = (mi >= 0 && t.valid_i) ? masks[rep.w + mi * 32 + a] : 0u;
+    const float2 sc = screening[r];  // (κ, ε_out)
+    const float inv_eps_in = 1.0f / eps_in, inv_eps_out = 1.0f / sc.y;
+    const float c = units::ONE_4PI_EPS0_F;
+    float3 fi = make_float3(0.0f, 0.0f, 0.0f);
+    float de_db_i = 0.0f, energy = 0.0f;
+    __syncwarp();
 
-  for (int k = 0; k < 32; ++k) {
-    const int b = (a + k) & 31;
-    const float4 pj = sh_pos[warp][b];
-    const float3 d0 = detail::minimum_image_delta(pi, pj, t.box);
-    const float qq = pi.w * pj.w;
-    const float b_j = sh_born[warp][b];
-    const float2 se = sh_lj[ti * n_types + sh_type[warp][b]];  // (σ, ε)
-    for (int nx = -t.n_img_x; nx <= t.n_img_x; ++nx) {
-      for (int ny = -t.n_img_y; ny <= t.n_img_y; ++ny) {
-        const bool zero_image = nx == 0 && ny == 0;
-        if (((zero_image ? t.skip0 : t.skip_image) >> b) & 1u) continue;
-        const bool self_image = kImages && !zero_image && t.tp.x == t.tp.y && b == a;
-        const bool excluded = zero_image && ((excl >> b) & 1u);
-        float3 d = d0;
-        if constexpr (kImages) {
-          d.x += static_cast<float>(nx) * t.box.x;
-          d.y += static_cast<float>(ny) * t.box.y;
-        }
-        const float r2 = d.x * d.x + d.y * d.y + d.z * d.z;
-        if (!(r2 < sw.r_c2 && r2 >= units::EPS_R2)) continue;
-        const float dist = sqrtf(r2);
-        const float inv_r = 1.0f / dist;
-        // GB: E = −C (1/ε_in − e^{−κf}/ε_out) q_i q_j / f, f = sqrt(r² + P e^{−r²/(4P)}), P = B_i
-        // B_j
-        const float pp = b_i * b_j;
-        const float ex = expf(-0.25f * r2 / pp);
-        const float f = sqrtf(r2 + pp * ex);
-        const float inv_f = 1.0f / f;
-        const float ek = expf(-sc.x * f);
-        const float g = inv_eps_in - ek * inv_eps_out;
-        const float dv_df = -c * qq * (sc.x * ek * inv_eps_out * inv_f - g * inv_f * inv_f);
-        const float df_dr = dist * (1.0f - 0.25f * ex) * inv_f;
-        const float tb = 0.5f * ex * (1.0f + 0.25f * r2 / pp) * inv_f;  // ∂f/∂B_i = B_j·tb
-        float v, dv_dr;                                                 // V und dV/dr
-        float sv = 1.0f;
-        if (excluded) {
-          v = -c * g * qq * inv_f;
-          dv_dr = dv_df * df_dr;
-        } else {
-          // E_C + E_GB = C qq [(1/ε_in)(1/r − 1/f) + e^{−κf}/(ε_out f)] ohne Auslöschung:
-          // 1/r − 1/f = δ/(r f), δ = f − r = P e^{−r²/4P}/(f + r), dδ/dr = −(δ + r e/4)/f.
-          // (Die direkte Summe C qq/(ε_in r) − C qq g/f verliert im Fernfeld ~e^{κr} an Stellen.)
-          const float delta = pp * ex / (f + dist);
-          const float ddelta = -(delta + 0.25f * dist * ex) * inv_f;
-          const float t1 = delta * inv_r * inv_f;
-          const float dt1 = ddelta * inv_r * inv_f - t1 * (inv_r + df_dr * inv_f);
-          const float t2 = ek * inv_f;
-          const float dt2 = -t2 * (sc.x + inv_f) * df_dr;
-          v = c * qq * (inv_eps_in * t1 + inv_eps_out * t2);
-          dv_dr = c * qq * (inv_eps_in * dt1 + inv_eps_out * dt2);
-          if (se.y != 0.0f) {  // ε = 0: kein LJ (vermeidet 0·inf = NaN bei r ≪ σ)
-            const float sr2 = se.x * se.x * inv_r * inv_r;
-            const float sr6 = sr2 * sr2 * sr2;
-            v += 4.0f * se.y * (sr6 * sr6 - sr6);
-            dv_dr -= 4.0f * se.y * (12.0f * sr6 * sr6 - 6.0f * sr6) * inv_r;
+    for (int k = 0; k < 32; ++k) {
+      const int b = (a + k) & 31;
+      const float4 pj = sh_pos[warp][b];
+      const float3 d0 = detail::minimum_image_delta(pi, pj, t.box);
+      const float qq = pi.w * pj.w;
+      const float b_j = sh_born[warp][b];
+      const float2 se = sh_lj[ti * n_types + sh_type[warp][b]];  // (σ, ε)
+      for (int nx = -t.n_img_x; nx <= t.n_img_x; ++nx) {
+        for (int ny = -t.n_img_y; ny <= t.n_img_y; ++ny) {
+          const bool zero_image = nx == 0 && ny == 0;
+          if (((zero_image ? t.skip0 : t.skip_image) >> b) & 1u) continue;
+          const bool self_image = kImages && !zero_image && t.tp.x == t.tp.y && b == a;
+          const bool excluded = zero_image && ((excl >> b) & 1u);
+          float3 d = d0;
+          if constexpr (kImages) {
+            d.x += static_cast<float>(nx) * t.box.x;
+            d.y += static_cast<float>(ny) * t.box.y;
           }
-          float ds;
-          detail::switching(dist, sw, sv, ds);
-          dv_dr = dv_dr * sv + v * ds;
-          v *= sv;
-        }
-        const float w = self_image ? 0.5f : 1.0f;
-        energy += w * v;
-        const float scale_b = w * sv * dv_df;
-        if (self_image) {
-          de_db_i += scale_b * (b_j + b_i) * tb;  // beide Radien gehören zu Atom i
-        } else {
-          de_db_i += scale_b * b_j * tb;
-          const float cf = -dv_dr * inv_r;
-          const float3 fv = make_float3(cf * d.x, cf * d.y, cf * d.z);
-          fi.x += fv.x;
-          fi.y += fv.y;
-          fi.z += fv.z;
-          float4& acc = sh_acc[warp][b];
-          acc.x -= fv.x;
-          acc.y -= fv.y;
-          acc.z -= fv.z;
-          acc.w += scale_b * b_i * tb;
+          const float r2 = d.x * d.x + d.y * d.y + d.z * d.z;
+          if (!(r2 < sw.r_c2 && r2 >= units::EPS_R2)) continue;
+          const float dist = sqrtf(r2);
+          const float inv_r = 1.0f / dist;
+          // GB: E = −C (1/ε_in − e^{−κf}/ε_out) q_i q_j / f, f = sqrt(r² + P e^{−r²/(4P)}), P = B_i
+          // B_j
+          const float pp = b_i * b_j;
+          const float ex = expf(-0.25f * r2 / pp);
+          const float f = sqrtf(r2 + pp * ex);
+          const float inv_f = 1.0f / f;
+          const float ek = expf(-sc.x * f);
+          const float g = inv_eps_in - ek * inv_eps_out;
+          const float dv_df = -c * qq * (sc.x * ek * inv_eps_out * inv_f - g * inv_f * inv_f);
+          const float df_dr = dist * (1.0f - 0.25f * ex) * inv_f;
+          const float tb = 0.5f * ex * (1.0f + 0.25f * r2 / pp) * inv_f;  // ∂f/∂B_i = B_j·tb
+          float v, dv_dr;                                                 // V und dV/dr
+          float sv = 1.0f;
+          if (excluded) {
+            v = -c * g * qq * inv_f;
+            dv_dr = dv_df * df_dr;
+          } else {
+            // E_C + E_GB = C qq [(1/ε_in)(1/r − 1/f) + e^{−κf}/(ε_out f)] ohne Auslöschung:
+            // 1/r − 1/f = δ/(r f), δ = f − r = P e^{−r²/4P}/(f + r), dδ/dr = −(δ + r e/4)/f.
+            // (Die direkte Summe C qq/(ε_in r) − C qq g/f verliert im Fernfeld ~e^{κr} an Stellen.)
+            const float delta = pp * ex / (f + dist);
+            const float ddelta = -(delta + 0.25f * dist * ex) * inv_f;
+            const float t1 = delta * inv_r * inv_f;
+            const float dt1 = ddelta * inv_r * inv_f - t1 * (inv_r + df_dr * inv_f);
+            const float t2 = ek * inv_f;
+            const float dt2 = -t2 * (sc.x + inv_f) * df_dr;
+            v = c * qq * (inv_eps_in * t1 + inv_eps_out * t2);
+            dv_dr = c * qq * (inv_eps_in * dt1 + inv_eps_out * dt2);
+            if (se.y != 0.0f) {  // ε = 0: kein LJ (vermeidet 0·inf = NaN bei r ≪ σ)
+              const float sr2 = se.x * se.x * inv_r * inv_r;
+              const float sr6 = sr2 * sr2 * sr2;
+              v += 4.0f * se.y * (sr6 * sr6 - sr6);
+              dv_dr -= 4.0f * se.y * (12.0f * sr6 * sr6 - 6.0f * sr6) * inv_r;
+            }
+            float ds;
+            detail::switching(dist, sw, sv, ds);
+            dv_dr = dv_dr * sv + v * ds;
+            v *= sv;
+          }
+          const float w = self_image ? 0.5f : 1.0f;
+          energy += w * v;
+          const float scale_b = w * sv * dv_df;
+          if (self_image) {
+            de_db_i += scale_b * (b_j + b_i) * tb;  // beide Radien gehören zu Atom i
+          } else {
+            de_db_i += scale_b * b_j * tb;
+            const float cf = -dv_dr * inv_r;
+            const float3 fv = make_float3(cf * d.x, cf * d.y, cf * d.z);
+            fi.x += fv.x;
+            fi.y += fv.y;
+            fi.z += fv.z;
+            float4& acc = sh_acc[warp][b];
+            acc.x -= fv.x;
+            acc.y -= fv.y;
+            acc.z -= fv.z;
+            acc.w += scale_b * b_i * tb;
+          }
         }
       }
+      __syncwarp();
     }
-    __syncwarp();
+    const int gi = t.base + t.i_local, gj = t.base + t.j_local;
+    if (t.valid_i) {
+      if (fi.x != 0.0f || fi.y != 0.0f || fi.z != 0.0f) detail::add_force(s, gi, fi.x, fi.y, fi.z);
+      if (de_db_i != 0.0f) detail::atomic_add_fixed_point(de_db + gi, de_db_i, s.d_status);
+    }
+    const float4 acc = sh_acc[warp][a];
+    if (t.valid_j) {
+      if (acc.x != 0.0f || acc.y != 0.0f || acc.z != 0.0f)
+        detail::add_force(s, gj, acc.x, acc.y, acc.z);
+      if (acc.w != 0.0f) detail::atomic_add_fixed_point(de_db + gj, acc.w, s.d_status);
+    }
+    detail::warp_add_energy(s, r, kEnergyNonbonded, energy);
   }
-  const int gi = t.base + t.i_local, gj = t.base + t.j_local;
-  if (t.valid_i) {
-    if (fi.x != 0.0f || fi.y != 0.0f || fi.z != 0.0f) detail::add_force(s, gi, fi.x, fi.y, fi.z);
-    if (de_db_i != 0.0f) detail::atomic_add_fixed_point(de_db + gi, de_db_i, s.d_status);
-  }
-  const float4 acc = sh_acc[warp][a];
-  if (t.valid_j) {
-    if (acc.x != 0.0f || acc.y != 0.0f || acc.z != 0.0f)
-      detail::add_force(s, gj, acc.x, acc.y, acc.z);
-    if (acc.w != 0.0f) detail::atomic_add_fixed_point(de_db + gj, acc.w, s.d_status);
-  }
-  detail::warp_add_energy(s, r, kEnergyNonbonded, energy);
 }
 
 /// Pass (e): F_i −= [dE/dI_i ∂(H_ij S)/∂r + dE/dI_j ∂(H_ji S)/∂r] r̂_ij, F_j = −F_i;
@@ -363,74 +371,79 @@ template <bool kImages>
 __global__ void __launch_bounds__(kWarpsPerBlock * 32)
     k_gb_chain(DeviceState s, const int2* tile_pairs, int n_tile_pairs, const float4* gb_atom,
                const int* gb_offset, const float2* neck, const int2* neck_info, SwitchParams sw,
-               const float4* bounds, const long long* de_db, const float* db_di) {
+               const float4* bounds, const long long* de_db, const float* db_di,
+               detail::TileList list) {
   __shared__ float4 sh_pos[kWarpsPerBlock][32];
   __shared__ float4 sh_gb[kWarpsPerBlock][32];  // (or, sr, ρ, Neck-Index)
   __shared__ float sh_dedi[kWarpsPerBlock][32];
   __shared__ float3 sh_fj[kWarpsPerBlock][32];
   const int warp = threadIdx.x / 32, a = threadIdx.x % 32;
-  TileSetup t;
-  if (!tile_setup<kImages>(s, tile_pairs, n_tile_pairs, bounds, sw.r_c,
-                           blockIdx.x * kWarpsPerBlock + warp, a, t))
-    return;
-  const int off = gb_offset[blockIdx.y];
-  const int gi = t.base + t.i_local, gj = t.base + t.j_local;
-  const float4 pi = s.d_pos[gi];
-  const float4 gbi = gb_atom[off + t.i_local];
-  const float dedi_i = detail::from_fixed_point(de_db[gi]) * db_di[gi];
-  sh_pos[warp][a] = s.d_pos[gj];
-  sh_gb[warp][a] = gb_atom[off + t.j_local];
-  sh_dedi[warp][a] = detail::from_fixed_point(de_db[gj]) * db_di[gj];
-  sh_fj[warp][a] = make_float3(0.0f, 0.0f, 0.0f);
-  const int2 ni = neck_info[blockIdx.y];
-  float3 fi = make_float3(0.0f, 0.0f, 0.0f);
-  __syncwarp();
-  for (int k = 0; k < 32; ++k) {
-    const int b = (a + k) & 31;
-    const float3 d0 = detail::minimum_image_delta(pi, sh_pos[warp][b], t.box);
-    const float4 g_j = sh_gb[warp][b];
-    const float dedi_j = sh_dedi[warp][b];
-    const int idx_i = static_cast<int>(gbi.w), idx_j = static_cast<int>(g_j.w);
-    for (int nx = -t.n_img_x; nx <= t.n_img_x; ++nx) {
-      for (int ny = -t.n_img_y; ny <= t.n_img_y; ++ny) {
-        const bool zero_image = nx == 0 && ny == 0;
-        if (((zero_image ? t.skip0 : t.skip_image) >> b) & 1u) continue;
-        if (kImages && !zero_image && t.tp.x == t.tp.y && b == a) continue;  // Eigenbild
-        float3 d = d0;
-        if constexpr (kImages) {
-          d.x += static_cast<float>(nx) * t.box.x;
-          d.y += static_cast<float>(ny) * t.box.y;
-        }
-        const float r2 = d.x * d.x + d.y * d.y + d.z * d.z;
-        if (!(r2 < sw.r_c2 && r2 >= units::EPS_R2)) continue;
-        const float dist = sqrtf(r2);
-        float dh_ij, dh_ji, dn_ij, dn_ji, sv, ds;
-        const float h_ij = h_integral(dist, gbi.x, g_j.y, dh_ij) +
-                           neck_term(dist, gbi.z, g_j.z, idx_i, idx_j, neck, ni, dn_ij);
-        const float h_ji = h_integral(dist, g_j.x, gbi.y, dh_ji) +
-                           neck_term(dist, g_j.z, gbi.z, idx_j, idx_i, neck, ni, dn_ji);
-        dh_ij += dn_ij;
-        dh_ji += dn_ji;
-        detail::switching(dist, sw, sv, ds);
-        const float cf =
-            -(dedi_i * (dh_ij * sv + h_ij * ds) + dedi_j * (dh_ji * sv + h_ji * ds)) / dist;
-        const float3 fv = make_float3(cf * d.x, cf * d.y, cf * d.z);
-        fi.x += fv.x;
-        fi.y += fv.y;
-        fi.z += fv.z;
-        float3& fj = sh_fj[warp][b];
-        fj.x -= fv.x;
-        fj.y -= fv.y;
-        fj.z -= fv.z;
-      }
-    }
+  const detail::TileCursor cur = detail::tile_cursor(list, n_tile_pairs, warp);
+  for (int k = cur.k; k < cur.n; k += cur.stride) {
+    const int p = detail::tile_pair_index(list, n_tile_pairs, k);
+    TileSetup t;
+    if (!tile_setup<kImages>(s, tile_pairs, bounds, sw.r_c, p, a, list.count != nullptr, t))
+      continue;
+    __syncwarp();  // Shared Memory des vorigen Tile-Paars ist gelesen
+    const int off = gb_offset[blockIdx.y];
+    const int gi = t.base + t.i_local, gj = t.base + t.j_local;
+    const float4 pi = s.d_pos[gi];
+    const float4 gbi = gb_atom[off + t.i_local];
+    const float dedi_i = detail::from_fixed_point(de_db[gi]) * db_di[gi];
+    sh_pos[warp][a] = s.d_pos[gj];
+    sh_gb[warp][a] = gb_atom[off + t.j_local];
+    sh_dedi[warp][a] = detail::from_fixed_point(de_db[gj]) * db_di[gj];
+    sh_fj[warp][a] = make_float3(0.0f, 0.0f, 0.0f);
+    const int2 ni = neck_info[blockIdx.y];
+    float3 fi = make_float3(0.0f, 0.0f, 0.0f);
     __syncwarp();
+    for (int k = 0; k < 32; ++k) {
+      const int b = (a + k) & 31;
+      const float3 d0 = detail::minimum_image_delta(pi, sh_pos[warp][b], t.box);
+      const float4 g_j = sh_gb[warp][b];
+      const float dedi_j = sh_dedi[warp][b];
+      const int idx_i = static_cast<int>(gbi.w), idx_j = static_cast<int>(g_j.w);
+      for (int nx = -t.n_img_x; nx <= t.n_img_x; ++nx) {
+        for (int ny = -t.n_img_y; ny <= t.n_img_y; ++ny) {
+          const bool zero_image = nx == 0 && ny == 0;
+          if (((zero_image ? t.skip0 : t.skip_image) >> b) & 1u) continue;
+          if (kImages && !zero_image && t.tp.x == t.tp.y && b == a) continue;  // Eigenbild
+          float3 d = d0;
+          if constexpr (kImages) {
+            d.x += static_cast<float>(nx) * t.box.x;
+            d.y += static_cast<float>(ny) * t.box.y;
+          }
+          const float r2 = d.x * d.x + d.y * d.y + d.z * d.z;
+          if (!(r2 < sw.r_c2 && r2 >= units::EPS_R2)) continue;
+          const float dist = sqrtf(r2);
+          float dh_ij, dh_ji, dn_ij, dn_ji, sv, ds;
+          const float h_ij = h_integral(dist, gbi.x, g_j.y, dh_ij) +
+                             neck_term(dist, gbi.z, g_j.z, idx_i, idx_j, neck, ni, dn_ij);
+          const float h_ji = h_integral(dist, g_j.x, gbi.y, dh_ji) +
+                             neck_term(dist, g_j.z, gbi.z, idx_j, idx_i, neck, ni, dn_ji);
+          dh_ij += dn_ij;
+          dh_ji += dn_ji;
+          detail::switching(dist, sw, sv, ds);
+          const float cf =
+              -(dedi_i * (dh_ij * sv + h_ij * ds) + dedi_j * (dh_ji * sv + h_ji * ds)) / dist;
+          const float3 fv = make_float3(cf * d.x, cf * d.y, cf * d.z);
+          fi.x += fv.x;
+          fi.y += fv.y;
+          fi.z += fv.z;
+          float3& fj = sh_fj[warp][b];
+          fj.x -= fv.x;
+          fj.y -= fv.y;
+          fj.z -= fv.z;
+        }
+      }
+      __syncwarp();
+    }
+    if (t.valid_i && (fi.x != 0.0f || fi.y != 0.0f || fi.z != 0.0f))
+      detail::add_force(s, gi, fi.x, fi.y, fi.z);
+    const float3 fj = sh_fj[warp][a];
+    if (t.valid_j && (fj.x != 0.0f || fj.y != 0.0f || fj.z != 0.0f))
+      detail::add_force(s, gj, fj.x, fj.y, fj.z);
   }
-  if (t.valid_i && (fi.x != 0.0f || fi.y != 0.0f || fi.z != 0.0f))
-    detail::add_force(s, gi, fi.x, fi.y, fi.z);
-  const float3 fj = sh_fj[warp][a];
-  if (t.valid_j && (fj.x != 0.0f || fj.y != 0.0f || fj.z != 0.0f))
-    detail::add_force(s, gj, fj.x, fj.y, fj.z);
 }
 
 void require(bool condition, const std::string& message) {
@@ -534,18 +547,18 @@ void TiledGeneralizedBorn::initialize(SimulationContext& ctx) {
 void TiledGeneralizedBorn::compute(DeviceState& s, cudaStream_t stream) {
   if (ctx_->host_box().empty()) throw std::logic_error("TiledGeneralizedBorn: Box nicht gesetzt");
   const SwitchParams sw = detail::make_switch(params_.r_switch_nm, params_.r_cutoff_nm);
-  const dim3 grid((n_tile_pairs_ + kWarpsPerBlock - 1) / kWarpsPerBlock, s.n_replicas);
   const dim3 block(kWarpsPerBlock * 32);
   const std::size_t shmem = static_cast<std::size_t>(max_types_) * max_types_ * sizeof(float2);
   const bool images = uses_image_sum();
-  if (!images) detail::launch_tile_bounds(s, d_tile_bounds_.data(), stream);
+  dim3 grid;  // Liste und Hüllen gelten für alle drei Tile-Passes (Positionen unverändert)
+  const detail::TileList list = prepare_tiles(s, images, grid, stream);
   d_integral_.zero_async(stream);
 
   const auto run = [&](auto tag) {
     constexpr bool kImg = decltype(tag)::value;
     k_gb_integrals<kImg><<<grid, block, 0, stream>>>(
         s, d_tile_pairs_.data(), n_tile_pairs_, d_gb_atom_.data(), d_gb_offset_.data(),
-        d_neck_.data(), d_neck_info_.data(), sw, d_tile_bounds_.data(), d_integral_.data());
+        d_neck_.data(), d_neck_info_.data(), sw, d_tile_bounds_.data(), d_integral_.data(), list);
     BOMD_LAUNCH_CHECK();
     k_gb_radii<<<dim3(detail::elementwise_grid(s.n_pad), s.n_replicas), detail::kElementwiseBlock,
                  0, stream>>>(s, d_gb_atom_.data(), d_gb_abg_.data(), use_abg_ ? 1 : 0,
@@ -555,12 +568,12 @@ void TiledGeneralizedBorn::compute(DeviceState& s, cudaStream_t stream) {
     k_gb_pairs<kImg><<<grid, block, shmem, stream>>>(
         s, d_tile_pairs_.data(), n_tile_pairs_, d_lj_.data(), d_mask_index_.data(), d_masks_.data(),
         d_replica_.data(), d_screening_.data(), gb_.eps_in, sw, d_tile_bounds_.data(),
-        d_born_.data(), d_de_db_.data());
+        d_born_.data(), d_de_db_.data(), list);
     BOMD_LAUNCH_CHECK();
     k_gb_chain<kImg>
         <<<grid, block, 0, stream>>>(s, d_tile_pairs_.data(), n_tile_pairs_, d_gb_atom_.data(),
                                      d_gb_offset_.data(), d_neck_.data(), d_neck_info_.data(), sw,
-                                     d_tile_bounds_.data(), d_de_db_.data(), d_db_di_.data());
+                                     d_tile_bounds_.data(), d_de_db_.data(), d_db_di_.data(), list);
     BOMD_LAUNCH_CHECK();
   };
   if (images)

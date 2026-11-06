@@ -64,6 +64,42 @@ __device__ __forceinline__ bool tiles_out_of_range(const float4* bounds, int r, 
   return gx * gx + gy * gy + gz * gz >= reach * reach;
 }
 
+/// Liste lebender Tile-Paare je Replica (ADR 0014): entries[r·n_tile_pairs + k] = Tile-Paar-Index,
+/// k < count[r]. count = nullptr ⇒ keine Liste: ein Tile-Paar je Warp (p = blockIdx.x·W + warp) mit
+/// Vorauswahl im Kernel (bisheriger Pfad, Bildsumme, Vergleichstests).
+struct TileList {
+  const int* entries = nullptr;
+  const int* count = nullptr;
+};
+
+/// Tile-Paare eines Warps: k = first, first + stride, … < n. Ohne Liste genau ein Durchlauf.
+struct TileCursor {
+  int k, n, stride;
+};
+
+__device__ __forceinline__ TileCursor tile_cursor(TileList list, int n_tile_pairs, int warp) {
+  const int first = blockIdx.x * kWarpsPerBlock + warp;
+  if (list.count == nullptr) return TileCursor{first, n_tile_pairs, n_tile_pairs};
+  return TileCursor{first, list.count[blockIdx.y], static_cast<int>(gridDim.x) * kWarpsPerBlock};
+}
+
+__device__ __forceinline__ int tile_pair_index(TileList list, int n_tile_pairs, int k) {
+  return list.count == nullptr
+             ? k
+             : list.entries[static_cast<long long>(blockIdx.y) * n_tile_pairs + k];
+}
+
+/// Baut die Liste aus den Hüllen (detail::tiles_out_of_range, Minimum Image): ein Thread je
+/// (Replica, Tile-Paar), warpweise aggregierte Atomics auf count[r]. Die Reihenfolge der Einträge
+/// ist nicht festgelegt; Ergebnisse bleiben bitidentisch (Fixed-Point-Akkumulation, ADR 0002).
+void launch_tile_list(const DeviceState& s, const int2* tile_pairs, int n_tile_pairs,
+                      const float4* bounds, float r_c, int* entries, int* count,
+                      cudaStream_t stream);
+
+/// Blöcke je Replica für Kernels über die Liste: genug Warps für alle SMs, höchstens so viele
+/// wie Tile-Paare.
+int tile_list_blocks(int n_tile_pairs, int n_replicas);
+
 /// Anzahl Bildverschiebungen je Richtung (ADR 0006 Rev. 2): 0 für L >= 2 r_c (jedes verschobene
 /// Bild ist dann mindestens L/2 >= r_c entfernt), sonst ⌈r_c/L + ½⌉ (der Minimum-Image-Abstand
 /// selbst kann bis L/2 betragen).

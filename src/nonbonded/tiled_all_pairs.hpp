@@ -10,6 +10,10 @@
 #include "biooptomd/device_buffer.hpp"
 #include "biooptomd/plugin.hpp"
 
+namespace bomd::detail {
+struct TileList;
+}
+
 namespace bomd {
 
 /// Eine Nonbonded-Topologie. Erzeugung: biooptomd.nonbonded.nonbonded_topology().
@@ -24,6 +28,8 @@ struct NonbondedTopology {
   std::vector<std::uint32_t> masks;
 };
 
+enum class TileListMode : int { kAuto = 0, kOn = 1, kOff = 2 };
+
 struct TiledAllPairsParams {
   std::vector<NonbondedTopology> topologies;
   std::vector<int> replica_topology;  ///< (n_replicas,)
@@ -35,6 +41,9 @@ struct TiledAllPairsParams {
   float r_cutoff_nm = 2.0f;
   /// true ⇒ Bildpfad auch für L >= 2 r_c (nur für Tests; Ergebnis gleich Minimum Image).
   bool always_image_sum = false;
+  /// Liste lebender Tile-Paare (ADR 0014): kAuto nach Boxgröße (uses_tile_list), kOn/kOff
+  /// erzwingen (Ergebnis bitidentisch, für Tests und Messungen).
+  TileListMode tile_list = TileListMode::kAuto;
 };
 
 /// Nicht final: TiledGeneralizedBorn (ADR 0010) nutzt Topologie-, Masken- und Hüllenpuffer.
@@ -51,11 +60,21 @@ class TiledAllPairs : public NonbondedStrategy {
                      cudaStream_t stream) override;
   /// true, wenn compute() über periodische Bilder summiert (eine Box < 2 r_c oder erzwungen).
   bool uses_image_sum() const;
+  /// true, wenn der Minimum-Image-Pfad die Tile-Paar-Liste nutzt: kAuto ⇒ geschätzter Anteil
+  /// lebender Tile-Paare π (r_c + 2 nm)² / (L_x L_y) < 0.5 für alle Replicas.
+  bool uses_tile_list() const;
+  static constexpr double kTileReachNm = 2.0;
+  static constexpr double kTileListMaxLiveFraction = 0.5;
 
   int n_tile_pairs() const { return n_tile_pairs_; }
   const TiledAllPairsParams& params() const { return params_; }
 
  protected:
+  /// Gitter und Tile-Paar-Liste für einen Tile-Pass: im Minimum-Image-Pfad Hüllen und (mit
+  /// use_tile_list) die Liste aufbauen; grid.x = Blöcke je Replica.
+  detail::TileList prepare_tiles(const DeviceState& s, bool images, dim3& grid,
+                                 cudaStream_t stream);
+
   TiledAllPairsParams params_;
   SimulationContext* ctx_ = nullptr;
   int n_tile_pairs_ = 0;
@@ -67,6 +86,8 @@ class TiledAllPairs : public NonbondedStrategy {
   DeviceBuffer<int4> d_replica_;         // (lj_offset, n_types, mask_index_offset, mask_base)
   DeviceBuffer<float2> d_screening_;     // (κ, ε_r) je Replica
   DeviceBuffer<float4> d_tile_bounds_;   // (Mittelpunkt, Halbbreite) je (Replica, Tile)
+  DeviceBuffer<int> d_tile_list_;        // lebende Tile-Paare je Replica (ADR 0014)
+  DeviceBuffer<int> d_tile_count_;       // Länge der Liste je Replica
 };
 
 }  // namespace bomd

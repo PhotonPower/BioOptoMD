@@ -1,6 +1,6 @@
 # ADR 0014: Kompakte Tile-Paarliste statt Cell-List für große Einzelsysteme
 
-- **Status:** Proposed
+- **Status:** Accepted (Projektinhaber 2026-11-06, statt der Cell-List; Kriterien ROADMAP 9.6 bestätigt)
 - **Datum:** 2026-11-06
 - **Bezug:** ARCHITECTURE §6 („CellList für > 10 k Atome“), ADR 0002 (Fixed-Point), ADR 0006
   (Cutoff aus κ, Bildsumme), Phase 8 (Benchmark 1 × 20 k: 0.59× OpenMM), ROADMAP 9.6
@@ -47,8 +47,32 @@ verschlechtert Punkt 1.
    Aufwand gering bleibt; sonst als eigener Schritt. `ImageChargeForce` (ein billiger Pass, eigene
    Vorauswahl) bleibt unverändert.
 7. **Bildsummenpfad (L < 2 r_c) unverändert**, dort gibt es keine Vorauswahl.
-8. Die Strategie ersetzt den bisherigen Minimum-Image-Pfad vollständig (kein Nutzerschalter);
-   ein interner Schalter `use_tile_list = false` bleibt für Tests und Vergleichsmessungen.
+8. ~~Die Strategie ersetzt den bisherigen Minimum-Image-Pfad vollständig.~~ Siehe Revision 1:
+   Auswahl `tile_list = "auto" | "on" | "off"`, Default `"auto"`.
+
+## Revision 1 (2026-11-06, nach der Implementierung; Bestätigung durch den Projektinhaber offen)
+Messung bei geteilter GPU (Produktionslauf parallel, nur Verhältnisse; Endmessung bei freier GPU):
+
+| Fall | Liste immer | i-Tile-Akkumulation (16 / 4 J-Tiles) | Auto |
+|---|---|---|---|
+| 1 × 20 k (24 × 32 nm) | 1.18× | 0.77× / 0.99× | **1.14×** |
+| 32 × 2 k (8 × 8 nm) | 0.97× | 0.83× / 0.97× | 1.01× (Liste aus) |
+| 128 × 1 k (8 × 8 nm) | – | 0.93× / – | 1.00× (Liste aus) |
+
+1. Der Leerlauf der verworfenen Warps lief größtenteils parallel zur echten Arbeit: Wenn alle
+   Tile-Paare verworfen werden, sinkt `compute_forces` von 404 auf 216 µs, im Normalfall aber nur
+   von 863 auf 819 µs. Die Erwartung „etwa ein Drittel schneller“ war falsch.
+2. **Auto-Auswahl:** Liste nur, wenn der geschätzte Anteil lebender Tile-Paare
+   π (r_c + 2 nm)² / (L_x L_y) für alle Replicas unter 0.5 liegt. In kleinen Boxen (fast alle
+   Tile-Paare leben) kostet die Liste mehr, als sie spart. `"on"`/`"off"` erzwingen; alle Modi sind
+   bitidentisch.
+3. **i-Tile-Akkumulation verworfen** (Wunsch des Projektinhabers, gemessen): Ein Warp rechnet
+   mehrere Tile-Paare derselben Zeile und schreibt die i-Kräfte einmal (Fixed-Point in Registern,
+   bitidentisch). Mit 16 J-Tiles je Warp 0.77× (zu wenig Parallelität, lange Warps), mit 4 neutral.
+   Die 64-bit-Atomics sind also nicht der Engpass.
+4. Der verbleibende Aufwand bei 1 × 20 k ist echte Paararbeit (Nsight Systems mit Liste: Nonbonded
+   62 %, SHAKE + RATTLE 27 %). Das Kriterium 1.25× ist mit der Liste allein voraussichtlich nicht
+   erreichbar; die Constraint-Löser (FP64) sind der nächste Hebel.
 
 ## Alternativen
 - **Cell-List mit räumlicher Sortierung (OpenMM-artig, Hilbert-/Morton-Ordnung):** verschlechtert hier
