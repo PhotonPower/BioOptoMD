@@ -87,7 +87,11 @@ def build(n_replicas: int = 8, t_min: float = 300.0, t_max: float = 340.0, seed:
     """Kontext mit Wand, Anker, Integrator und Observern. Returns (ctx, observers dict, meta)."""
     spec, anchor, donor, acceptor, anchor_z = load_strand()
     temps = np.geomspace(t_min, t_max, n_replicas)
-    types, alpha, volume, names = builder.optical_tables(spec, anchor_atoms=[anchor])
+    # α′/v klassenweise an dn/dc der DNA kalibriert (OQ-01/02, ADR 0016 Punkt 7b).
+    dna_optics, _ = builder.calibrate_optics("dna")
+    types, alpha, volume, names = builder.optical_tables(
+        spec, anchor_atoms=[anchor], table=dna_optics
+    )
     ctx, info = builder.build_context(
         spec, n_replicas, BOX_NM, temps, IONIC_STRENGTH, hmr=True, constraints=True, types=types
     )

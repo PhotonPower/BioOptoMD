@@ -39,14 +39,22 @@ def values_from_potential(potential, spacing_nm, periodic_xy: bool = False) -> n
     return np.stack([v, gx, gy, gz], axis=-1).astype(np.float32)
 
 
-def optical_scale(alpha_nm3, volume_nm3, n_water: float, *, amplitude: str):
+def optical_scale(
+    alpha_nm3, volume_nm3, n_water: float, *, amplitude: str, local_field: bool = True
+):
     """Typskalierung s_i [kJ/mol pro (V/nm)²] der optischen Gradientenkraft (OQ-04).
 
     Das Gitter speichert W = |E₀|² in (V/nm)² (z. B. aus FEM) samt Gradient; U_i = s_i W.
     Mit dem Polarisierbarkeitskontrast gegenüber dem verdrängten Wasser
 
         L_w = (n_w² − 1)/(n_w² + 2),   α′_eff,i = α′_i − (3/4π) v_i L_w
-        s_i = −α′_eff,i · FARADAY² / (4 · ONE_4PI_EPS0)     (Spitzenamplitude, ¼ Re α |E₀|²)
+        s_i = −λ_L · α′_eff,i · FARADAY² / (4 · ONE_4PI_EPS0)     (Spitzenamplitude, ¼ Re α |E₀|²)
+
+    Lokalfeldfaktor (OQ-22, Projektinhaber 2026-11-06): λ_L = ((n_w² + 2)/3)². Das additive Modell
+    unterschätzt die Kraft im Medium gegenüber Clausius-Mossotti (Kontinuumsbild des FEM-Solvers);
+    λ_L ist für kleinen Kontrast exakt und weicht bis n_p = 1.6 um höchstens 5 % ab
+    (``test_voxel_optical_sphere_consistency``). ``local_field=False`` ergibt λ_L = 1 (bisheriges
+    Verhalten; in Vakuum ist λ_L ohnehin 1).
 
     Bei RMS-Feldern ist der Vorfaktor ½ statt ¼ (s_i verdoppelt). Streu-/Absorptionskräfte (Im α)
     sind nicht abgebildet; Fluorophore sollten im Optikmodus s_i = 0 erhalten (OQ-04).
@@ -56,6 +64,7 @@ def optical_scale(alpha_nm3, volume_nm3, n_water: float, *, amplitude: str):
         volume_nm3: v_i [nm³] je Optik-Typ, dieselben wie im RefractiveIndexProfiler (OQ-02).
         n_water: Brechungsindex des Lösungsmittels bei der Wellenlänge.
         amplitude: Pflichtargument, 'peak' (E(t) = Re[E₀ e^{−iωt}]) oder 'rms'.
+        local_field: Lorentz-Lokalfeldfaktor λ_L anwenden (Default, OQ-22).
 
     Returns:
         float32 (n_types,) – direkt als ``scale`` für ``ctx.add_voxel_grid``.
@@ -69,4 +78,6 @@ def optical_scale(alpha_nm3, volume_nm3, n_water: float, *, amplitude: str):
     l_w = (n_water**2 - 1.0) / (n_water**2 + 2.0)
     alpha_eff = alpha - 3.0 / (4.0 * np.pi) * vol * l_w
     factor = 0.25 if amplitude == "peak" else 0.5
+    if local_field:
+        factor *= ((n_water**2 + 2.0) / 3.0) ** 2
     return (-factor * alpha_eff * units.FARADAY**2 / units.ONE_4PI_EPS0).astype(np.float32)

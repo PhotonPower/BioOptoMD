@@ -111,7 +111,8 @@ Randbedingungen:
    - Nur die konservative Gradientenkraft (Re α); keine Streu- oder Absorptionskraft (Im α).
    - Keine Erwärmung in Hotspots; Fluorophore im Optikmodus ausgeschlossen.
 7. **Voraussetzungen vor der Kopplung (Phase 10.0):**
-   - (a) `test_voxel_optical_sphere_consistency` (Lokalfeldfaktor, offen seit Phase 6).
+   - (a) `test_voxel_optical_sphere_consistency` (Lokalfeldfaktor, offen seit Phase 6). *Umgesetzt
+     2026-11-06*; Korrektur nach OQ-22 (b): Lorentz-Faktor ((n_w² + 2)/3)² in `optical_scale`.
    - (b) Kalibrierung von α′ und v an dn/dc (`test_refractive_index_dn_dc`, OQ-01/02). Eigene
      Messwerte gibt es noch nicht (Projektinhaber 2026-11-06). Kalibriert wird an Literaturwerten,
      deren Unsicherheit als Toleranz dient: Proteine 0.190 ± 0.003 mL/g bei 589 nm (Zhao et al.

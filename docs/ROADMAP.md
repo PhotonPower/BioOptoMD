@@ -289,9 +289,10 @@ Abnahmetests (revidierte Fassung vom Projektinhaber bestätigt 2026-11-06):
 
 ### Phase 10 – Selbstkonsistente Kopplung MD ↔ FEM (ADR 0016, Accepted 2026-11-06; Solver hp-FEM)
 0. Voraussetzungen: `test_voxel_optical_sphere_consistency` (Lokalfeldfaktor, OQ-04; *umgesetzt
-   2026-11-06*, Ergebnis Faktor ≈ 1.6, Entscheidung OQ-22) und Kalibrierung
-   α′/v an dn/dc (`test_refractive_index_dn_dc`, OQ-01/02), beide offen seit Phase 6. Ohne eigene
-   Messwerte: Literaturwerte, deren Unsicherheit als Toleranz dient (ADR 0016 Punkt 7).
+   2026-11-06*, Ergebnis Faktor ≈ 1.6, OQ-22 (b): Lorentz-Faktor in `optical_scale`) und Kalibrierung
+   α′/v an dn/dc (`test_refractive_index_dn_dc`, OQ-01/02; *umgesetzt 2026-11-06*, klassenweise
+   Skalierung `builder.calibrate_optics`). Ohne eigene Messwerte: Literaturwerte, deren Unsicherheit
+   als Toleranz dient (ADR 0016 Punkt 7).
 1. `PolarizabilityGridObserver` (3D-ε-Karte, Gauß-Verschmierung, Lorentz-Lorenz).
 2. `VoxelGridForce3D::set_values` (Laufzeit-Update).
 3. `biooptomd.coupling`: Solver-Protokoll, TMM-Referenzsolver (1D), hp-FEM-Adapter `HpFemSolver`

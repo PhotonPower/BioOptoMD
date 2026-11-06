@@ -228,6 +228,64 @@ def test_refractive_index_uniform_layer():
     assert s[9] > 0 and s[20] > 0  # Beiträge in die Nachbarschichten
 
 
+@pytest.mark.parametrize("cls", ["protein", "dna"])
+def test_refractive_index_dn_dc(cls):
+    """Kalibrierung α′/v an dn/dc (OQ-01/02, ADR 0016 Punkt 7b): Homogene Lösung der
+    Referenzzusammensetzung mit c = 10 mg/mL (Atome gleichverteilt in einer Schicht, Punktatome, eine
+    Profilerschicht über die ganze Lösung) → n = n_w + c·dn/dc innerhalb der Literaturtoleranz
+    (Protein 0.190 ± 0.003 mL/g bei 589 nm, DNA 0.170 ± 0.005 mL/g bei 633 nm). Zusätzlich:
+    v-Skalierung ergibt Σv/M = v̄, und ohne Kalibrierung liegt dn/dc weit außerhalb (≈ 0.06–0.07)."""
+    from biooptomd import builder
+
+    target = builder.OPTICS_TARGETS[cls]
+    table, factors = builder.calibrate_optics(cls)
+    comp = builder.class_composition(cls)
+    mass = sum(k * builder.ELEMENT_MASS[e] for e, k in comp.items())
+    v_sum = sum(k * table[e][1] for e, k in comp.items())
+    assert v_sum / (mass * builder.AMU_ML_NM3) == pytest.approx(target["v_bar"], rel=1e-12)
+    n_w = target["n_water"]
+    assert builder.dn_dc_model(comp, table, n_w) == pytest.approx(target["dn_dc"], rel=1e-12)
+    raw = builder.dn_dc_model(comp, builder.ELEMENT_OPTICS, n_w)
+    assert abs(raw - target["dn_dc"]) > 0.05
+    print(f"{cls}: s_alpha {factors['s_alpha']:.4f}, s_volume {factors['s_volume']:.4f}, "
+          f"dn/dc unkalibriert {raw:.4f}")  # fmt: skip
+
+    # Integer-Zusammensetzung: 600 Einheiten (Protein ≈ 66 kDa, DNA ≈ 185 kDa), Elementzahlen gerundet.
+    n_units = 600
+    counts = {e: round(k * n_units) for e, k in comp.items()}
+    elements = sorted(counts)
+    el_types = np.concatenate([np.full(counts[e], i, np.int32) for i, e in enumerate(elements)])
+    m_total = sum(counts[e] * builder.ELEMENT_MASS[e] for e in elements)
+    c = 0.010  # g/mL
+    box = 12.0
+    height = m_total * builder.AMU_ML_NM3 / (c * box * box)  # Volumen der Lösung [nm³] / Fläche
+    rng = np.random.default_rng(7)
+    n = len(el_types)
+    pos = np.empty((n, 3))
+    pos[:, :2] = rng.uniform(0.0, box, (n, 2))
+    pos[:, 2] = rng.uniform(1.0, 1.0 + height, n)
+    ctx = _ctx(1, n, box)
+    ctx.set_positions(pos.astype(np.float32)[None])
+    types = np.zeros((1, n, 2), np.int32)
+    types[0, :, 1] = el_types
+    ctx.set_types(types)
+    alpha = np.array([table[e][0] for e in elements], np.float32)
+    vol = np.array([table[e][1] for e in elements], np.float32)
+    prof = ctx.add_refractive_index_profiler(
+        height, 3, alpha, vol, z_min=1.0 - height, n_water=n_w, smearing="point"
+    )
+    ctx.observe_now()
+    n_sol = float(prof.result()["n"][0, 1])
+    dn_dc = (n_sol - n_w) / c
+    print(
+        f"{cls}: n = {n_sol:.6f}, dn/dc = {dn_dc:.4f} mL/g (Ziel {target['dn_dc']} ± {target['tol']})"
+    )
+    assert abs(dn_dc - target["dn_dc"]) < target["tol"]
+    # Modell und GPU-Profiler stimmen bis auf die Nichtlinearität in c und float32 überein.
+    exact = {e: float(counts[e]) for e in elements}
+    assert dn_dc == pytest.approx(builder.dn_dc_model(exact, table, n_w), rel=2e-3)
+
+
 def test_refractive_index_smearing():
     """OQ-02: einzelnes Atom – Summe über Schichten von S_α und S_V exakt erhalten; Kugelschnitt
     (Default) entspricht der analytischen Schichtvolumenformel, keine Beiträge unter z = 0;
@@ -514,8 +572,9 @@ def test_observer_and_voxel_guards():
 
 def test_voxel_optical_normalization():
     """OQ-04: konstantes |E₀|²-Gradientenfeld W = W0 + g·r → Kraft = −s_i g mit
-    s_i = −α′_eff,i FARADAY²/(4 ONE_4PI_EPS0), α′_eff = α′ − (3/4π) v L_w; amplitude="rms" ergibt
-    Faktor 2; ein Atom mit α′_i = (3/4π) v_i L_w erfährt keine Kraft."""
+    s_i = −λ_L α′_eff,i FARADAY²/(4 ONE_4PI_EPS0), α′_eff = α′ − (3/4π) v L_w,
+    λ_L = ((n_w² + 2)/3)² (OQ-22; ``local_field=False`` → 1); amplitude="rms" ergibt Faktor 2; ein
+    Atom mit α′_i = (3/4π) v_i L_w erfährt keine Kraft."""
     from biooptomd import units
     from biooptomd.voxel import optical_scale, values_from_potential
 
@@ -527,9 +586,14 @@ def test_voxel_optical_normalization():
     s_rms = optical_scale(alpha, vol, n_w, amplitude="rms")
     np.testing.assert_allclose(s_rms, 2.0 * s_peak, rtol=1e-7)
     alpha_eff = alpha - 3 / (4 * np.pi) * vol * l_w
-    np.testing.assert_allclose(
-        s_peak, -alpha_eff * units.FARADAY**2 / (4 * units.ONE_4PI_EPS0), rtol=1e-6
-    )
+    lorentz = ((n_w**2 + 2) / 3) ** 2
+    s_bare = optical_scale(alpha, vol, n_w, amplitude="peak", local_field=False)
+    np.testing.assert_allclose(s_bare, -alpha_eff * units.FARADAY**2 / (4 * units.ONE_4PI_EPS0),
+                               rtol=1e-6)  # fmt: skip
+    np.testing.assert_allclose(s_peak, lorentz * s_bare, rtol=1e-6)
+    np.testing.assert_allclose(optical_scale(alpha, vol, 1.0, amplitude="peak"),
+                               optical_scale(alpha, vol, 1.0, amplitude="peak", local_field=False),
+                               rtol=1e-7)  # fmt: skip
     assert abs(s_peak[1]) < 1e-9 * abs(s_peak[0])
     assert s_peak[0] < 0 < s_peak[2], "positiver Kontrast zieht ins Feld, negativer stößt ab"
     with pytest.raises(TypeError):
@@ -571,7 +635,9 @@ def test_voxel_optical_sphere_consistency():
         a³ (L_p − L_w); das Verhältnis CM/additiv ist analytisch ε_w (ε_w + 2)(ε_p + 2)/(3(ε_p + 2 ε_w))
         und geht für kleinen Kontrast gegen den Lorentz-Faktor ((n_w² + 2)/3)². In Vakuum (n_w = 1)
         ist es exakt 1. Ergebnis (n_w = 1.333, n_p = 1.5): Das additive Modell unterschätzt die
-        Kraft um den Faktor ≈ 1.64."""
+        Kraft um den Faktor ≈ 1.64.
+    (4) Mit dem Lorentz-Faktor (Default von ``optical_scale``, OQ-22) liegt die Kraft höchstens 5 %
+        unter Clausius-Mossotti."""
     from biooptomd import units
     from biooptomd.voxel import optical_scale
 
@@ -613,7 +679,9 @@ def test_voxel_optical_sphere_consistency():
     for n_w in (1.333, 1.0):
         eps_w = n_w**2
         l_w = (eps_w - 1.0) / (eps_w + 2.0)
-        scale = optical_scale(np.array([alpha]), np.array([vol]), n_w, amplitude="peak")
+        scale = optical_scale(
+            np.array([alpha]), np.array([vol]), n_w, amplitude="peak", local_field=False
+        )
         ctx = _ctx(1, n_atoms, 8.0)
         ctx.set_positions(sphere[None])
         types = np.zeros((1, n_atoms, 2), np.int32)
@@ -638,3 +706,6 @@ def test_voxel_optical_sphere_consistency():
             print(
                 f"n_w {n_w}, n_p {n_p}: CM/additiv {ratio:.4f}, Lorentz ((n_w²+2)/3)² {lorentz:.4f}"
             )
+        # (4) Default mit Lokalfeldfaktor
+        s_lf = optical_scale(np.array([alpha]), np.array([vol]), n_w, amplitude="peak")
+        assert 1.0 - 2e-5 <= f_cm / (f_gpu * s_lf[0] / scale[0]) < 1.05

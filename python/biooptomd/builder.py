@@ -603,3 +603,124 @@ def optical_tables(spec: SystemSpec, anchor_atoms=(), table=None):
     alpha = np.array([table[e][0] if e else 0.0 for e in names], np.float32)
     volume = np.array([table[e][1] if e else 0.0 for e in names], np.float32)
     return types, alpha, volume, np.array(names)
+
+
+# Standard-Atommassen [amu] für die Zusammensetzung (unabhängig von HMR-Massen in SystemSpec).
+ELEMENT_MASS = {"H": 1.008, "C": 12.011, "N": 14.007, "O": 15.999, "P": 30.974, "S": 32.06,
+                "Na": 22.990, "Mg": 24.305}  # fmt: skip
+
+# Literaturziele der Kalibrierung (OQ-01/02, ADR 0016 Punkt 7b): dn/dc [mL/g] ± Toleranz, Wellenlänge
+# [nm], n_w des Wassers dort, partielles spezifisches Volumen v̄ [mL/g].
+# - Protein: dn/dc 0.190 ± 0.003 bei 589 nm (Zhao et al., Biophys. J. 2011); v̄ = 0.73 mL/g.
+# - DNA: dn/dc ≈ 0.17 bei 632.8 nm (Theisen et al., Handbuchwert, Salzabhängigkeit offen).
+#   ASSUMPTION(OQ-02): Toleranz ± 0.005 (Spanne der Handbuchwerte); v̄ = 0.58 mL/g ist das
+#   Voronoi-Packungsvolumen nach NucProt (Voss & Gerstein 2005), nicht das experimentelle v̄ der Salze.
+OPTICS_TARGETS = {
+    "protein": {
+        "dn_dc": 0.190,
+        "tol": 0.003,
+        "wavelength_nm": 589.3,
+        "n_water": 1.3330,
+        "v_bar": 0.73,
+    },
+    "dna": {"dn_dc": 0.170, "tol": 0.005, "wavelength_nm": 632.8, "n_water": 1.3317, "v_bar": 0.58},
+}
+
+# Referenzzusammensetzungen der Klassen (Elementzahlen je Einheit).
+# Protein: Residuen im Peptid (Aminosäure − H₂O), gewichtet mit der mittleren Häufigkeit in
+# UniProtKB/Swiss-Prot [%]. ASSUMPTION: Häufigkeiten gerundet aus der Release-Statistik, Endgruppen
+# vernachlässigt. DNA: Nukleotid im Strang mit deprotoniertem Phosphat (wie im Kraftfeld, ohne
+# Gegenion), A/C/G/T gleich häufig.
+_RESIDUES = {
+    "ALA": ("C3H5NO", 8.25), "ARG": ("C6H12N4O", 5.53), "ASN": ("C4H6N2O2", 4.06),
+    "ASP": ("C4H5NO3", 5.45), "CYS": ("C3H5NOS", 1.37), "GLN": ("C5H8N2O2", 3.93),
+    "GLU": ("C5H7NO3", 6.75), "GLY": ("C2H3NO", 7.07), "HIS": ("C6H7N3O", 2.27),
+    "ILE": ("C6H11NO", 5.96), "LEU": ("C6H11NO", 9.66), "LYS": ("C6H12N2O", 5.84),
+    "MET": ("C5H9NOS", 2.42), "PHE": ("C9H9NO", 3.86), "PRO": ("C5H7NO", 4.70),
+    "SER": ("C3H5NO2", 6.56), "THR": ("C4H7NO2", 5.34), "TRP": ("C11H10N2O", 1.08),
+    "TYR": ("C9H9NO2", 2.92), "VAL": ("C5H9NO", 6.87),
+}  # fmt: skip
+_NUCLEOTIDES = {"DA": ("C10H11N5O5P", 1.0), "DC": ("C9H11N3O6P", 1.0),
+                "DG": ("C10H11N5O6P", 1.0), "DT": ("C10H12N2O7P", 1.0)}  # fmt: skip
+
+
+def parse_formula(formula: str) -> dict:
+    """Summenformel (z. B. ``"C3H5NOS"``) → {Element: Anzahl}."""
+    import re
+
+    out: dict = {}
+    for el, num in re.findall(r"([A-Z][a-z]?)(\d*)", formula):
+        out[el] = out.get(el, 0) + (int(num) if num else 1)
+    return out
+
+
+def class_composition(cls: str) -> dict:
+    """Mittlere Elementzahlen je Einheit der Referenzzusammensetzung (``"protein"`` oder ``"dna"``)."""
+    units_ = {"protein": _RESIDUES, "dna": _NUCLEOTIDES}[cls]
+    total = sum(w for _, w in units_.values())
+    comp: dict = {}
+    for formula, w in units_.values():
+        for el, k in parse_formula(formula).items():
+            comp[el] = comp.get(el, 0.0) + k * w / total
+    return comp
+
+
+# 1 amu in g mal 1 nm³ in mL⁻¹: (N/V)[nm⁻³] = c[g/mL] / (M[amu] · AMU_ML_NM3).
+AMU_ML_NM3 = 1.66053907e-3
+
+
+def dn_dc_model(composition, table, n_water: float) -> float:
+    """dn/dc [mL/g] der verdünnten Lösung im Lorentz-Lorenz-Modell des Profilers (PHYSICS_MODEL §6.3).
+
+    L(c) = L_w + c (4π/3 Σα′ − L_w Σv)/(M · AMU_ML_NM3), n = √((1 + 2L)/(1 − L));
+    dn/dc = dn/dL|_{L_w} · (4π/3 Σα′ − L_w Σv)/(M · AMU_ML_NM3) mit dn/dL = 3/(2 n (1 − L)²).
+    """
+    l_w = (n_water**2 - 1.0) / (n_water**2 + 2.0)
+    mass = sum(k * ELEMENT_MASS[e] for e, k in composition.items())
+    s_a = sum(k * table[e][0] for e, k in composition.items())
+    s_v = sum(k * table[e][1] for e, k in composition.items())
+    dn_dl = 3.0 / (2.0 * n_water * (1.0 - l_w) ** 2)
+    return dn_dl * (4.0 * np.pi / 3.0 * s_a - l_w * s_v) / (mass * AMU_ML_NM3)
+
+
+def calibrate_optics(cls: str, composition=None, table=None):
+    """Klassenweise Kalibrierung der Element-Tabelle an dn/dc (ADR 0016 Punkt 7b, OQ-01/02).
+
+    Erster Schritt (Projektinhaber 2026-11-06) statt ProtOr/NucProt je Atomtyp:
+    1. Alle Volumina werden mit einem Faktor s_v skaliert, sodass Σ v_i / M = v̄ der Klasse.
+    2. Alle α′ werden mit einem Faktor s_α skaliert, sodass :func:`dn_dc_model` = Ziel-dn/dc bei der
+       Kalibrierwellenlänge. Dispersion (Cauchy-Term) ist nicht enthalten: An anderen Wellenlängen
+       ist die Tabelle eine Näherung.
+
+    Skaliert werden nur Elemente der Zusammensetzung; andere Einträge (z. B. Ionen) bleiben.
+
+    Args:
+        cls: ``"protein"`` oder ``"dna"`` (Ziel aus :data:`OPTICS_TARGETS`).
+        composition: {Element: Anzahl} des Moleküls; Default ist die Referenzzusammensetzung.
+        table: Ausgangstabelle {Element: (α′, v)} [nm³]; Default :data:`ELEMENT_OPTICS`.
+
+    Returns:
+        (kalibrierte Tabelle, {"s_alpha", "s_volume"}).
+    """
+    target = OPTICS_TARGETS[cls]
+    comp = class_composition(cls) if composition is None else composition
+    base = ELEMENT_OPTICS if table is None else table
+    mass = sum(k * ELEMENT_MASS[e] for e, k in comp.items())
+    s_v = target["v_bar"] * mass * AMU_ML_NM3 / sum(k * base[e][1] for e, k in comp.items())
+    vol_only = {e: (0.0, base[e][1] * s_v) for e in comp}
+    alpha_one = {e: (base[e][0], 0.0) for e in comp}
+    # dn_dc_model ist linear in α′ und v: Ziel = s_α · d(α′) + d(v).
+    d_v = dn_dc_model(comp, vol_only, target["n_water"])
+    d_a = dn_dc_model(comp, alpha_one, target["n_water"])
+    s_a = (target["dn_dc"] - d_v) / d_a
+    out = dict(base)
+    for e in comp:
+        out[e] = (base[e][0] * s_a, base[e][1] * s_v)
+    return out, {"s_alpha": s_a, "s_volume": s_v}
+
+
+def spec_composition(spec: SystemSpec, atoms=None) -> dict:
+    """Elementzahlen eines Moleküls (optional nur ``atoms``) für :func:`calibrate_optics`."""
+    el = spec.elements if atoms is None else spec.elements[np.asarray(atoms, np.int64)]
+    names, counts = np.unique(el, return_counts=True)
+    return {str(e): float(k) for e, k in zip(names, counts, strict=True)}

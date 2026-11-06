@@ -32,7 +32,13 @@ Alle PRs #1–#6, #9–#14 am 2026-11-05 nach `main` gemergt (Merge-Commits, Rei
   Voraussetzungen Lokalfeldtest und dn/dc-Kalibrierung an Literaturwerten (Phase 10.0).
 - Phase 10.0 (a): `test_phase6.py::test_voxel_optical_sphere_consistency` grün. Der Profiler bildet
   α′, v auf n_p ab; die GPU-Kraft ist die additive Summe (rel. 1e-5); das Verhältnis CM/additiv ist
-  analytisch 1.638 bei n_p = 1.5 in Wasser und exakt 1 in Vakuum. Entscheidung Korrektur: OQ-22.
+  analytisch 1.638 bei n_p = 1.5 in Wasser und exakt 1 in Vakuum. OQ-22 (b): `optical_scale`
+  multipliziert per Default mit ((n_w² + 2)/3)² (`local_field=False` für das additive Modell).
+- Phase 10.0 (b): `test_phase6.py::test_refractive_index_dn_dc[protein|dna]` grün (GPU-Profiler,
+  c = 10 mg/mL: dn/dc 0.1901 bzw. 0.1701 mL/g). `builder.calibrate_optics`: s_α = 0.983 / 0.969,
+  s_v = 0.666 / 0.654; unkalibriert 0.064 / 0.070. Das Beispiel `aptamer_on_graphene` nutzt die
+  DNA-Kalibrierung. Grenze: Elementtypen erfassen Aromatizität nicht (Residuen-dn/dc nach McMeekin
+  folgt mit ProtOr/NucProt).
 - OQ-20 entschieden (hp-FEM). hp-FEM 0.4.0 (Release-Wheel cp311-win_amd64) und BioOptoMD laufen im
   selben Interpreter (geprüft in einem getrennten Verzeichnis, venv unverändert). Offen: OQ-21
   (Mean-Field).
@@ -318,6 +324,7 @@ ADR 0007 → **0009** (Mixed Precision), unsere OQ-08…11 → **OQ-11…14**.
 | 2026-11-06 | Projektinhaber | Vorschläge angenommen: OQ-15 (a) bestätigt; OQ-14 zweite Temperatur (Schätzer nach Messung); OQ-16 vorerst nicht modelliert; OQ-17 Φ0 fest; OQ-18 (a)–(c) wie Annahme, (d) C¹-glattes Clamping; Phase 9.6 als Entwurf-PR pushen; #15/#16 gemeinsam mergen nach Abnahme 9.4; nächste große Phase MD ↔ FEM-Kopplung (vor Coarse-Grained); Prototyp-Branch ADR 0015 lokal behalten. |
 | 2026-11-06 | Projektinhaber | Revidiertes Kriterium ROADMAP 9.7 (Bias-Verhältnis 4 fs / 2 fs zwischen 3 und 5) bestätigt; Phase 9.7 abgenommen, PR #18 gestapelt auf #17. |
 | 2026-11-06 | Projektinhaber | ADR 0016 (MD ↔ FEM) angenommen, Kriterien bestätigt; Solver hp-FEM (OQ-20); keine eigenen dn/dc-Messwerte, Kalibrierung an Literaturwerten (OQ-01/02). |
+| 2026-11-06 | Projektinhaber | OQ-22 (b): Lorentz-Lokalfeldfaktor als Default in `optical_scale`; Kalibrierung zunächst klassenweise (v auf v̄, α′ an dn/dc) statt ProtOr/NucProt. |
 | 2026-11-05 | Claude Opus 5.5 | Phase 9.2 Replica Exchange implementiert (ADR 0011 Proposed), 113/113 Tests grün. |
 | 2026-11-05 | Claude Opus 5.5 | Phase 9.1 GB-OBC2 implementiert (ADR 0010 Proposed, gb_ref, TiledGeneralizedBorn, Builder), 12/12 Phase-9-Tests grün. |
 | 2026-11-05 | Claude Opus 5.5 | Phase 8: Benchmark vs. OpenMM (32×2k Faktor 3.5), Tile-Vorauswahl, M-SHAKE/RATTLE; Review umgesetzt, 94/94 Tests grün. |
