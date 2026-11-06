@@ -41,6 +41,10 @@ Alle PRs #1–#6, #9–#14 am 2026-11-05 nach `main` gemergt (Merge-Commits, Rei
 - Messung bei geteilter GPU (Verhältnisse, vorläufig, Rauschen ≈ ±4 %): 1 × 20 k ≈ 1.14–1.18×, 32 × 2 k 1.01×,
   128 × 1 k 1.00×. Kriterium 1.25× nicht erreicht; i-Tile-Akkumulation gemessen und verworfen
   (0.77× bzw. neutral). Details ADR 0014 Rev. 1. Endmessung bei freier GPU.
+- Constraint-Löser: zwei bitidentische Verbesserungen (Blockgröße nach Auslastung 128/64/32,
+  Bildverschiebung je Bindung einmal je SHAKE-Aufruf), zusammen ≈ +5 % bei 1 × 20 k und ≈ +3 % bei
+  32 × 2 k. ADR 0015 (3×3-Lösungen in FP32) angenommen, prototypisch gemessen und zurückgezogen:
+  Constraint-Zeit nur ≈ −2 % statt der geforderten −30 % (ADR 0015, Ergebnis).
 
 ## Phase 9.5 – ImageChargeForce: abgenommen 2026-11-06 (Branch `phase-9/image-charge`, PR #16)
 - ADR 0013 Accepted (Projektinhaber 2026-11-05, Kriterien und Defaults OQ-18 bestätigt).
@@ -279,6 +283,7 @@ ADR 0007 → **0009** (Mixed Precision), unsere OQ-08…11 → **OQ-11…14**.
 | 2026-11-05 | Projektinhaber | ADR 0013 (ImageChargeForce) angenommen, Kriterien 9.5 und Defaults OQ-18 bestätigt. |
 | 2026-11-06 | Projektinhaber | Präzisierungen ADR 0013 (Punkte 6, 7, 9) bestätigt, Phase 9.5 abgenommen (PR #16). |
 | 2026-11-06 | Projektinhaber | ADR 0014 (Tile-Paarliste statt Cell-List) angenommen, Rev. 1 bestätigt; Phase 9.6 erst später abnehmen, Kriterium 1.25× bleibt (OQ-19). |
+| 2026-11-06 | Projektinhaber / Claude | ADR 0015 (Constraint-Löser mit gemischter Präzision) angenommen; Prototyp verfehlt das Kriterium (−2 % statt −30 %) ⇒ nach Punkt 4 zurückgezogen (Rejected). |
 | 2026-11-05 | Claude Opus 5.5 | Phase 9.2 Replica Exchange implementiert (ADR 0011 Proposed), 113/113 Tests grün. |
 | 2026-11-05 | Claude Opus 5.5 | Phase 9.1 GB-OBC2 implementiert (ADR 0010 Proposed, gb_ref, TiledGeneralizedBorn, Builder), 12/12 Phase-9-Tests grün. |
 | 2026-11-05 | Claude Opus 5.5 | Phase 8: Benchmark vs. OpenMM (32×2k Faktor 3.5), Tile-Vorauswahl, M-SHAKE/RATTLE; Review umgesetzt, 94/94 Tests grün. |

@@ -1,6 +1,7 @@
 # ADR 0015: Constraint-Löser mit gemischter Präzision (iterative Verfeinerung)
 
-- **Status:** Proposed
+- **Status:** Rejected (Projektinhaber nahm den Vorschlag 2026-11-06 an („ok, weiter“); der Prototyp
+  verfehlte das Kriterium von Punkt 4, daher zurückgezogen 2026-11-06)
 - **Datum:** 2026-11-06
 - **Bezug:** ADR 0009 (gemischte Präzision des Zustands), Phase 5 (SHAKE/RATTLE, Toleranzen), Phase 8
   (M-SHAKE, direktes RATTLE), ADR 0014 / OQ-19 (Phase 9.6, Kriterium 1 × 20 k ≥ 1.25×)
@@ -45,3 +46,28 @@ Die Toleranzen bleiben unverändert (AGENTS.md): SHAKE |r_k|² − d_k² ≤ 2·
     relativ ≤ 10⁻⁶ d, Geschwindigkeiten im Rahmen von 10⁻¹⁰ r²); Iterationszahl ≤ 2 mehr als
     double;
   - Messung: Constraint-Kernelzeit 1 × 20 k mindestens 30 % kürzer, sonst Rückzug (Punkt 4).
+
+## Ergebnis des Prototyps (2026-11-06)
+Prototyp nach Punkt 1–3 (Template `kMixed` in `k_shake`/`k_rattle`, FP32-Löser mit Pivotschwelle
+1e-6 und FP64-Rückfall; `set_constraints(..., precision=...)`), lokaler Branch
+`proto/adr-0015-mixed-constraints` (Commit 24d4a81, nicht übernommen). Nsight Systems, 1 × 20 k,
+1000 Schritte, GPU geteilt (Hairpin-Lauf parallel), Kernelzeiten Median / Minimum [µs]:
+
+| Kernel | double | mixed |
+|---|---|---|
+| SHAKE | 28.8 / 14.3 | 22.9 / 15.6 |
+| RATTLE | 15.9 / 9.6 | 21.0 / 11.0 |
+| Summe (Median) | 44.7 | 43.9 |
+
+Durchsatz (abwechselnd gemessen, Median aus 5): 1 × 20 k 0.99×, 32 × 2 k 0.98×.
+
+- Die Constraint-Zeit sinkt höchstens um ≈ 2 % (Median) und steigt im Minimum sogar. Das liegt weit
+  unter den geforderten 30 %, daher wird der ADR nach Punkt 4 zurückgezogen.
+- RATTLE wird langsamer. Die zusätzliche Verfeinerungsiteration (FP64-Residuum und -Aktualisierung)
+  kostet mehr, als die FP32-Lösung spart.
+- Bei SHAKE spart die FP32-Jacobi-Matrix im Median etwa 20 %, im Minimum nichts. Auch „nur SHAKE
+  mixed“ bliebe mit ≈ 13 % unter dem Kriterium.
+- Folgerung: Die Kernel sind nicht durch die FP64-Arithmetik der 3×3-Lösungen begrenzt, sondern
+  durch Laden/Speichern (Vec4d-Geschwindigkeiten, Mixed-Precision-Positionen), Latenz bei wenigen
+  Threads (≈ 7 k Cluster) und den FP64-Anteil, der ohnehin FP64 bleiben muss (Residuen,
+  Aktualisierung). Die Kontext-Annahme „durch FP64-Arithmetik begrenzt“ war in dieser Form falsch.
