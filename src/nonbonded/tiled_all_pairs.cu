@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <numbers>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -64,7 +65,7 @@ __global__ void k_tile_bounds(DeviceState s, float4* bounds) {
 /// (konfliktfreie j-Kraftakkumulation). Ausgeschlossen: Bit b der Exclusion-Maske, in Diagonal-
 /// Tiles b ≤ a (jedes Paar genau einmal), Padding-Atome (i_local >= n_atoms) und r² < EPS_R2.
 /// j-Kräfte und Energie werden hier akkumuliert (Fixed-Point); die Summe der i-Kräfte des
-/// Tile-Paars gibt die Funktion zurück, der Aufrufer schreibt sie (je Tile-Paar oder je Zeile).
+/// Tile-Paars gibt die Funktion zurück, der Aufrufer schreibt sie.
 ///
 /// kImages (ADR 0006 Rev. 2, L < 2 r_c): Für jedes Paar wird über die Gittervektoren
 /// n = (n_x L_x, n_y L_y), |n_x| ≤ image_count(L_x), |n_y| ≤ image_count(L_y), summiert, ausgehend
@@ -212,8 +213,8 @@ __global__ void __launch_bounds__(kWarpsPerBlock * 32)
   const int warp = threadIdx.x / 32;
   const int a = threadIdx.x % 32;
   const detail::TileCursor cur = detail::tile_cursor(list, n_tile_pairs, warp);
-  for (int k = cur.k; k < cur.n; k += cur.stride) {
-    const int p = detail::tile_pair_index(list, n_tile_pairs, k);
+  for (int item = cur.k; item < cur.n; item += cur.stride) {
+    const int p = detail::tile_pair_index(list, n_tile_pairs, item);
     const int2 tp = tile_pairs[p];
     if constexpr (!kImages) {
       if (list.count == nullptr &&
@@ -268,13 +269,7 @@ void launch_tile_list(const DeviceState& s, const int2* tile_pairs, int n_tile_p
   BOMD_LAUNCH_CHECK();
 }
 
-int tile_list_blocks(int n_tile_pairs, int n_replicas) {
-  static int n_sm = [] {
-    int device = 0, value = 0;
-    BOMD_CUDA_CHECK(cudaGetDevice(&device));
-    BOMD_CUDA_CHECK(cudaDeviceGetAttribute(&value, cudaDevAttrMultiProcessorCount, device));
-    return value;
-  }();
+int tile_list_blocks(int n_tile_pairs, int n_replicas, int n_sm) {
   // 16 Blöcke à 4 Warps je SM: mehr als resident passen (Lastausgleich am Ende der Liste).
   const int wanted = (16 * n_sm + n_replicas - 1) / n_replicas;
   const int max_blocks = (n_tile_pairs + kWarpsPerBlock - 1) / kWarpsPerBlock;
@@ -350,8 +345,13 @@ void TiledAllPairs::initialize(SimulationContext& ctx) {
   d_replica_ = DeviceBuffer<int4>(n_rep);
   d_screening_ = DeviceBuffer<float2>(n_rep);
   d_tile_bounds_ = DeviceBuffer<float4>(static_cast<std::size_t>(n_rep) * n_tiles * 2);
-  d_tile_list_ = DeviceBuffer<int>(static_cast<std::size_t>(n_rep) * n_tile_pairs_);
-  d_tile_count_ = DeviceBuffer<int>(n_rep);
+  if (params_.tile_list != TileListMode::kOff) {  // Liste nur, wenn sie benutzt werden kann
+    d_tile_list_ = DeviceBuffer<int>(static_cast<std::size_t>(n_rep) * n_tile_pairs_);
+    d_tile_count_ = DeviceBuffer<int>(n_rep);
+  }
+  int device = 0;
+  BOMD_CUDA_CHECK(cudaGetDevice(&device));  // Gerät des Kontexts (initialize läuft aktiviert)
+  BOMD_CUDA_CHECK(cudaDeviceGetAttribute(&n_sm_, cudaDevAttrMultiProcessorCount, device));
   d_tile_pairs_.upload_async(tps.data(), st);
   d_lj_.upload_async(lj.data(), st);
   d_mask_index_.upload_async(mask_index.data(), st);
@@ -392,7 +392,9 @@ detail::TileList TiledAllPairs::prepare_tiles(const DeviceState& s, bool images,
   if (!uses_tile_list()) return {};
   detail::launch_tile_list(s, d_tile_pairs_.data(), n_tile_pairs_, d_tile_bounds_.data(),
                            params_.r_cutoff_nm, d_tile_list_.data(), d_tile_count_.data(), stream);
-  grid.x = detail::tile_list_blocks(n_tile_pairs_, s.n_replicas);
+  grid.x = params_.max_list_blocks > 0
+               ? params_.max_list_blocks
+               : detail::tile_list_blocks(n_tile_pairs_, s.n_replicas, n_sm_);
   return detail::TileList{d_tile_list_.data(), d_tile_count_.data()};
 }
 
@@ -419,13 +421,22 @@ void TiledAllPairs::compute(DeviceState& s, cudaStream_t stream) {
   }
 }
 
+std::vector<int> TiledAllPairs::tile_list_counts() const {
+  std::vector<int> out(d_tile_count_.size());
+  if (out.empty()) return out;
+  ctx_->activate();
+  d_tile_count_.download_async(out.data(), ctx_->stream());
+  BOMD_CUDA_CHECK(cudaStreamSynchronize(ctx_->stream()));
+  return out;
+}
+
 bool TiledAllPairs::uses_tile_list() const {
   if (params_.tile_list != TileListMode::kAuto) return params_.tile_list == TileListMode::kOn;
   // Geschätzter Anteil lebender Tile-Paare: Fläche eines Kreises mit Radius r_c + 2 nm (typische
   // Tile-Ausdehnung) relativ zur Box. Bei vielen lebenden Tile-Paaren kostet die Liste mehr, als
   // sie spart (ADR 0014: 32 × 2 k in 8 × 8 nm −3 %, 1 × 20 k in 24 × 32 nm +18 %).
   const double reach = params_.r_cutoff_nm + kTileReachNm;
-  const double disk = 3.141592653589793 * reach * reach;
+  const double disk = std::numbers::pi * reach * reach;
   for (const float2& b : ctx_->host_box())
     if (disk > kTileListMaxLiveFraction * static_cast<double>(b.x) * b.y) return false;
   return true;

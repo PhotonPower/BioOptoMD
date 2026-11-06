@@ -158,7 +158,7 @@ x = sim.positions(dlpack=True)   # Zero-Copy nach CuPy/PyTorch
 ## 6. Erweiterungspunkte (geplant, nicht jetzt implementieren)
 
 - `NonbondedStrategy::CellList` für > 10 k Atome – ersetzt durch die Tile-Paarliste (ADR 0014, Phase 9.6):
-  Messungen zeigen, dass räumliche Sortierung bei Biomolekülen nichts bringt.
+  im Benchmark 1 × 20 k brachte räumliche Sortierung nichts (Tiles in Atomreihenfolge schon kompakt).
 - `ElectrostaticsModel::GeneralizedBornOBC`.
 - ~~`ImageChargeForce` für leitfähige Oberflächen~~ – umgesetzt in Phase 9.5 (ADR 0013).
 - `ReplicaExchange` (Host-gesteuerter Austausch von Temperaturen, nicht von Koordinaten).

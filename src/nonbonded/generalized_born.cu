@@ -119,8 +119,8 @@ __global__ void __launch_bounds__(kWarpsPerBlock * 32)
   __shared__ float sh_acc[kWarpsPerBlock][32];
   const int warp = threadIdx.x / 32, a = threadIdx.x % 32;
   const detail::TileCursor cur = detail::tile_cursor(list, n_tile_pairs, warp);
-  for (int k = cur.k; k < cur.n; k += cur.stride) {
-    const int p = detail::tile_pair_index(list, n_tile_pairs, k);
+  for (int item = cur.k; item < cur.n; item += cur.stride) {
+    const int p = detail::tile_pair_index(list, n_tile_pairs, item);
     TileSetup t;
     if (!tile_setup<kImages>(s, tile_pairs, bounds, sw.r_c, p, a, list.count != nullptr, t))
       continue;
@@ -242,8 +242,8 @@ __global__ void __launch_bounds__(kWarpsPerBlock * 32)
 
   const int warp = threadIdx.x / 32, a = threadIdx.x % 32;
   const detail::TileCursor cur = detail::tile_cursor(list, n_tile_pairs, warp);
-  for (int k = cur.k; k < cur.n; k += cur.stride) {
-    const int p = detail::tile_pair_index(list, n_tile_pairs, k);
+  for (int item = cur.k; item < cur.n; item += cur.stride) {
+    const int p = detail::tile_pair_index(list, n_tile_pairs, item);
     TileSetup t;
     if (!tile_setup<kImages>(s, tile_pairs, bounds, sw.r_c, p, a, list.count != nullptr, t))
       continue;
@@ -379,8 +379,8 @@ __global__ void __launch_bounds__(kWarpsPerBlock * 32)
   __shared__ float3 sh_fj[kWarpsPerBlock][32];
   const int warp = threadIdx.x / 32, a = threadIdx.x % 32;
   const detail::TileCursor cur = detail::tile_cursor(list, n_tile_pairs, warp);
-  for (int k = cur.k; k < cur.n; k += cur.stride) {
-    const int p = detail::tile_pair_index(list, n_tile_pairs, k);
+  for (int item = cur.k; item < cur.n; item += cur.stride) {
+    const int p = detail::tile_pair_index(list, n_tile_pairs, item);
     TileSetup t;
     if (!tile_setup<kImages>(s, tile_pairs, bounds, sw.r_c, p, a, list.count != nullptr, t))
       continue;

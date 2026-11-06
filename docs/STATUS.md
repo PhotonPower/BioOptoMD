@@ -32,9 +32,13 @@ Alle PRs #1–#6, #9–#14 am 2026-11-05 nach `main` gemergt (Merge-Commits, Rei
 - Implementiert: Listenaufbau (Thread je Tile-Paar, warpweise Atomics), persistenter Kernel je
   Replica für DH und die drei GB-Passes; Rechnung je Tile-Paar als gemeinsame Gerätefunktion
   `tile_pair`; Auswahl `tile_list = "auto" | "on" | "off"`, Property `ctx.nonbonded_uses_tile_list`.
-- `tests/python/test_phase9_tile_list.py`: 11 Tests, alle bitidentisch zu `"off"` (DH, GB-OBC2/GBn2,
-  20k, per-Replica-Topologien, Grenzfälle, Auto); memcheck/racecheck ohne Befund.
-- Messung bei geteilter GPU (Verhältnisse): 1 × 20 k **1.14×** (Liste immer 1.18×), 32 × 2 k 1.01×,
+- `tests/python/test_phase9_tile_list.py`: 15 Tests, alle bitidentisch zu `"off"` (DH, GB-OBC2/GBn2,
+  2k × 32 und 20k, per-Replica-Topologien, Grenzfälle, Auto inkl. `set_box`, viele Tile-Paare je Warp);
+  Listenlänge geprüft (`ctx.nonbonded_tile_list_counts()`); memcheck/racecheck ohne Befund.
+- Review (unabhängiger Agent): kein kritischer Befund; umgesetzt: Tests prüfen, dass die Liste aktiv ist
+  und verwirft, Gitterschleife mit vielen Tile-Paaren je Warp (DH, GB), SM-Zahl je Kontext-Gerät,
+  Listenpuffer nur bei `tile_list != "off"`, `std::numbers::pi`, Doku (Rauschen, OQ-19).
+- Messung bei geteilter GPU (Verhältnisse, vorläufig, Rauschen ≈ ±4 %): 1 × 20 k ≈ 1.14–1.18×, 32 × 2 k 1.01×,
   128 × 1 k 1.00×. Kriterium 1.25× nicht erreicht; i-Tile-Akkumulation gemessen und verworfen
   (0.77× bzw. neutral). Details ADR 0014 Rev. 1. Endmessung bei freier GPU.
 

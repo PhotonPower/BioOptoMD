@@ -44,6 +44,8 @@ struct TiledAllPairsParams {
   /// Liste lebender Tile-Paare (ADR 0014): kAuto nach Boxgröße (uses_tile_list), kOn/kOff
   /// erzwingen (Ergebnis bitidentisch, für Tests und Messungen).
   TileListMode tile_list = TileListMode::kAuto;
+  /// > 0: Blöcke je Replica im Listenpfad fest vorgeben (nur Tests: viele Tile-Paare je Warp).
+  int max_list_blocks = 0;
 };
 
 /// Nicht final: TiledGeneralizedBorn (ADR 0010) nutzt Topologie-, Masken- und Hüllenpuffer.
@@ -67,11 +69,14 @@ class TiledAllPairs : public NonbondedStrategy {
   static constexpr double kTileListMaxLiveFraction = 0.5;
 
   int n_tile_pairs() const { return n_tile_pairs_; }
+  /// Länge der Tile-Paar-Liste je Replica aus der letzten Auswertung mit Liste (synchronisiert;
+  /// Diagnose und Tests). Leer bei tile_list = kOff.
+  std::vector<int> tile_list_counts() const;
   const TiledAllPairsParams& params() const { return params_; }
 
  protected:
-  /// Gitter und Tile-Paar-Liste für einen Tile-Pass: im Minimum-Image-Pfad Hüllen und (mit
-  /// use_tile_list) die Liste aufbauen; grid.x = Blöcke je Replica.
+  /// Gitter und Tile-Paar-Liste für einen Tile-Pass: im Minimum-Image-Pfad Hüllen und (wenn
+  /// uses_tile_list()) die Liste aufbauen; grid.x = Blöcke je Replica.
   detail::TileList prepare_tiles(const DeviceState& s, bool images, dim3& grid,
                                  cudaStream_t stream);
 
@@ -79,6 +84,7 @@ class TiledAllPairs : public NonbondedStrategy {
   SimulationContext* ctx_ = nullptr;
   int n_tile_pairs_ = 0;
   int max_types_ = 0;
+  int n_sm_ = 1;                         // SMs des Kontext-Geräts (Gittergröße im Listenpfad)
   DeviceBuffer<int2> d_tile_pairs_;      // (I, J), I ≤ J
   DeviceBuffer<float2> d_lj_;            // alle Tabellen konkateniert
   DeviceBuffer<int> d_mask_index_;       // n_tile_pairs je Topologie

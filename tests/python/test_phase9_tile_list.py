@@ -55,6 +55,7 @@ def _pair(spec, n_rep, box, ionic=1.0, positions=None, **kw):
                                           tile_list=tile_list, **kw)  # fmt: skip
         ctx.compute_forces()
         out.append(ctx)
+    assert out[0].nonbonded_uses_tile_list and not out[1].nonbonded_uses_tile_list
     return out, info
 
 
@@ -126,8 +127,14 @@ def test_tile_list_extremes(core, case):
         )
     (a, b), _ = _pair(spec, 2, box, positions=pos)
     _assert_identical(a, b)
-    if case != "all_culled":
+    n_tiles = (len(pos) + 31) // 32
+    counts = a.nonbonded_tile_list_counts()
+    if case == "all_culled":
+        np.testing.assert_array_equal(counts, n_tiles)  # nur die Diagonale
+    else:
         assert np.abs(a.energies()[:, 5]).max() > 0
+    if case == "none_culled":
+        np.testing.assert_array_equal(counts, n_tiles * (n_tiles + 1) // 2)
 
 
 @pytest.mark.reference
@@ -159,15 +166,22 @@ def test_tile_list_bitidentical_20k(core):
     (a, b), info = _pair(spec, 1, box, ionic=0.15)
     assert info.r_cutoff > 3.9
     _assert_identical(a, b)
+    n_tiles = a.n_pad // 32
+    count = a.nonbonded_tile_list_counts()[0]
+    assert n_tiles < count < 0.3 * n_tiles * (n_tiles + 1) // 2  # Vorauswahl greift (≈ 13 %)
+    assert _auto_context(spec, box).nonbonded_uses_tile_list
 
 
 def test_tile_list_determinism(core):
-    """Zwei Läufe mit Liste (1000 Langevin-Schritte, 4 Replicas) sind bitidentisch."""
+    """Zwei Läufe mit Liste (1000 Langevin-Schritte, 4 Replicas, mehrere Tile-Paare je Warp)
+    sind bitidentisch."""
     spec = _chains()
     pos = _spread(spec, 4, (8.0, 8.0), np.random.default_rng(6))
     runs = []
     for _ in range(2):
-        ctx, _ = builder.build_context(spec, 4, (8.0, 8.0), 300.0, 1.0, positions=pos)
+        ctx, _ = builder.build_context(spec, 4, (8.0, 8.0), 300.0, 1.0, positions=pos,
+                                       tile_list="on", max_list_blocks=1)  # fmt: skip
+        assert ctx.nonbonded_uses_tile_list
         ctx.set_integrator(0.001, 1.0, seed=9)
         ctx.step(1000)
         runs.append((ctx.positions_precise(), ctx.energies_fixed_point()))
@@ -189,3 +203,67 @@ def test_tile_list_auto(core):
         _assert_identical(ctx, ref)
     mixed, _ = builder.build_context(spec, 2, np.array([(24.0, 32.0), (8.0, 8.0)]), 300.0, 1.0)
     assert not mixed.nonbonded_uses_tile_list
+
+
+def _auto_context(spec, box):
+    ctx, _ = builder.build_context(spec, 1, box, 300.0, 0.15)
+    return ctx
+
+
+def test_tile_list_set_box(core):
+    """Auto-Auswahl folgt set_box zur Laufzeit (groß ⇒ Liste, klein ⇒ ohne), bitidentisch zu 'off'."""
+    spec = _chains()
+    ctx, _ = builder.build_context(spec, 2, (24.0, 32.0), 300.0, 1.0)
+    ref, _ = builder.build_context(spec, 2, (24.0, 32.0), 300.0, 1.0, tile_list="off")
+    assert ctx.nonbonded_uses_tile_list
+    for box in ((8.0, 8.0), (24.0, 32.0)):
+        for c in (ctx, ref):
+            c.set_box(np.full((2, 2), box, np.float32))
+            c.compute_forces()
+        assert ctx.nonbonded_uses_tile_list == (box[0] > 10)
+        _assert_identical(ctx, ref)
+
+
+@pytest.mark.reference
+def test_tile_list_many_per_warp_2k(core):
+    """2k-System (1558 Atome, 49 Tiles), 32 Replicas mit verschiedenen Positionen, Liste erzwungen:
+    einmal mit automatischer Blockzahl, einmal mit 1 Block je Replica (jeder Warp bearbeitet
+    ≈ 300 Tile-Paare nacheinander: Shared-Memory-Wiederverwendung, Energie je Iteration);
+    bitidentisch zu 'off'."""
+    import sys
+    from pathlib import Path
+
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "benchmarks"))
+    import throughput
+
+    system, top, pos, box = throughput.make_system("2k")
+    spec = builder.from_openmm(system, top, pos)
+    rng = np.random.default_rng(10)
+    p = pos[None] + rng.normal(0.0, 0.02, (32,) + pos.shape)
+    ref, _ = builder.build_context(spec, 32, box, 300.0, 0.15, positions=p, tile_list="off")
+    ref.compute_forces()
+    for blocks in (0, 1):
+        ctx, _ = builder.build_context(spec, 32, box, 300.0, 0.15, positions=p, tile_list="on",
+                                       max_list_blocks=blocks)  # fmt: skip
+        assert ctx.nonbonded_uses_tile_list
+        ctx.compute_forces()
+        _assert_identical(ctx, ref)
+
+
+@pytest.mark.reference
+@pytest.mark.parametrize("solvent", ["gb-obc2", "gb-gbn2"])
+def test_tile_list_many_per_warp_gb(core, solvent):
+    """GB (drei Passes) mit 1 Block je Replica (viele Tile-Paare je Warp, auch in integrals/chain):
+    bitidentisch zu 'off'."""
+    from test_phase9 import _duplex
+
+    system, top, pos = _duplex(gb_xml=f"implicit/{solvent[3:]}.xml")
+    pos = pos - pos.mean(axis=0) + [4.0, 4.0, 4.0]
+    spec = builder.from_openmm(system, top, pos)
+    out = []
+    for kw in ({"tile_list": "on", "max_list_blocks": 1}, {"tile_list": "off"}):
+        ctx, _ = builder.build_context(spec, 2, (8.0, 8.0), 300.0, 1.0, solvent=solvent, **kw)
+        ctx.compute_forces()
+        out.append(ctx)
+    assert out[0].nonbonded_uses_tile_list
+    _assert_identical(*out)

@@ -749,7 +749,7 @@ NB_MODULE(_core, m) {
       "set_nonbonded_tiled",
       [](SimulationContext& c, nb::list topologies, HostInput<int32_t> replica_topology,
          HostInput<float> kappa, HostInput<float> eps_r, float r_switch, float r_cutoff,
-         const std::string& image_sum, const std::string& tile_list) {
+         const std::string& image_sum, const std::string& tile_list, int max_list_blocks) {
         if (image_sum != "auto" && image_sum != "always")
           throw nb::value_error("image_sum: 'auto' oder 'always'");
         bomd::TiledAllPairsParams p;
@@ -762,10 +762,11 @@ NB_MODULE(_core, m) {
         p.r_cutoff_nm = r_cutoff;
         p.always_image_sum = image_sum == "always";
         p.tile_list = tile_list_mode(tile_list);
+        p.max_list_blocks = max_list_blocks;
         c.set_nonbonded(std::make_unique<bomd::TiledAllPairs>(std::move(p)));
       },
       "topologies"_a, "replica_topology"_a, "kappa"_a, "eps_r"_a, "r_switch"_a = 1.8f,
-      "r_cutoff"_a = 2.0f, "image_sum"_a = "auto", "tile_list"_a = "auto",
+      "r_cutoff"_a = 2.0f, "image_sum"_a = "auto", "tile_list"_a = "auto", "max_list_blocks"_a = 0,
       "Nonbonded (Tiled All-Pairs). topologies: Liste von dicts aus\n"
       "biooptomd.nonbonded.nonbonded_topology(); replica_topology int32 (n_replicas,),\n"
       "kappa [1/nm], eps_r (n_replicas,), r_switch/r_cutoff [nm] (biooptomd.nonbonded.\n"
@@ -801,7 +802,7 @@ NB_MODULE(_core, m) {
          HostInput<float> kappa, HostInput<float> eps_out, nb::list radius, nb::list scale,
          float r_switch, float r_cutoff, float eps_in, bool ace, const std::string& image_sum,
          float offset, nb::object alpha_beta_gamma, nb::object neck_index, nb::object neck_m0,
-         nb::object neck_d0, const std::string& tile_list) {
+         nb::object neck_d0, const std::string& tile_list, int max_list_blocks) {
         if (image_sum != "auto" && image_sum != "always")
           throw nb::value_error("image_sum: 'auto' oder 'always'");
         if (nb::len(radius) != nb::len(topologies) || nb::len(scale) != nb::len(topologies))
@@ -816,6 +817,7 @@ NB_MODULE(_core, m) {
         p.base.r_cutoff_nm = r_cutoff;
         p.base.always_image_sum = image_sum == "always";
         p.base.tile_list = tile_list_mode(tile_list);
+        p.base.max_list_blocks = max_list_blocks;
         nb::module_ np = nb::module_::import_("numpy");
         for (std::size_t t = 0; t < nb::len(radius); ++t) {
           p.radius_nm.push_back(to_vector(nb::cast<HostInput<float>>(
@@ -872,7 +874,7 @@ NB_MODULE(_core, m) {
       "r_switch"_a = 1.8f, "r_cutoff"_a = 2.0f, "eps_in"_a = 1.0f, "ace"_a = true,
       "image_sum"_a = "auto", "offset"_a = 0.009f, "alpha_beta_gamma"_a = nb::none(),
       "neck_index"_a = nb::none(), "neck_m0"_a = nb::none(), "neck_d0"_a = nb::none(),
-      "tile_list"_a = "auto",
+      "tile_list"_a = "auto", "max_list_blocks"_a = 0,
       "Nonbonded mit Generalized Born OBC2 (ADR 0010) oder GBn2 (ADR 0012): LJ + Coulomb\n"
       "(eps_in) + GB mit Salz.\n"
       "topologies wie set_nonbonded_tiled; kappa [1/nm] und eps_out (n_replicas,); radius rho "
@@ -946,6 +948,15 @@ NB_MODULE(_core, m) {
         return t != nullptr && !t->uses_image_sum() && t->uses_tile_list();
       },
       "True, wenn die Tile-Nonbonded-Strategie die Tile-Paar-Liste nutzt (ADR 0014).");
+  cls.def(
+      "nonbonded_tile_list_counts",
+      [](SimulationContext& c) {
+        auto* t = dynamic_cast<bomd::TiledAllPairs*>(c.nonbonded());
+        std::vector<int> v = t == nullptr ? std::vector<int>{} : t->tile_list_counts();
+        return vector_to_numpy(v, {v.size()});
+      },
+      "int32 (n_replicas,): Länge der Tile-Paar-Liste aus der letzten Auswertung mit Liste\n"
+      "(Diagnose, synchronisiert); leer bei tile_list='off'.");
 
   // --- Optik-Observer (Phase 6) ---------------------------------------------------------------
   cls.def("observe_now", &SimulationContext::observe_now,

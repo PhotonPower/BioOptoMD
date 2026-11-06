@@ -51,7 +51,10 @@ verschlechtert Punkt 1.
    Auswahl `tile_list = "auto" | "on" | "off"`, Default `"auto"`.
 
 ## Revision 1 (2026-11-06, nach der Implementierung; Bestätigung durch den Projektinhaber offen)
-Messung bei geteilter GPU (Produktionslauf parallel, nur Verhältnisse; Endmessung bei freier GPU):
+Messung bei geteilter GPU (Produktionslauf parallel, nur Verhältnisse; Endmessung bei freier GPU).
+Rauschen etwa ±4 %: „Liste immer“ und „Auto“ sind bei 20 k derselbe Code (1.18× vs. 1.14×), bei
+32 × 2 k misst „Auto“ den alten Code gegen sich selbst (1.01×). Die 0.97× für „Liste immer“ bei
+32 × 2 k begründen die Schwelle der Auto-Auswahl daher nur schwach:
 
 | Fall | Liste immer | i-Tile-Akkumulation (16 / 4 J-Tiles) | Auto |
 |---|---|---|---|

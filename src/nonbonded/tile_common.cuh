@@ -96,9 +96,9 @@ void launch_tile_list(const DeviceState& s, const int2* tile_pairs, int n_tile_p
                       const float4* bounds, float r_c, int* entries, int* count,
                       cudaStream_t stream);
 
-/// Blöcke je Replica für Kernels über die Liste: genug Warps für alle SMs, höchstens so viele
-/// wie Tile-Paare.
-int tile_list_blocks(int n_tile_pairs, int n_replicas);
+/// Blöcke je Replica für Kernels über die Liste: genug Warps für alle n_sm SMs des Geräts,
+/// höchstens so viele wie Tile-Paare.
+int tile_list_blocks(int n_tile_pairs, int n_replicas, int n_sm);
 
 /// Anzahl Bildverschiebungen je Richtung (ADR 0006 Rev. 2): 0 für L >= 2 r_c (jedes verschobene
 /// Bild ist dann mindestens L/2 >= r_c entfernt), sonst ⌈r_c/L + ½⌉ (der Minimum-Image-Abstand
