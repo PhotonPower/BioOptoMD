@@ -115,7 +115,11 @@ Alle PRs #1–#6, #9–#14 am 2026-11-05 nach `main` gemergt (Merge-Commits, Rei
   Listenpuffer nur bei `tile_list != "off"`, `std::numbers::pi`, Doku (Rauschen, OQ-19).
 - Messung bei geteilter GPU (Verhältnisse, vorläufig, Rauschen ≈ ±4 %): 1 × 20 k ≈ 1.14–1.18×, 32 × 2 k 1.01×,
   128 × 1 k 1.00×. Kriterium 1.25× nicht erreicht; i-Tile-Akkumulation gemessen und verworfen
-  (0.77× bzw. neutral). Details ADR 0014 Rev. 1. Endmessung bei freier GPU.
+  (0.77× bzw. neutral). Details ADR 0014 Rev. 1.
+- **Endmessung bei freier GPU (2026-11-06):** 1 × 20 k 1.12× (1.115–1.135, 5 Runden), 32 × 2 k
+  1.016×, 128 × 1 k 1.000× gegen den Stand vor 9.6 (`1b42287`), inkl. Constraint-Verbesserungen.
+  Kriterium 1.25× nicht erreicht, keine Regression. **Projektinhaber 2026-11-06: Kriterium auf den
+  gemessenen Gewinn gesenkt (1 × 20 k ≥ 1.10×), Phase 9.6 abgenommen.** Tabelle in ADR 0014.
 - Constraint-Löser: zwei bitidentische Verbesserungen (Blockgröße nach Auslastung 128/64/32,
   Bildverschiebung je Bindung einmal je SHAKE-Aufruf), zusammen ≈ +5 % bei 1 × 20 k und ≈ +3 % bei
   32 × 2 k. ADR 0015 (3×3-Lösungen in FP32) angenommen, prototypisch gemessen und zurückgezogen:
@@ -138,7 +142,7 @@ Alle PRs #1–#6, #9–#14 am 2026-11-05 nach `main` gemergt (Merge-Commits, Rei
 - Beobachtung: H-Atome erreichen an Gold ζ < ζ_c = 0.1 nm (σ_iw(H) ≈ 0.19 nm), Clamping ist dort
   der Normalfall – passt zu OQ-18 (Lage der Bildebene).
 
-## Phase 9.4 – Validierung GBn2 + OL21 (OQ-15), in Arbeit
+## Phase 9.4 – Validierung GBn2 + OL21 (OQ-15): abgenommen 2026-11-06
 - OL21 ist in OpenMM 8.6 vorhanden (`amber19/DNA.OL21.xml`), kompatibel mit `implicit/gbn2.xml` und
   `obc2.xml` (frühere Notiz „OL21 nicht verfügbar“ war falsch).
 - (a) `examples/gb_validation/duplex_stability.py`: 1BNA, 4 × 100 ns je Modell, HMR/4 fs, 0.15 M.
@@ -146,8 +150,12 @@ Alle PRs #1–#6, #9–#14 am 2026-11-05 nach `main` gemergt (Merge-Commits, Rei
   84 % (Endpaare dauerhaft offen). Tabelle und Einschränkungen in OPEN_QUESTIONS §OQ-15.
 - (b) Hairpin-Faltung, Projektinhaber 2026-11-05: d(GCGAAGC), PDB 1PQT (NMR, sequenzidentisch;
   per PDB geprüft). `examples/gb_validation/hairpin_folding.py`: 4 unabhängige REMD-Leitern × 8 T
-  (300–370 K), 2 aus NMR-, 2 aus gestreckter Struktur, 1 µs je Replica (≈ 22 h), gestartet 2026-11-05.
+  (300–370 K), 2 aus NMR-, 2 aus gestreckter Struktur, 1 µs je Replica (24.4 h).
   Dafür neu: `ReplicaExchange(ladders=L)` (Test `test_remd_multiple_ladders`).
+  **Bestanden (2026-11-06):** beide gestreckten Leitern falten (erstmals nach 1.5/2.4 ns bei 300 K),
+  Anteil gefaltet bei 300 K in der zweiten Hälfte 0.995/0.993/0.994/0.991 (Blockfehler ≤ 0.002),
+  Median-RMSD 0.10–0.12 nm. Oberhalb ≈ 340 K nicht konvergiert (370 K: 0.96–0.67 je Leiter, einzelne
+  lange Entfaltungsepisoden). Tabelle in OPEN_QUESTIONS §OQ-15.
 
 ## Phase 9.3 – GB-neck2: abgenommen 2026-11-05 (Branch `phase-9/gbn2`)
 - ADR 0012 (Accepted 2026-11-05): Modell wie OpenMM `implicit/gbn2.xml`, Parameter und interpolierte Neck-Tabellen
@@ -351,6 +359,7 @@ ADR 0007 → **0009** (Mixed Precision), unsere OQ-08…11 → **OQ-11…14**.
 | 2026-11-05 | Projektinhaber | Phase 9.2 abgenommen, ADR 0011 und Kriterien bestätigt; nächste Erweiterung: GB-neck2. |
 | 2026-11-05 | Claude Opus 5.5 | Phase 9.3 GB-neck2 implementiert (ADR 0012). |
 | 2026-11-05 | Projektinhaber | Phase 9.3 abgenommen, ADR 0012 und Kriterien bestätigt; Vorschlag zu OQ-15 angenommen (GBn2 Default für Nukleinsäuren, Validierung offen). |
+| 2026-11-06 | Projektinhaber | Phase 9.4 abgenommen: OQ-15 (b) Hairpin-Faltung 1PQT bestanden (Kriterium (b) erfüllt). |
 | 2026-11-05 | Claude Opus 5.5 | PRs #1–#6, #9–#14 nach main gemergt; Validierung (a) Duplex 1BNA gestartet. |
 | 2026-11-05 | Claude Opus 5.5 | Validierung (a) abgeschlossen: GBn2 stabiler und näher am Kristall als OBC2 (PR #15). |
 | 2026-11-05 | Projektinhaber | ADR 0013 (ImageChargeForce) angenommen, Kriterien 9.5 und Defaults OQ-18 bestätigt. |
@@ -365,6 +374,7 @@ ADR 0007 → **0009** (Mixed Precision), unsere OQ-08…11 → **OQ-11…14**.
 | 2026-11-06 | Projektinhaber | Gauß-Fenster ±4σ (ADR 0016 Punkt 2) bestätigt; OQ-24 (d) Warnung, (b) später; OQ-25 Ersatzkriterium SPR angenommen. |
 | 2026-11-06 | Projektinhaber | Phase 10 (10.0–10.4) abgenommen; 3D-hp-FEM-Adapter als nächster Schritt (10.5), nicht Teil der Abnahme. |
 | 2026-11-06 | Projektinhaber | Phase 10.5 (3D-hp-FEM-Adapter, eigener hp-FEM-Build) abgenommen; weiter mit REMD im Treiber. |
+| 2026-11-06 | Projektinhaber | Phase 9.6: Kriterium nach der Endmessung bei freier GPU gesenkt (1 × 20 k ≥ 1.10×, gemessen 1.12×), Phase 9.6 abgenommen (OQ-19). |
 | 2026-11-05 | Claude Opus 5.5 | Phase 9.2 Replica Exchange implementiert (ADR 0011 Proposed), 113/113 Tests grün. |
 | 2026-11-05 | Claude Opus 5.5 | Phase 9.1 GB-OBC2 implementiert (ADR 0010 Proposed, gb_ref, TiledGeneralizedBorn, Builder), 12/12 Phase-9-Tests grün. |
 | 2026-11-05 | Claude Opus 5.5 | Phase 8: Benchmark vs. OpenMM (32×2k Faktor 3.5), Tile-Vorauswahl, M-SHAKE/RATTLE; Review umgesetzt, 94/94 Tests grün. |
