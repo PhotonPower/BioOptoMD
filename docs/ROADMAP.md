@@ -350,6 +350,8 @@ Abnahmetests (Vorschlag): siehe ADR 0016, Konsequenzen (`test_polarizability_gri
 
 ### Phase 11 – Coarse-Grained-Modelle (ADR 0017, Accepted 2026-11-06)
 1. Kosinus-harmonische Winkel im `BondedForce`; Paarliste mit wählbarer Form (12-6, optional 12-10).
+   *Umgesetzt 2026-11-06* (`angle_form`, `pair_form`; `test_phase11.py::test_cosine_angle`,
+   `test_pair_go1210`).
 2. Builder: Cα-ENM/Gō aus PDB (`builder.cg_from_pdb`), Domänen und native Kontakte, Ladungen je
    Residuum, Optiktabellen je Perle (Summenregel der kalibrierten Atomwerte).
 3. Wand und Bildladungen für Perlen (λ unkalibriert, OQ-29).

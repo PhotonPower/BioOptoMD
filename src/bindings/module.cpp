@@ -165,9 +165,9 @@ std::vector<T> dict_vector(const nb::dict& d, const char* key, int arity = 0) {
 /// werden akzeptiert und ignoriert. Unbekannte Schlüssel (Tippfehler) ⇒ ValueError.
 bomd::BondedTopology topology_from_dict(const nb::dict& d) {
   static const std::set<std::string> known = {
-      "bonds",      "bond_k",    "bond_r0",   "angles",        "angle_k", "angle_theta0",
-      "torsions",   "torsion_k", "torsion_n", "torsion_phase", "pairs14", "pair_qq",
-      "pair_sigma", "pair_eps",  "charges",   "masses"};
+      "bonds",      "bond_k",    "bond_r0",   "angles",        "angle_k",    "angle_theta0",
+      "torsions",   "torsion_k", "torsion_n", "torsion_phase", "pairs14",    "pair_qq",
+      "pair_sigma", "pair_eps",  "charges",   "masses",        "angle_form", "pair_form"};
   for (auto [key, value] : d) {
     const std::string k = nb::cast<std::string>(key);
     if (!known.count(k))
@@ -188,6 +188,8 @@ bomd::BondedTopology topology_from_dict(const nb::dict& d) {
   t.pair_qq = dict_vector<float>(d, "pair_qq");
   t.pair_sigma = dict_vector<float>(d, "pair_sigma");
   t.pair_eps = dict_vector<float>(d, "pair_eps");
+  t.angle_form = dict_vector<int32_t>(d, "angle_form");
+  t.pair_form = dict_vector<int32_t>(d, "pair_form");
   return t;
 }
 
@@ -753,7 +755,8 @@ NB_MODULE(_core, m) {
       "Kovalente Terme. topologies: Liste von dicts mit bonds (n,2), bond_k [kJ/mol/nm^2],\n"
       "bond_r0 [nm], angles (n,3), angle_k [kJ/mol/rad^2], angle_theta0 [rad], torsions (n,4),\n"
       "torsion_k [kJ/mol], torsion_n, torsion_phase [rad], pairs14 (n,2), pair_qq [e^2],\n"
-      "pair_sigma [nm], pair_eps [kJ/mol] (lokale Atomindizes). replica_topology int32\n"
+      "pair_sigma [nm], pair_eps [kJ/mol] (lokale Atomindizes); optional angle_form (0 = θ,\n"
+      "1 = cos θ, ADR 0017) und pair_form (0 = LJ 12-6, 1 = 12-10). replica_topology int32\n"
       "(n_replicas,), kappa [1/nm] und eps_r (n_replicas,) für die 1-4-Debye-Hückel-Abschirmung;\n"
       "follow_screening=False hält sie bei set_screening fest (GB: kappa = 0, eps_r = 1).");
 

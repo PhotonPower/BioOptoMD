@@ -31,6 +31,8 @@ Alle PRs #1–#6, #9–#14 am 2026-11-05 nach `main` gemergt (Merge-Commits, Rei
   (Debye-Hückel, Wand, Bildladungen, Optik per Summenregel), neu nur kosinus-harmonische Winkel
   und wählbare Paarform; Stufe 2 CG-Aptamere nach OQ-27; kein explizites MARTINI. Offen:
   OQ-27/28/29. Phase-10-PRs #19–#21 gepusht (gestapelt auf #18).
+- 11.1: `BondedForce` mit `angle_form` (kosinus-harmonisch) und `pair_form` (12-10 Gō); Tests gegen
+  FP64-Referenz (rel. 1e-5, Referenz gegen finite Differenzen), θ → 0/π endlich.
 
 ## Phase 10.6 – Replica Exchange im Treiber: abgenommen 2026-11-06, Branch `phase-10/coupling-remd`
 - `SelfConsistentOptics(remd=..., exchange_steps=..., target_states=...)`: Zyklen mit Austausch,
@@ -337,7 +339,7 @@ ADR 0007 → **0009** (Mixed Precision), unsere OQ-08…11 → **OQ-11…14**.
 ## Nächster konkreter Schritt
 1. Hairpin-Lauf (OQ-15 b) auswerten, PR #15 aktualisieren, Phase 9.4 zur Abnahme; danach
    Schlussmessung 9.6 auf freier GPU (OQ-19).
-2. Phase 11.1: kosinus-harmonische Winkel, Paarform 12-6/12-10; dann Builder Cα-ENM/Gō (11.2).
+2. Phase 11.2: Builder Cα-ENM/Gō aus PDB (Domänen, Kontakte, Ladungen, Optik je Perle).
 3. Nachholen: Kontrolllauf auf der RTX 6000 Ada; Nsight Compute (Counter-Freigabe).
 
 ## Sitzungslog

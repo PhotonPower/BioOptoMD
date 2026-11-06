@@ -37,8 +37,10 @@ B:  v ← v + (Δt/2) F/m
 |---|---|---|
 | Bond | ½ k_b (r − r₀)² | |
 | Angle | ½ k_θ (θ − θ₀)² | θ über `atan2(|a×b|, a·b)` |
+| Angle, kosinus-harmonisch (`angle_form = 1`, ADR 0017) | ½ k (cos θ − cos θ₀)² | k in kJ/mol; Kraft endlich und → 0 bei θ = 0, π (MARTINI, CG) |
 | Periodic torsion | k_φ [1 + cos(nφ − φ₀)] | Impropers in AMBER ebenfalls periodisch |
 | 1-4 Paare | LJ·s_LJ + Coulomb·s_el | explizite Paarliste; AMBER: s_el = 1/1.2, s_LJ = 1/2; Elektrostatik der 1-4-Paare mit demselben Debye-Hückel-Kernel wie Non-Bonded |
+| Paar 12-10 (`pair_form = 1`, ADR 0017) | ε[5(σ/r)¹² − 6(σ/r)¹⁰] + Debye-Hückel | native Gō-Kontakte (Karanicolas-Brooks), Minimum −ε bei r = σ |
 
 ## 3. Nicht-kovalente Terme (Phase 4)
 
