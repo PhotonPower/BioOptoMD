@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <numbers>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -58,13 +59,13 @@ __global__ void k_tile_bounds(DeviceState s, float4* bounds) {
   }
 }
 
-/// Ein Warp pro Tile-Paar (I ≤ J), blockIdx.y = Replica. Lane a hält Atom i = I·32 + a; die
-/// 32 j-Atome liegen im Shared Memory und werden rotierend (b = (a + k) mod 32) besucht, sodass
-/// in jedem Schritt jede Lane ein anderes j schreibt (konfliktfreie j-Kraftakkumulation).
-/// Ausgeschlossen: Bit b der Exclusion-Maske, in Diagonal-Tiles b ≤ a (jedes Paar genau einmal),
-/// Padding-Atome (i_local >= n_atoms) und r² < EPS_R2. Im Minimum-Image-Pfad überspringt der
-/// Warp Tile-Paare, deren Hüllen weiter als r_c auseinander liegen (alle Beiträge wären exakt 0,
-/// das Ergebnis bleibt bitidentisch).
+/// Rechnung eines Warps für ein Tile-Paar tp = (I ≤ J) mit Index p, blockIdx.y = Replica. Lane a
+/// hält Atom i = I·32 + a; die 32 j-Atome liegen im Shared Memory und werden rotierend
+/// (b = (a + k) mod 32) besucht, sodass in jedem Schritt jede Lane ein anderes j schreibt
+/// (konfliktfreie j-Kraftakkumulation). Ausgeschlossen: Bit b der Exclusion-Maske, in Diagonal-
+/// Tiles b ≤ a (jedes Paar genau einmal), Padding-Atome (i_local >= n_atoms) und r² < EPS_R2.
+/// j-Kräfte und Energie werden hier akkumuliert (Fixed-Point); die Summe der i-Kräfte des
+/// Tile-Paars gibt die Funktion zurück, der Aufrufer schreibt sie.
 ///
 /// kImages (ADR 0006 Rev. 2, L < 2 r_c): Für jedes Paar wird über die Gittervektoren
 /// n = (n_x L_x, n_y L_y), |n_x| ≤ image_count(L_x), |n_y| ≤ image_count(L_y), summiert, ausgehend
@@ -72,45 +73,28 @@ __global__ void k_tile_bounds(DeviceState s, float4* bounds) {
 /// ½ V(|n|) zur Energie bei; ihre Kräfte heben sich paarweise (n, −n) auf und werden nicht
 /// berechnet. Für L >= 2 r_c ist image_count = 0 und das Ergebnis gleich dem Minimum-Image-Pfad.
 template <typename Elec, bool kImages>
-__global__ void __launch_bounds__(kWarpsPerBlock * 32)
-    k_tiled_all_pairs(DeviceState s, const int2* tile_pairs, int n_tile_pairs, const float2* lj,
-                      const int* mask_index, const std::uint32_t* masks, const int4* replica,
-                      const typename Elec::Params* elec, SwitchParams sw,
-                      const float4* tile_bounds) {
-  extern __shared__ float2 sh_lj[];  // T × T (σ, ε)
-  __shared__ float4 sh_pos[kWarpsPerBlock][32];
-  __shared__ int sh_type[kWarpsPerBlock][32];
-  __shared__ float3 sh_fj[kWarpsPerBlock][32];
-
+__device__ __forceinline__ float3 tile_pair(const DeviceState& s, int p, int2 tp, int a,
+                                            const float2* sh_lj, int4 rep, const int* mask_index,
+                                            const std::uint32_t* masks,
+                                            const typename Elec::Params& ep, const SwitchParams& sw,
+                                            float4* sh_pos, int* sh_type, float3* sh_fj) {
   const int r = blockIdx.y;
-  const int4 rep = replica[r];  // (lj_offset, n_types, mask_index_offset, mask_base)
   const int n_types = rep.y;
-  for (int k = threadIdx.x; k < n_types * n_types; k += blockDim.x) sh_lj[k] = lj[rep.x + k];
-  __syncthreads();
-
-  const int warp = threadIdx.x / 32;
-  const int a = threadIdx.x % 32;
-  const int p = blockIdx.x * kWarpsPerBlock + warp;
-  if (p >= n_tile_pairs) return;  // ganzer Warp; danach nur noch __syncwarp
-
-  const int2 tp = tile_pairs[p];
-  if constexpr (!kImages) {
-    if (tiles_out_of_range(tile_bounds, r, s.n_pad / 32, tp, s.d_box[r], sw.r_c)) return;
-  }
   const int base = r * s.n_pad;
   const int i_local = tp.x * 32 + a;
   const int j_local = tp.y * 32 + a;
   const bool valid_i = i_local < s.n_atoms;
   const bool valid_j = j_local < s.n_atoms;
 
+  __syncwarp();  // Shared Memory des vorigen Tile-Paars ist gelesen
   const float4 pi = s.d_pos[base + i_local];
   int ti = s.d_types[base + i_local].x;
   int tj = s.d_types[base + j_local].x;
   if (ti >= n_types || tj >= n_types) atomicOr(s.d_status, kStatusUnknownType);
   ti = ti < n_types ? ti : 0;
-  sh_pos[warp][a] = s.d_pos[base + j_local];
-  sh_type[warp][a] = tj < n_types ? tj : 0;
-  sh_fj[warp][a] = make_float3(0.0f, 0.0f, 0.0f);
+  sh_pos[a] = s.d_pos[base + j_local];
+  sh_type[a] = tj < n_types ? tj : 0;
+  sh_fj[a] = make_float3(0.0f, 0.0f, 0.0f);
 
   const unsigned int valid_j_bits = __ballot_sync(0xffffffffu, valid_j);
   const int mi = mask_index[rep.z + p];
@@ -124,7 +108,6 @@ __global__ void __launch_bounds__(kWarpsPerBlock * 32)
   if (tp.x == tp.y) skip_image |= (1u << a) - 1u;
   if (!valid_i) skip_image = 0xffffffffu;
 
-  const typename Elec::Params ep = elec[r];
   const float2 box = s.d_box[r];
   float3 fi = make_float3(0.0f, 0.0f, 0.0f);
   float energy = 0.0f;
@@ -138,9 +121,9 @@ __global__ void __launch_bounds__(kWarpsPerBlock * 32)
 
   for (int k = 0; k < 32; ++k) {
     const int b = (a + k) & 31;
-    const float3 d0 = detail::minimum_image_delta(pi, sh_pos[warp][b], box);
-    const float qq = pi.w * sh_pos[warp][b].w;
-    const float2 se = sh_lj[ti * n_types + sh_type[warp][b]];  // (σ, ε)
+    const float3 d0 = detail::minimum_image_delta(pi, sh_pos[b], box);
+    const float qq = pi.w * sh_pos[b].w;
+    const float2 se = sh_lj[ti * n_types + sh_type[b]];  // (σ, ε)
     for (int nx = -n_img_x; nx <= n_img_x; ++nx) {
       for (int ny = -n_img_y; ny <= n_img_y; ++ny) {
         const bool zero_image = nx == 0 && ny == 0;
@@ -184,7 +167,7 @@ __global__ void __launch_bounds__(kWarpsPerBlock * 32)
             fi.x += fv.x;
             fi.y += fv.y;
             fi.z += fv.z;
-            float3& fj = sh_fj[warp][b];
+            float3& fj = sh_fj[b];
             fj.x -= fv.x;
             fj.y -= fv.y;
             fj.z -= fv.z;
@@ -196,12 +179,72 @@ __global__ void __launch_bounds__(kWarpsPerBlock * 32)
     __syncwarp();
   }
 
-  if (valid_i && (fi.x != 0.0f || fi.y != 0.0f || fi.z != 0.0f))
-    detail::add_force(s, base + i_local, fi.x, fi.y, fi.z);
-  const float3 fj = sh_fj[warp][a];
+  const float3 fj = sh_fj[a];
   if (valid_j && (fj.x != 0.0f || fj.y != 0.0f || fj.z != 0.0f))
     detail::add_force(s, base + j_local, fj.x, fj.y, fj.z);
   detail::warp_add_energy(s, r, kEnergyNonbonded, energy);
+  return valid_i ? fi : make_float3(0.0f, 0.0f, 0.0f);
+}
+
+/// Shared-Memory-Kopf beider Kernels: LJ-Tabelle der Replica laden.
+__device__ __forceinline__ int4 load_lj_table(float2* sh_lj, const float2* lj,
+                                              const int4* replica) {
+  const int4 rep = replica[blockIdx.y];  // (lj_offset, n_types, mask_index_offset, mask_base)
+  for (int k = threadIdx.x; k < rep.y * rep.y; k += blockDim.x) sh_lj[k] = lj[rep.x + k];
+  __syncthreads();
+  return rep;
+}
+
+/// Tile-Paare je Warp: ohne Liste genau eines (p = blockIdx.x·W + warp), im Minimum-Image-Pfad mit
+/// Vorauswahl im Warp (Tile-Paare, deren Hüllen weiter als r_c auseinander liegen, tragen exakt 0
+/// bei); mit Liste (ADR 0014) die vorausgewählten Einträge der Replica in Gitterschritten.
+template <typename Elec, bool kImages>
+__global__ void __launch_bounds__(kWarpsPerBlock * 32)
+    k_tiled_all_pairs(DeviceState s, const int2* tile_pairs, int n_tile_pairs, const float2* lj,
+                      const int* mask_index, const std::uint32_t* masks, const int4* replica,
+                      const typename Elec::Params* elec, SwitchParams sw, const float4* tile_bounds,
+                      detail::TileList list) {
+  extern __shared__ float2 sh_lj[];  // T × T (σ, ε)
+  __shared__ float4 sh_pos[kWarpsPerBlock][32];
+  __shared__ int sh_type[kWarpsPerBlock][32];
+  __shared__ float3 sh_fj[kWarpsPerBlock][32];
+  const int4 rep = load_lj_table(sh_lj, lj, replica);
+  const int r = blockIdx.y;
+  const int warp = threadIdx.x / 32;
+  const int a = threadIdx.x % 32;
+  const detail::TileCursor cur = detail::tile_cursor(list, n_tile_pairs, warp);
+  for (int item = cur.k; item < cur.n; item += cur.stride) {
+    const int p = detail::tile_pair_index(list, n_tile_pairs, item);
+    const int2 tp = tile_pairs[p];
+    if constexpr (!kImages) {
+      if (list.count == nullptr &&
+          tiles_out_of_range(tile_bounds, r, s.n_pad / 32, tp, s.d_box[r], sw.r_c))
+        continue;
+    }
+    const float3 fi = tile_pair<Elec, kImages>(s, p, tp, a, sh_lj, rep, mask_index, masks, elec[r],
+                                               sw, sh_pos[warp], sh_type[warp], sh_fj[warp]);
+    if (fi.x != 0.0f || fi.y != 0.0f || fi.z != 0.0f)
+      detail::add_force(s, r * s.n_pad + tp.x * 32 + a, fi.x, fi.y, fi.z);
+  }
+}
+
+/// Listenaufbau (ADR 0014), siehe detail::launch_tile_list.
+__global__ void k_tile_list(DeviceState s, const int2* tile_pairs, int n_tile_pairs,
+                            const float4* bounds, float r_c, int* entries, int* count) {
+  const int p = blockIdx.x * blockDim.x + threadIdx.x;
+  const int r = blockIdx.y;
+  const bool live = p < n_tile_pairs &&
+                    !tiles_out_of_range(bounds, r, s.n_pad / 32, tile_pairs[p], s.d_box[r], r_c);
+  const unsigned int ballot = __ballot_sync(0xffffffffu, live);
+  if (ballot == 0u) return;
+  const int lane = threadIdx.x & 31;
+  const int leader = __ffs(ballot) - 1;
+  int base = 0;
+  if (lane == leader) base = atomicAdd(count + r, __popc(ballot));
+  base = __shfl_sync(0xffffffffu, base, leader);
+  if (live)
+    entries[static_cast<long long>(r) * n_tile_pairs + base +
+            __popc(ballot & ((1u << lane) - 1u))] = p;
 }
 
 void require(bool condition, const std::string& message) {
@@ -214,6 +257,23 @@ namespace detail {
 void launch_tile_bounds(const DeviceState& s, float4* bounds, cudaStream_t stream) {
   k_tile_bounds<<<dim3(s.n_pad / 32, s.n_replicas), 32, 0, stream>>>(s, bounds);
   BOMD_LAUNCH_CHECK();
+}
+
+void launch_tile_list(const DeviceState& s, const int2* tile_pairs, int n_tile_pairs,
+                      const float4* bounds, float r_c, int* entries, int* count,
+                      cudaStream_t stream) {
+  BOMD_CUDA_CHECK(cudaMemsetAsync(count, 0, sizeof(int) * s.n_replicas, stream));
+  constexpr int kBlock = 256;  // Vielfaches von 32 (warpweise Aggregation)
+  k_tile_list<<<dim3((n_tile_pairs + kBlock - 1) / kBlock, s.n_replicas), kBlock, 0, stream>>>(
+      s, tile_pairs, n_tile_pairs, bounds, r_c, entries, count);
+  BOMD_LAUNCH_CHECK();
+}
+
+int tile_list_blocks(int n_tile_pairs, int n_replicas, int n_sm) {
+  // 16 Blöcke à 4 Warps je SM: mehr als resident passen (Lastausgleich am Ende der Liste).
+  const int wanted = (16 * n_sm + n_replicas - 1) / n_replicas;
+  const int max_blocks = (n_tile_pairs + kWarpsPerBlock - 1) / kWarpsPerBlock;
+  return std::max(1, std::min(wanted, max_blocks));
 }
 }  // namespace detail
 
@@ -285,6 +345,13 @@ void TiledAllPairs::initialize(SimulationContext& ctx) {
   d_replica_ = DeviceBuffer<int4>(n_rep);
   d_screening_ = DeviceBuffer<float2>(n_rep);
   d_tile_bounds_ = DeviceBuffer<float4>(static_cast<std::size_t>(n_rep) * n_tiles * 2);
+  if (params_.tile_list != TileListMode::kOff) {  // Liste nur, wenn sie benutzt werden kann
+    d_tile_list_ = DeviceBuffer<int>(static_cast<std::size_t>(n_rep) * n_tile_pairs_);
+    d_tile_count_ = DeviceBuffer<int>(n_rep);
+  }
+  int device = 0;
+  BOMD_CUDA_CHECK(cudaGetDevice(&device));  // Gerät des Kontexts (initialize läuft aktiviert)
+  BOMD_CUDA_CHECK(cudaDeviceGetAttribute(&n_sm_, cudaDevAttrMultiProcessorCount, device));
   d_tile_pairs_.upload_async(tps.data(), st);
   d_lj_.upload_async(lj.data(), st);
   d_mask_index_.upload_async(mask_index.data(), st);
@@ -317,26 +384,62 @@ bool TiledAllPairs::uses_image_sum() const {
   return false;
 }
 
+detail::TileList TiledAllPairs::prepare_tiles(const DeviceState& s, bool images, dim3& grid,
+                                              cudaStream_t stream) {
+  grid = dim3((n_tile_pairs_ + kWarpsPerBlock - 1) / kWarpsPerBlock, s.n_replicas);
+  if (images) return {};  // Bildsumme: alle Tile-Paare, keine Vorauswahl
+  detail::launch_tile_bounds(s, d_tile_bounds_.data(), stream);
+  if (!uses_tile_list()) return {};
+  detail::launch_tile_list(s, d_tile_pairs_.data(), n_tile_pairs_, d_tile_bounds_.data(),
+                           params_.r_cutoff_nm, d_tile_list_.data(), d_tile_count_.data(), stream);
+  grid.x = params_.max_list_blocks > 0
+               ? params_.max_list_blocks
+               : detail::tile_list_blocks(n_tile_pairs_, s.n_replicas, n_sm_);
+  return detail::TileList{d_tile_list_.data(), d_tile_count_.data()};
+}
+
 void TiledAllPairs::compute(DeviceState& s, cudaStream_t stream) {
   if (ctx_->host_box().empty()) throw std::logic_error("TiledAllPairs: Box nicht gesetzt");
   const float r_s = params_.r_switch_nm, r_c = params_.r_cutoff_nm;
   const SwitchParams sw = detail::make_switch(r_s, r_c);
-  const dim3 grid((n_tile_pairs_ + kWarpsPerBlock - 1) / kWarpsPerBlock, s.n_replicas);
   const std::size_t shmem = static_cast<std::size_t>(max_types_) * max_types_ * sizeof(float2);
+  // Bildsumme nur, wenn eine Box kleiner als 2 r_c ist (ADR 0006 Rev. 2); sonst Minimum Image
+  // mit Tile-Vorauswahl (im Warp oder über die Liste, ADR 0014).
+  const bool images = uses_image_sum();
+  dim3 grid;
+  const detail::TileList list = prepare_tiles(s, images, grid, stream);
   const auto launch = [&](auto kernel) {
     kernel<<<grid, kWarpsPerBlock * 32, shmem, stream>>>(
         s, d_tile_pairs_.data(), n_tile_pairs_, d_lj_.data(), d_mask_index_.data(), d_masks_.data(),
-        d_replica_.data(), d_screening_.data(), sw, d_tile_bounds_.data());
+        d_replica_.data(), d_screening_.data(), sw, d_tile_bounds_.data(), list);
     BOMD_LAUNCH_CHECK();
   };
-  // Bildsumme nur, wenn eine Box kleiner als 2 r_c ist (ADR 0006 Rev. 2); sonst Minimum Image
-  // mit Tile-Vorauswahl.
-  if (uses_image_sum()) {
+  if (images) {
     launch(k_tiled_all_pairs<detail::DebyeHuckel, true>);
   } else {
-    detail::launch_tile_bounds(s, d_tile_bounds_.data(), stream);
     launch(k_tiled_all_pairs<detail::DebyeHuckel, false>);
   }
+}
+
+std::vector<int> TiledAllPairs::tile_list_counts() const {
+  std::vector<int> out(d_tile_count_.size());
+  if (out.empty()) return out;
+  ctx_->activate();
+  d_tile_count_.download_async(out.data(), ctx_->stream());
+  BOMD_CUDA_CHECK(cudaStreamSynchronize(ctx_->stream()));
+  return out;
+}
+
+bool TiledAllPairs::uses_tile_list() const {
+  if (params_.tile_list != TileListMode::kAuto) return params_.tile_list == TileListMode::kOn;
+  // Geschätzter Anteil lebender Tile-Paare: Fläche eines Kreises mit Radius r_c + 2 nm (typische
+  // Tile-Ausdehnung) relativ zur Box. Bei vielen lebenden Tile-Paaren kostet die Liste mehr, als
+  // sie spart (ADR 0014: 32 × 2 k in 8 × 8 nm −3 %, 1 × 20 k in 24 × 32 nm +18 %).
+  const double reach = params_.r_cutoff_nm + kTileReachNm;
+  const double disk = std::numbers::pi * reach * reach;
+  for (const float2& b : ctx_->host_box())
+    if (disk > kTileListMaxLiveFraction * static_cast<double>(b.x) * b.y) return false;
+  return true;
 }
 
 }  // namespace bomd

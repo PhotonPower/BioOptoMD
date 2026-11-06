@@ -243,9 +243,48 @@ Dokumentation, Verzeichnisstruktur, Agenten-Anweisungen, Build-Entwürfe.
 - `::test_image_determinism` – zwei Läufe bitidentisch.
 - Messung (kein Kriterium): Kosten des Passes für ein Aptamer auf Gold relativ zu Debye-Hückel.
 
+### Phase 9.6 – Tile-Paarliste für große Einzelsysteme (ADR 0014, Accepted 2026-11-06)
+
+**Aufgaben**
+1. Listenaufbau je Auswertung (Thread je Tile-Paar, Hüllentest wie bisher), persistenter
+   Interaktionskernel über die Liste je Replica; `TiledAllPairs` (DH) und `TiledGeneralizedBorn`.
+2. Auswahl `tile_list = "auto" | "on" | "off"` (ADR 0014 Rev. 1), Default `"auto"`.
+
+**Abnahmetests (vom Projektinhaber am 2026-11-06 bestätigt)**
+- `test_phase9_tile_list.py::test_tile_list_bitidentical` – Energien und Kräfte bitidentisch zum bisherigen
+  Kernel (`tile_list="off"`): 2k-System mit mehreren Replicas, 20k-System, verschiedene Boxen je Replica,
+  per-Replica-Topologien (ADR 0005); DH und GB-OBC2/GBn2.
+- `::test_tile_list_extremes` – alle Tile-Paare verworfen (nur Diagonale), keines verworfen, ein einzelnes Tile,
+  Atome nahe der periodischen Grenze: bitidentisch.
+- `::test_tile_list_determinism` – zwei Läufe (1000 Schritte, Langevin) bitidentisch.
+- `::test_tile_list_auto`, `::test_tile_list_set_box` – Auto-Auswahl nach Boxgröße (auch nach `set_box`),
+  Bildsumme nie, bitidentisch (ADR 0014 Rev. 1).
+- `::test_tile_list_many_per_warp_2k`, `::test_tile_list_many_per_warp_gb` – Liste erzwungen, 1 Block je
+  Replica (viele Tile-Paare je Warp), 2k mit 32 Replicas und GB: bitidentisch.
+- Messkriterium: vom Projektinhaber am 2026-11-06 nach der Endmessung von 1.25× auf ≥ 1.10× gesenkt
+  (gemessen 1.12×, OQ-19).
+- Bildsummenpfad (L < 2 r_c) unverändert (bestehende Tests aus Phase 4 und 9.1).
+- memcheck und racecheck ohne Befund.
+- Messung (Kriterium): 1 × 20 k mindestens ~~1.25×~~ 1.10× schneller als vorher (OQ-19); 32 × 2 k und 128 × 1 k nicht
+  langsamer (Toleranz 2 %); Vergleich mit OpenMM berichtet, kein Muss. Messung erst bei freier GPU.
+
+### Phase 9.7 – Folgearbeiten aus OQ-14 und OQ-18 (d) (Projektinhaber 2026-11-06; Kriterien Vorschlag)
+1. Zweite Temperatur (OQ-14): Kandidaten Geschwindigkeiten nach dem O-Schritt und konfigurationelle
+   Temperatur messen; der Schätzer, der den Bias bei Δt = 4 fs (HMR, H-Constraints) beseitigt, wird
+   zusätzlich gemeldet. E_kin am vollen Schritt bleibt unverändert.
+2. C¹-glattes Clamping von ζ in `ImageChargeForce` (OQ-18 d), ζ_c = 0.1 nm bleibt.
+
+Abnahmetests (Vorschlag):
+- Zweite Temperatur bei 300 K, Δt = 4 fs, 1 × 2 k mit Constraints: |⟨T⟩ − 300 K| < 1 % (4σ); bei
+  1 fs stimmen beide Schätzer überein (4σ).
+- Image: Kraft = −∇E (finite Differenzen) auch im Übergangsbereich um ζ_c; Energie und Kraft stetig
+  über ζ_c; NVE-Drift mit H-Atomen nahe Gold nicht schlechter als in Phase 9.5; alle Tests aus 9.5 grün.
+
+### Nächste große Phase (Projektinhaber 2026-11-06): Gekoppelte MD ↔ FEM-Iteration vor Coarse-Grained; ADR folgt.
+
 - Generalized Born OBC2 (ADR 0004)
 - Replica-Exchange-Moves (Temperatur-Austausch auf Host-Seite)
 - `ImageChargeForce` für Metalloberflächen
-- Cell-List-Strategy für > 10 k Atome
+- ~~Cell-List-Strategy für > 10 k Atome~~ – ersetzt durch die Tile-Paarliste (Phase 9.6, ADR 0014)
 - Coarse-Grained-Kraftfelder (MARTINI, ENM für Antikörper)
 - Gekoppelte MD ↔ FEM-Iteration (optische Kräfte rückgekoppelt)

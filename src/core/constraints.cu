@@ -15,7 +15,6 @@ namespace bomd {
 namespace {
 
 /// Ein Thread pro Cluster; wenig Arbeit pro Thread, daher kleine Blöcke für viele Replicas.
-constexpr int kClusterBlock = 128;
 constexpr int kMaxH = 3;
 
 struct Cluster {
@@ -130,6 +129,14 @@ __global__ void k_shake(DeviceState s, const int4* clusters, const float4* dista
     }
     x_un[k] = c.x[k];
   }
+  // Bildverschiebung je Bindung einmal bestimmen: Cluster-Atome liegen weit näher als L/2
+  // beieinander, n = rint(d/L) ändert sich während der Iteration nicht. Gleiche Rechnung wie
+  // delta() (d − L·n), ohne die FP64-Division je Iteration.
+  double3 shift[kMaxH];
+  for (int k = 1; k <= c.n_h; ++k) {
+    const double3 d = sub(c.x[k], c.x[0]);
+    shift[k - 1] = make_double3(box.x * rint(d.x / box.x), box.y * rint(d.y / box.y), 0.0);
+  }
   // Newton-Iteration auf allen Constraints des Clusters gemeinsam (M-SHAKE): Korrekturen entlang
   // der Referenzrichtungen, x_k −= g_k w_k ref_k, x_0 += w_0 Σ_l g_l ref_l. Linearisiert gilt
   // J g = f mit f_k = |r_k|² − d_k², J_kl = 2 r_k·(w_0 ref_l + δ_kl w_k ref_k); quadratische
@@ -141,7 +148,7 @@ __global__ void k_shake(DeviceState s, const int4* clusters, const float4* dista
     double3 rk[kMaxH];
     double f[kMaxH] = {0.0, 0.0, 0.0};
     for (int k = 1; k <= c.n_h; ++k) {
-      rk[k - 1] = delta(c.x[k], c.x[0], box);
+      rk[k - 1] = sub(sub(c.x[k], c.x[0]), shift[k - 1]);
       f[k - 1] = dot3(rk[k - 1], rk[k - 1]) - c.d2[k - 1];
       if (fabs(f[k - 1]) > 2.0 * tol * c.d2[k - 1]) converged = false;
     }
@@ -322,15 +329,29 @@ ConstraintSet::ConstraintSet(ConstraintParams params, const SimulationContext& c
   d_range_.upload_async(range.data(), st);
   d_in_cluster_.upload_async(in_cluster.data(), st);
   BOMD_CUDA_CHECK(cudaStreamSynchronize(st));  // Host-Vektoren leben bis hier
+  // Blockgröße: ein Thread je Cluster, FP64-latenzgebunden. Größte Blockgröße aus {128, 64, 32},
+  // mit der mindestens zwei Blöcke je SM entstehen (ein einzelnes großes System soll alle SMs
+  // nutzen); sonst 32. Ergebnis unabhängig von der Blockgröße (ein Cluster je Thread).
+  int device = 0, n_sm = 1;
+  BOMD_CUDA_CHECK(cudaGetDevice(&device));
+  BOMD_CUDA_CHECK(cudaDeviceGetAttribute(&n_sm, cudaDevAttrMultiProcessorCount, device));
+  block_ = 32;
+  for (int b : {128, 64}) {
+    const long long blocks = static_cast<long long>((max_clusters_ + b - 1) / b) * n_rep;
+    if (blocks >= 2LL * n_sm) {
+      block_ = b;
+      break;
+    }
+  }
 }
 
 void ConstraintSet::launch_shake(const DeviceState& s, double half_dt, bool drift,
                                  cudaStream_t stream) const {
   if (max_clusters_ == 0) return;
-  const dim3 grid((max_clusters_ + kClusterBlock - 1) / kClusterBlock, s.n_replicas);
-  k_shake<<<grid, kClusterBlock, 0, stream>>>(s, d_clusters_.data(), d_distances_.data(),
-                                              d_range_.data(), half_dt, drift ? 1 : 0,
-                                              params_.tolerance, params_.max_iterations);
+  const dim3 grid((max_clusters_ + block_ - 1) / block_, s.n_replicas);
+  k_shake<<<grid, block_, 0, stream>>>(s, d_clusters_.data(), d_distances_.data(), d_range_.data(),
+                                       half_dt, drift ? 1 : 0, params_.tolerance,
+                                       params_.max_iterations);
   BOMD_LAUNCH_CHECK();
 }
 
@@ -345,10 +366,9 @@ void ConstraintSet::project_positions(const DeviceState& s, cudaStream_t stream)
 
 void ConstraintSet::rattle(const DeviceState& s, cudaStream_t stream) const {
   if (max_clusters_ == 0) return;
-  const dim3 grid((max_clusters_ + kClusterBlock - 1) / kClusterBlock, s.n_replicas);
-  k_rattle<<<grid, kClusterBlock, 0, stream>>>(s, d_clusters_.data(), d_distances_.data(),
-                                               d_range_.data(), params_.velocity_tolerance,
-                                               params_.max_iterations);
+  const dim3 grid((max_clusters_ + block_ - 1) / block_, s.n_replicas);
+  k_rattle<<<grid, block_, 0, stream>>>(s, d_clusters_.data(), d_distances_.data(), d_range_.data(),
+                                        params_.velocity_tolerance, params_.max_iterations);
   BOMD_LAUNCH_CHECK();
 }
 

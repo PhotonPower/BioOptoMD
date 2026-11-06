@@ -304,6 +304,8 @@ def build_context(
     solvent: str = "debye-huckel",
     ace: bool = True,
     device: int = 0,
+    tile_list: str = "auto",
+    max_list_blocks: int = 0,
 ):
     """Erzeugt und füllt einen ``SimulationContext`` (ohne Integrator, Wand, Restraints, Observer).
 
@@ -327,6 +329,9 @@ def build_context(
             aus einem System mit ``implicit/obc2.xml``). Bei GB ist ε_r das Lösungsmittel-ε_out,
             Coulomb (auch 1-4) wird mit ε_in = 1 unabgeschirmt gerechnet; die Abschirmung steckt im
             GB-Term. ``ace``: unpolarer ACE-Term (nur GB).
+        tile_list: Tile-Paar-Liste (ADR 0014): ``"auto"`` (nur bei großer Box), ``"on"``,
+            ``"off"``; das Ergebnis ist in allen Fällen bitidentisch. ``max_list_blocks`` > 0 gibt
+            die Blöcke je Replica im Listenpfad fest vor (nur Tests).
 
     Returns:
         (ctx, :class:`BuildInfo`).
@@ -381,7 +386,8 @@ def build_context(
     zeros = np.zeros(n_replicas, np.int32)
     if solvent == "debye-huckel":
         ctx.add_bonded([bonded], zeros, k32, e32)
-        ctx.set_nonbonded_tiled([nbt], zeros, k32, e32, r_switch=r_s, r_cutoff=r_c)
+        ctx.set_nonbonded_tiled([nbt], zeros, k32, e32, r_switch=r_s, r_cutoff=r_c,
+                                tile_list=tile_list, max_list_blocks=max_list_blocks)  # fmt: skip
     elif solvent in ("gb-obc2", "gb-gbn2"):
         model = solvent[3:]
         spec_model = spec.gb_model or ("obc2" if spec.gb_radius is not None else None)
@@ -396,7 +402,8 @@ def build_context(
         )
         ctx.set_nonbonded_gb(
             [nbt], zeros, k32, e32, [spec.gb_radius], [spec.gb_scale], r_switch=r_s,
-            r_cutoff=r_c, ace=ace, **_gb_model_kwargs(spec),
+            r_cutoff=r_c, ace=ace, tile_list=tile_list, max_list_blocks=max_list_blocks,
+            **_gb_model_kwargs(spec),
         )  # fmt: skip
     else:
         raise ValueError("solvent: 'debye-huckel', 'gb-obc2' oder 'gb-gbn2'")

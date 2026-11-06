@@ -2,7 +2,7 @@
 
 > Diese Datei wird am Ende **jeder** Arbeitssitzung aktualisiert (AGENTS.md §2.4).
 
-**Aktive Phase:** 9.4 – Validierung GBn2 + OL21 (OQ-15), Hairpin-Lauf (b) läuft, Branch `phase-9/gb-validation`. Phase 9.5 (ImageChargeForce) abgenommen 2026-11-06.
+**Aktive Phase:** 9.6 – Tile-Paarliste (Branch `phase-9/tile-list`); parallel 9.4 Hairpin-Lauf (b). Phase 9.5 (ImageChargeForce) abgenommen 2026-11-06.
 Alle PRs #1–#6, #9–#14 am 2026-11-05 nach `main` gemergt (Merge-Commits, Reihenfolge des Stapels).
 **Phase 9.3 (GB-neck2) abgenommen** am 2026-11-05, ADR 0012 und Abnahmekriterien bestätigt.
 **Phase 9.2 (Replica Exchange) abgenommen** am 2026-11-05, ADR 0011 und Abnahmekriterien bestätigt.
@@ -25,6 +25,30 @@ Alle PRs #1–#6, #9–#14 am 2026-11-05 nach `main` gemergt (Merge-Commits, Rei
 
 - Phase 5 (PR #5): HMR, SHAKE/RATTLE auf H-Bindungen, N_dof. Abgenommen 2026-11-03; Nacharbeit nach
   Review siehe unten.
+
+## Phase 9.6 – Tile-Paarliste (ADR 0014 inkl. Rev. 1 Accepted), implementiert; Abnahme später (OQ-19)
+- Vorab-Messung 1 × 20 k: räumliche Sortierung bringt nichts (Atomreihenfolge 13.3 % lebende
+  Tile-Paare, Morton 14.7 %) ⇒ Tile-Paarliste statt Cell-List (Projektinhaber 2026-11-06).
+- Implementiert: Listenaufbau (Thread je Tile-Paar, warpweise Atomics), persistenter Kernel je
+  Replica für DH und die drei GB-Passes; Rechnung je Tile-Paar als gemeinsame Gerätefunktion
+  `tile_pair`; Auswahl `tile_list = "auto" | "on" | "off"`, Property `ctx.nonbonded_uses_tile_list`.
+- `tests/python/test_phase9_tile_list.py`: 15 Tests, alle bitidentisch zu `"off"` (DH, GB-OBC2/GBn2,
+  2k × 32 und 20k, per-Replica-Topologien, Grenzfälle, Auto inkl. `set_box`, viele Tile-Paare je Warp);
+  Listenlänge geprüft (`ctx.nonbonded_tile_list_counts()`); memcheck/racecheck ohne Befund.
+- Review (unabhängiger Agent): kein kritischer Befund; umgesetzt: Tests prüfen, dass die Liste aktiv ist
+  und verwirft, Gitterschleife mit vielen Tile-Paaren je Warp (DH, GB), SM-Zahl je Kontext-Gerät,
+  Listenpuffer nur bei `tile_list != "off"`, `std::numbers::pi`, Doku (Rauschen, OQ-19).
+- Messung bei geteilter GPU (Verhältnisse, vorläufig, Rauschen ≈ ±4 %): 1 × 20 k ≈ 1.14–1.18×, 32 × 2 k 1.01×,
+  128 × 1 k 1.00×. Kriterium 1.25× nicht erreicht; i-Tile-Akkumulation gemessen und verworfen
+  (0.77× bzw. neutral). Details ADR 0014 Rev. 1.
+- **Endmessung bei freier GPU (2026-11-06):** 1 × 20 k 1.12× (1.115–1.135, 5 Runden), 32 × 2 k
+  1.016×, 128 × 1 k 1.000× gegen den Stand vor 9.6 (`1b42287`), inkl. Constraint-Verbesserungen.
+  Kriterium 1.25× nicht erreicht, keine Regression. **Projektinhaber 2026-11-06: Kriterium auf den
+  gemessenen Gewinn gesenkt (1 × 20 k ≥ 1.10×), Phase 9.6 abgenommen.** Tabelle in ADR 0014.
+- Constraint-Löser: zwei bitidentische Verbesserungen (Blockgröße nach Auslastung 128/64/32,
+  Bildverschiebung je Bindung einmal je SHAKE-Aufruf), zusammen ≈ +5 % bei 1 × 20 k und ≈ +3 % bei
+  32 × 2 k. ADR 0015 (3×3-Lösungen in FP32) angenommen, prototypisch gemessen und zurückgezogen:
+  Constraint-Zeit nur ≈ −2 % statt der geforderten −30 % (ADR 0015, Ergebnis).
 
 ## Phase 9.5 – ImageChargeForce: abgenommen 2026-11-06 (Branch `phase-9/image-charge`, PR #16)
 - ADR 0013 Accepted (Projektinhaber 2026-11-05, Kriterien und Defaults OQ-18 bestätigt).
@@ -267,6 +291,10 @@ ADR 0007 → **0009** (Mixed Precision), unsere OQ-08…11 → **OQ-11…14**.
 | 2026-11-05 | Claude Opus 5.5 | Validierung (a) abgeschlossen: GBn2 stabiler und näher am Kristall als OBC2 (PR #15). |
 | 2026-11-05 | Projektinhaber | ADR 0013 (ImageChargeForce) angenommen, Kriterien 9.5 und Defaults OQ-18 bestätigt. |
 | 2026-11-06 | Projektinhaber | Präzisierungen ADR 0013 (Punkte 6, 7, 9) bestätigt, Phase 9.5 abgenommen (PR #16). |
+| 2026-11-06 | Projektinhaber | ADR 0014 (Tile-Paarliste statt Cell-List) angenommen, Rev. 1 bestätigt; Phase 9.6 erst später abnehmen, Kriterium 1.25× bleibt (OQ-19). |
+| 2026-11-06 | Projektinhaber / Claude | ADR 0015 (Constraint-Löser mit gemischter Präzision) angenommen; Prototyp verfehlt das Kriterium (−2 % statt −30 %) ⇒ nach Punkt 4 zurückgezogen (Rejected). |
+| 2026-11-06 | Projektinhaber | Vorschläge angenommen: OQ-15 (a) bestätigt; OQ-14 zweite Temperatur (Schätzer nach Messung); OQ-16 vorerst nicht modelliert; OQ-17 Φ0 fest; OQ-18 (a)–(c) wie Annahme, (d) C¹-glattes Clamping; Phase 9.6 als Entwurf-PR pushen; #15/#16 gemeinsam mergen nach Abnahme 9.4; nächste große Phase MD ↔ FEM-Kopplung (vor Coarse-Grained); Prototyp-Branch ADR 0015 lokal behalten. |
+| 2026-11-06 | Projektinhaber | Phase 9.6: Kriterium nach der Endmessung bei freier GPU gesenkt (1 × 20 k ≥ 1.10×, gemessen 1.12×), Phase 9.6 abgenommen (OQ-19). |
 | 2026-11-05 | Claude Opus 5.5 | Phase 9.2 Replica Exchange implementiert (ADR 0011 Proposed), 113/113 Tests grün. |
 | 2026-11-05 | Claude Opus 5.5 | Phase 9.1 GB-OBC2 implementiert (ADR 0010 Proposed, gb_ref, TiledGeneralizedBorn, Builder), 12/12 Phase-9-Tests grün. |
 | 2026-11-05 | Claude Opus 5.5 | Phase 8: Benchmark vs. OpenMM (32×2k Faktor 3.5), Tile-Vorauswahl, M-SHAKE/RATTLE; Review umgesetzt, 94/94 Tests grün. |
