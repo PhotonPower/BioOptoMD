@@ -26,7 +26,7 @@ Alle PRs #1–#6, #9–#14 am 2026-11-05 nach `main` gemergt (Merge-Commits, Rei
 - Phase 5 (PR #5): HMR, SHAKE/RATTLE auf H-Bindungen, N_dof. Abgenommen 2026-11-03; Nacharbeit nach
   Review siehe unten.
 
-## Phase 9.4 – Validierung GBn2 + OL21 (OQ-15), in Arbeit
+## Phase 9.4 – Validierung GBn2 + OL21 (OQ-15): abgenommen 2026-11-06
 - OL21 ist in OpenMM 8.6 vorhanden (`amber19/DNA.OL21.xml`), kompatibel mit `implicit/gbn2.xml` und
   `obc2.xml` (frühere Notiz „OL21 nicht verfügbar“ war falsch).
 - (a) `examples/gb_validation/duplex_stability.py`: 1BNA, 4 × 100 ns je Modell, HMR/4 fs, 0.15 M.
@@ -245,6 +245,7 @@ ADR 0007 → **0009** (Mixed Precision), unsere OQ-08…11 → **OQ-11…14**.
 | 2026-11-05 | Projektinhaber | Phase 9.2 abgenommen, ADR 0011 und Kriterien bestätigt; nächste Erweiterung: GB-neck2. |
 | 2026-11-05 | Claude Opus 5.5 | Phase 9.3 GB-neck2 implementiert (ADR 0012). |
 | 2026-11-05 | Projektinhaber | Phase 9.3 abgenommen, ADR 0012 und Kriterien bestätigt; Vorschlag zu OQ-15 angenommen (GBn2 Default für Nukleinsäuren, Validierung offen). |
+| 2026-11-06 | Projektinhaber | Phase 9.4 abgenommen: OQ-15 (b) Hairpin-Faltung 1PQT bestanden (Kriterium (b) erfüllt). |
 | 2026-11-05 | Claude Opus 5.5 | PRs #1–#6, #9–#14 nach main gemergt; Validierung (a) Duplex 1BNA gestartet. |
 | 2026-11-05 | Claude Opus 5.5 | Validierung (a) abgeschlossen: GBn2 stabiler und näher am Kristall als OBC2 (PR #15). |
 | 2026-11-05 | Claude Opus 5.5 | Phase 9.2 Replica Exchange implementiert (ADR 0011 Proposed), 113/113 Tests grün. |
