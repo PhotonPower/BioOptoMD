@@ -2,7 +2,7 @@
 
 > Diese Datei wird am Ende **jeder** Arbeitssitzung aktualisiert (AGENTS.md §2.4).
 
-**Aktive Phase:** 10 – MD ↔ FEM-Kopplung (Branch `phase-10/md-fem`, lokal), 10.0–10.4 abgenommen 2026-11-06, 10.5 (3D-hp-FEM-Adapter) abgenommen 2026-11-06, 10.6 (REMD im Treiber) abgenommen 2026-11-06, Phase 10 vollständig; offen 9.4 (Hairpin-Lauf (b)) und 9.6 (Schlussmessung). Phasen 9.5 und 9.7 abgenommen 2026-11-06.
+**Aktive Phase:** 11 – Coarse-Grained (ADR 0017, Branch `phase-11/cg-adr`, lokal), 11.1–11.3 umgesetzt, Abweichungen der 11.3-Tests vom Projektinhaber am 2026-11-06 bestätigt. Phase 10 vollständig abgenommen; Phasen 9.4–9.7 abgenommen 2026-11-06 (9.6 mit gesenktem Kriterium ≥ 1.10×, OQ-19).
 Alle PRs #1–#6, #9–#14 am 2026-11-05 nach `main` gemergt (Merge-Commits, Reihenfolge des Stapels).
 **Phase 9.3 (GB-neck2) abgenommen** am 2026-11-05, ADR 0012 und Abnahmekriterien bestätigt.
 **Phase 9.2 (Replica Exchange) abgenommen** am 2026-11-05, ADR 0011 und Abnahmekriterien bestätigt.
@@ -47,11 +47,11 @@ Alle PRs #1–#6, #9–#14 am 2026-11-05 nach `main` gemergt (Merge-Commits, Rei
   - `test_enm_fluctuations_vs_anm`: Ubiquitin-Kern 1–72 (Ende 73–76 im 0.9-nm-Netz nicht starr,
     7. Nullmode), 30 K: MD/ANM 1.010, Korrelation 0.99994. Bei 300 K ist das reine Zentralkraftnetz
     stark anharmonisch (MD/ANM 1.63, Korrelation 0.85; Median je Perle 1.16, wenige Schleifenperlen
-    bis 4.8), Befund zu OQ-30. **Abnahmeentscheidung offen:** Test bei 30 K (ADR nennt keine T).
+    bis 4.8), Befund zu OQ-30. Test bei 30 K vom Projektinhaber am 2026-11-06 bestätigt.
   - `test_cg_nve`: Drift je 100 ps 0.5–1.0e-5 (10 fs) bzw. 1.2–2.9e-5 (20 fs) · E_kin, über 1 ns
     bestimmt; über nur 100 ps ist die Regression bei 20 fs zu verrauscht (≈ 1e-4). Fluktuation
-    0.2e-3 (10 fs) bzw. 0.76–0.81e-3 (20 fs) < 1e-3 · E_kin wie atomistisch. **Abnahmeentscheidung
-    offen:** Messfenster 1 ns statt 100 ps (wie Phase 3 am 2026-11-03).
+    0.2e-3 (10 fs) bzw. 0.76–0.81e-3 (20 fs) < 1e-3 · E_kin wie atomistisch. Messfenster 1 ns statt
+    100 ps vom Projektinhaber am 2026-11-06 bestätigt (wie Phase 3 am 2026-11-03).
   - `test_cg_optics_sum_rule`: Σ α′, v der Perlen = atomistisches 1UBQ + H (1231 Atome) rel. 1e-6;
     n(z)-Profilabweichung zum Kontrast 5.4 % / 2.9 % / 1.3 % bei w = 0.2 / 0.5 / 1.0 nm; Engine-Pfad
     (Kontext mit `types=model.types` → Profiler) gleich dem NumPy-Histogramm.
@@ -144,7 +144,7 @@ Alle PRs #1–#6, #9–#14 am 2026-11-05 nach `main` gemergt (Merge-Commits, Rei
     ζ_raw statt dζ < 1, Doku. Nicht umgesetzt: Reduktion im letzten Schritt von `step(n)` lazy machen
     (eine kleine Reduktion je `step()`-Aufruf, vernachlässigbar).
 
-## Phase 9.6 – Tile-Paarliste (ADR 0014 inkl. Rev. 1 Accepted), implementiert; Abnahme später (OQ-19)
+## Phase 9.6 – Tile-Paarliste (ADR 0014 inkl. Rev. 1 Accepted): abgenommen 2026-11-06 (Kriterium ≥ 1.10×, OQ-19)
 - Vorab-Messung 1 × 20 k: räumliche Sortierung bringt nichts (Atomreihenfolge 13.3 % lebende
   Tile-Paare, Morton 14.7 %) ⇒ Tile-Paarliste statt Cell-List (Projektinhaber 2026-11-06).
 - Implementiert: Listenaufbau (Thread je Tile-Paar, warpweise Atomics), persistenter Kernel je
@@ -373,11 +373,11 @@ ADR 0007 → **0009** (Mixed Precision), unsere OQ-08…11 → **OQ-11…14**.
   Structs unterschiedlich aus. Vor dem Push mit beiden prüfen oder Kommentare über die Member setzen.
 
 ## Nächster konkreter Schritt
-1. Abnahme 9.4 (Hairpin (b) bestanden, Commit `048a084` auf `phase-9/gb-validation`, lokal) und
-   Entscheidung 9.6 nach OQ-19 (Endmessung 1.12×, Commit `460e52a` auf `phase-9/tile-list`, lokal);
-   beide Commits danach in die gestapelten Branches übernehmen.
-2. Phase 11.4: Beispiel IgG über Gold mit REMD, Durchsatz (nach Abnahme 11.3).
-3. Nachholen: Kontrolllauf auf der RTX 6000 Ada; Nsight Compute (Counter-Freigabe).
+1. Abnahme Phase 11.3 durch den Projektinhaber.
+2. Phase 11.4: Beispiel IgG über Gold mit REMD, Durchsatz.
+3. Abnahme-Commits 9.4/9.6 sind lokal per Merge durch den Stapel übernommen (#15 → … → #21 →
+   `phase-11/cg-adr`); Push der Branches #15–#21 nur auf Anfrage.
+4. Nachholen: Kontrolllauf auf der RTX 6000 Ada; Nsight Compute (Counter-Freigabe).
 
 ## Sitzungslog
 | Datum | Agent/Person | Zusammenfassung |
@@ -421,6 +421,7 @@ ADR 0007 → **0009** (Mixed Precision), unsere OQ-08…11 → **OQ-11…14**.
 | 2026-11-06 | Projektinhaber | Phase 10.6 (REMD im Kopplungstreiber) abgenommen; Phase 10 vollständig. |
 | 2026-11-06 | Projektinhaber | ADR 0017 (Coarse-Grained) angenommen; OQ-27 (3SPN.2C prüfen, Aptamere vorerst atomistisch), OQ-28 (Lorentz-Berthelot), OQ-29 (Wand-λ aus eigenen atomistischen Läufen). |
 | 2026-11-06 | Projektinhaber | Phase 9.6: Kriterium nach der Endmessung bei freier GPU gesenkt (1 × 20 k ≥ 1.10×, gemessen 1.12×), Phase 9.6 abgenommen (OQ-19). |
+| 2026-11-06 | Projektinhaber | Phase 11.3: Abweichungen bestätigt – ENM-gegen-ANM-Test bei 30 K auf dem Ubiquitin-Kern 1–72, NVE-Drift über 1 ns bestimmt (Toleranzen unverändert). |
 | 2026-11-05 | Claude Opus 5.5 | Phase 9.2 Replica Exchange implementiert (ADR 0011 Proposed), 113/113 Tests grün. |
 | 2026-11-05 | Claude Opus 5.5 | Phase 9.1 GB-OBC2 implementiert (ADR 0010 Proposed, gb_ref, TiledGeneralizedBorn, Builder), 12/12 Phase-9-Tests grün. |
 | 2026-11-05 | Claude Opus 5.5 | Phase 8: Benchmark vs. OpenMM (32×2k Faktor 3.5), Tile-Vorauswahl, M-SHAKE/RATTLE; Review umgesetzt, 94/94 Tests grün. |

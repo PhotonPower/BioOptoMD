@@ -245,7 +245,7 @@ Dokumentation, Verzeichnisstruktur, Agenten-Anweisungen, Build-Entwürfe.
 - `::test_image_determinism` – zwei Läufe bitidentisch.
 - Messung (kein Kriterium): Kosten des Passes für ein Aptamer auf Gold relativ zu Debye-Hückel.
 
-### Phase 9.6 – Tile-Paarliste für große Einzelsysteme (ADR 0014, Accepted 2026-11-06)
+### Phase 9.6 – Tile-Paarliste für große Einzelsysteme (ADR 0014, Accepted 2026-11-06; abgenommen 2026-11-06)
 
 **Aufgaben**
 1. Listenaufbau je Auswertung (Thread je Tile-Paar, Hüllentest wie bisher), persistenter
