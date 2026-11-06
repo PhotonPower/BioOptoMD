@@ -261,10 +261,11 @@ Dokumentation, Verzeichnisstruktur, Agenten-Anweisungen, Build-Entwürfe.
   Bildsumme nie, bitidentisch (ADR 0014 Rev. 1).
 - `::test_tile_list_many_per_warp_2k`, `::test_tile_list_many_per_warp_gb` – Liste erzwungen, 1 Block je
   Replica (viele Tile-Paare je Warp), 2k mit 32 Replicas und GB: bitidentisch.
-- Messkriterium 1.25×: in Frage gestellt, siehe OQ-19.
+- Messkriterium: vom Projektinhaber am 2026-11-06 nach der Endmessung von 1.25× auf ≥ 1.10× gesenkt
+  (gemessen 1.12×, OQ-19).
 - Bildsummenpfad (L < 2 r_c) unverändert (bestehende Tests aus Phase 4 und 9.1).
 - memcheck und racecheck ohne Befund.
-- Messung (Kriterium): 1 × 20 k mindestens 1.25× schneller als vorher; 32 × 2 k und 128 × 1 k nicht
+- Messung (Kriterium): 1 × 20 k mindestens ~~1.25×~~ 1.10× schneller als vorher (OQ-19); 32 × 2 k und 128 × 1 k nicht
   langsamer (Toleranz 2 %); Vergleich mit OpenMM berichtet, kein Muss. Messung erst bei freier GPU.
 
 ### Phase 9.7 – Folgearbeiten aus OQ-14 und OQ-18 (d) (Projektinhaber 2026-11-06; Kriterien Vorschlag)

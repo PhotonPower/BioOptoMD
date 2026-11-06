@@ -89,8 +89,8 @@ Messung. Median der Verhältnisse je Runde (Spanne):
 | 128 × 1 k | 41 112 | 41 102 | 1.000× (0.993–1.001) |
 
 Die Messung bei geteilter GPU (1.14–1.18×) war zu optimistisch. Kriterium 1.25× nicht erreicht;
-32 × 2 k und 128 × 1 k nicht langsamer (Toleranz 2 % eingehalten). Entscheidung nach OQ-19 beim
-Projektinhaber.
+32 × 2 k und 128 × 1 k nicht langsamer (Toleranz 2 % eingehalten). Projektinhaber 2026-11-06:
+Kriterium auf ≥ 1.10× gesenkt, Phase 9.6 abgenommen (OQ-19).
 
 ## Alternativen
 - **Cell-List mit räumlicher Sortierung (OpenMM-artig, Hilbert-/Morton-Ordnung):** verschlechtert hier
