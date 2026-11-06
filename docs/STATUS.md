@@ -53,8 +53,7 @@ Alle PRs #1–#6, #9–#14 am 2026-11-05 nach `main` gemergt (Merge-Commits, Rei
   Iterationen: δR ≈ −4.0e-3, ΔW 1.1e-2 → 1.7e-3; Selbstfeld wächst mit der Adsorption des
   Strangs auf ≈ 17 % (OQ-24-Warnung). Punkte 10.0–10.4 der ROADMAP umgesetzt; nicht Teil der
   Abnahmekriterien und offen: 3D-hp-FEM-Adapter (`Scattering3D`), REMD im Treiber. Abnahme durch den
-  Projektinhaber steht aus. Offen: `HpFemSolver` (hp-FEM ohne
-  gmsh: Einheitszellennetz selbst bauen), npz-Adapter, Beispiel 10.4.
+  Projektinhaber steht aus.
 - Phase 10.1/10.2: `PolarizabilityGridObserver` (`ctx.add_polarizability_grid`) und
   `VoxelGridForce3D.set_values`. `test_phase10.py` (7 Tests) grün: Histogramme/Varianz/ε gegen NumPy
   (rel. 1e-6, periodisch und nicht, Gauß und Punkt), x/y-Summe = 1D-Profiler (rel. 1e-5),
