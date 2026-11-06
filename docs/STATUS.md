@@ -26,7 +26,7 @@ Alle PRs #1–#6, #9–#14 am 2026-11-05 nach `main` gemergt (Merge-Commits, Rei
 - Phase 5 (PR #5): HMR, SHAKE/RATTLE auf H-Bindungen, N_dof. Abgenommen 2026-11-03; Nacharbeit nach
   Review siehe unten.
 
-## Phase 11 – Coarse-Grained: ADR 0017 (Proposed), Branch `phase-11/cg-adr`
+## Phase 11 – Coarse-Grained: ADR 0017 (Accepted 2026-11-06), Branch `phase-11/cg-adr`
 - Vorschlag: CG-Rahmen auf den vorhandenen Kerneln; Stufe 1 Antikörper als Cα-ENM/Gō
   (Debye-Hückel, Wand, Bildladungen, Optik per Summenregel), neu nur kosinus-harmonische Winkel
   und wählbare Paarform; Stufe 2 CG-Aptamere nach OQ-27; kein explizites MARTINI. Offen:
@@ -337,7 +337,7 @@ ADR 0007 → **0009** (Mixed Precision), unsere OQ-08…11 → **OQ-11…14**.
 ## Nächster konkreter Schritt
 1. Hairpin-Lauf (OQ-15 b) auswerten, PR #15 aktualisieren, Phase 9.4 zur Abnahme; danach
    Schlussmessung 9.6 auf freier GPU (OQ-19).
-2. ADR 0017 (Coarse-Grained) und OQ-27/28/29 durch den Projektinhaber; danach Phase 11.
+2. Phase 11.1: kosinus-harmonische Winkel, Paarform 12-6/12-10; dann Builder Cα-ENM/Gō (11.2).
 3. Nachholen: Kontrolllauf auf der RTX 6000 Ada; Nsight Compute (Counter-Freigabe).
 
 ## Sitzungslog
@@ -379,6 +379,7 @@ ADR 0007 → **0009** (Mixed Precision), unsere OQ-08…11 → **OQ-11…14**.
 | 2026-11-06 | Projektinhaber | Phase 10 (10.0–10.4) abgenommen; 3D-hp-FEM-Adapter als nächster Schritt (10.5), nicht Teil der Abnahme. |
 | 2026-11-06 | Projektinhaber | Phase 10.5 (3D-hp-FEM-Adapter, eigener hp-FEM-Build) abgenommen; weiter mit REMD im Treiber. |
 | 2026-11-06 | Projektinhaber | Phase 10.6 (REMD im Kopplungstreiber) abgenommen; Phase 10 vollständig. |
+| 2026-11-06 | Projektinhaber | ADR 0017 (Coarse-Grained) angenommen; OQ-27 (3SPN.2C prüfen, Aptamere vorerst atomistisch), OQ-28 (Lorentz-Berthelot), OQ-29 (Wand-λ aus eigenen atomistischen Läufen). |
 | 2026-11-05 | Claude Opus 5.5 | Phase 9.2 Replica Exchange implementiert (ADR 0011 Proposed), 113/113 Tests grün. |
 | 2026-11-05 | Claude Opus 5.5 | Phase 9.1 GB-OBC2 implementiert (ADR 0010 Proposed, gb_ref, TiledGeneralizedBorn, Builder), 12/12 Phase-9-Tests grün. |
 | 2026-11-05 | Claude Opus 5.5 | Phase 8: Benchmark vs. OpenMM (32×2k Faktor 3.5), Tile-Vorauswahl, M-SHAKE/RATTLE; Review umgesetzt, 94/94 Tests grün. |

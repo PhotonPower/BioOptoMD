@@ -1,6 +1,6 @@
 # ADR 0017: Coarse-Grained-Modelle (Antikörper und Aptamere auf Oberflächen)
 
-- **Status:** Proposed
+- **Status:** Accepted (Projektinhaber 2026-11-06; Vorschläge zu OQ-27/28/29 angenommen)
 - **Datum:** 2026-11-06
 - **Bezug:** ROADMAP „Coarse-Grained-Kraftfelder (MARTINI, ENM für Antikörper)“, ARCHITECTURE §6,
   ADR 0002 (Fixed-Point), ADR 0004 (implizites Lösungsmittel), ADR 0005 (Topologie je Replica),
