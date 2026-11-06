@@ -30,7 +30,13 @@ Alle PRs #1–#6, #9–#14 am 2026-11-05 nach `main` gemergt (Merge-Commits, Rei
 - C¹-glattes ζ-Clamping in `ImageChargeForce` (h = ζ_c/2): Referenz `smooth_zeta`, neue Tests
   `test_image_smooth_clamp_reference` (Stetigkeit, Kraft = −dU/dz) und `test_image_smooth_clamp_gpu`;
   alle 17 Tests aus 9.5 + neu grün; NVE-Drift 0.7–1.1·10⁻⁵ kJ/mol/ps/Atom (vorher 1–2·10⁻⁵).
-- Zweite Temperatur (OQ-14): offen.
+- Zweite Temperatur (OQ-14): E_kin nach dem O-Schritt (+ RATTLE), `ctx.kinetic_energy_mid()` und
+  `kinetic_mid` im EnergyTracker. Die Reduktion läuft nur in beobachteten Schritten und im letzten
+  Schritt von `step(n)`.
+  - Messung 2k-System (HMR, H-Constraints, γ = 1/ps): 300.4 ± 0.3 / 300.2 / 300.2 K bei 4 / 2 / 1 fs;
+    am vollen Schritt 268.5 / 292.3 / 298.2 K (Bias ∝ Δt²).
+  - Das Kriterium „bei 1 fs stimmen beide überein“ war falsch und ist revidiert (ROADMAP 9.7).
+  - `tests/python/test_phase9_temperature.py`: 3 Tests grün.
 
 ## Phase 9.6 – Tile-Paarliste (ADR 0014 inkl. Rev. 1 Accepted), implementiert; Abnahme später (OQ-19)
 - Vorab-Messung 1 × 20 k: räumliche Sortierung bringt nichts (Atomreihenfolge 13.3 % lebende

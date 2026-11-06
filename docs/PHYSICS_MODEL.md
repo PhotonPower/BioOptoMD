@@ -24,6 +24,12 @@ B:  v ← v + (Δt/2) F/m
 - Atome mit `inv_mass = 0` bewegen sich nicht und erhalten kein Rauschen.
 - Freiheitsgrade pro Replica: `N_dof = 3·N_mobile − N_constraints` (kein Abzug für Schwerpunkt, da die Wand Translationsinvarianz in z bricht und Langevin ohnehin keinen Impuls erhält).
 - **Bekannte Eigenschaft (gemessen in Phase 5):** BAOAB sampelt Konfigurationen sehr genau, die kinetische Temperatur aus den Geschwindigkeiten am vollen Schritt ist aber um O(Δt²) zu niedrig (harmonischer Oszillator: ⟨p²⟩/m = kT·(1 − ω²Δt²/4)). Duplex-System, HMR + H-Constraints, 300 K: T_kin = 268 / 292 / 298 / 299.5 K bei Δt = 4 / 2 / 1 / 0.5 fs, ⟨E_pot⟩ dagegen unabhängig von Δt. Konfigurationsgrößen (E_pot, Geometrie, n(z)) sind daher die verlässlichen Observablen; die „Temperatur“ aus `energies()` ist bei 4 fs kein Maß für die Thermostat-Temperatur (OQ-14).
+- **Zweite Temperatur (Phase 9.7, OQ-14):** E_kin der Geschwindigkeiten nach dem O-Schritt
+  (+ RATTLE), `ctx.kinetic_energy_mid()` bzw. `kinetic_mid` im EnergyTracker, T = 2 E / (N_dof k_B).
+  Für den harmonischen Oszillator ist sie exakt. Im 2k-System (HMR, H-Constraints, γ = 1/ps) liegt sie
+  bei 300.4 ± 0.3 / 300.2 / 300.2 K für Δt = 4 / 2 / 1 fs; E_kin am vollen Schritt ergibt dort
+  268.5 / 292.3 / 298.2 K (Bias ∝ Δt²). Für die Energiebilanz (NVE) bleibt E_kin am vollen Schritt
+  maßgeblich.
 
 ## 2. Kovalente Terme (Phase 3)
 

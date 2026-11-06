@@ -166,6 +166,10 @@ class SimulationContext {
   /// [E_kin, E_pot je Term] zum aktuellen Zustand (E_pot aus dem letzten compute_forces).
   /// Synchronisiert.
   std::vector<double> energy_frame();
+  /// E_kin [kJ/mol] je Replica aus den Geschwindigkeiten nach dem O-Schritt (+ RATTLE) des
+  /// letzten step() (OQ-14: bei großem Δt unverzerrter als E_kin am vollen Schritt); NaN vor dem
+  /// ersten Schritt. Synchronisiert.
+  std::vector<double> kinetic_energy_mid();
   /// Positionen x = d_pos + d_pos_corr in FP64 [nm], Shape (n_replicas, n_pad, 3). Synchronisiert.
   std::vector<double> positions_precise();
   /// N_dof = 3·N_mobile pro Replica (Atome mit inv_mass > 0; PHYSICS_MODEL.md §1). Synchronisiert.
@@ -224,6 +228,7 @@ class SimulationContext {
   DeviceBuffer<unsigned int> status_;
 
   DeviceBuffer<double> energy_frame_;  // Arbeitspuffer für energy_frame()
+  DeviceBuffer<double> ekin_mid_;      // E_kin nach O je Replica (state_.d_ekin_mid)
 
   DeviceState state_;
 

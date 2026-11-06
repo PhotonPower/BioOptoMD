@@ -518,6 +518,16 @@ NB_MODULE(_core, m) {
           "float64 (n_replicas, 1 + N_ENERGY_TERMS) [kJ/mol]: Spalte 0 = E_kin, dann E_pot je\n"
           "Term in der Reihenfolge ENERGY_TERMS (aus dem letzten compute_forces/step).")
       .def(
+          "kinetic_energy_mid",
+          [](SimulationContext& c) {
+            return vector_to_numpy(c.kinetic_energy_mid(),
+                                   {static_cast<std::size_t>(c.n_replicas())});
+          },
+          "float64 (n_replicas,) [kJ/mol]: E_kin der Geschwindigkeiten nach dem O-Schritt "
+          "(+RATTLE)\n"
+          "des letzten step(); NaN vor dem ersten Schritt. Bei großem dt unverzerrt, anders als\n"
+          "E_kin am vollen Schritt (OQ-14, PHYSICS_MODEL §1). T = 2 E / (N_dof k_B).")
+      .def(
           "positions_precise",
           [](SimulationContext& c) {
             return vector_to_numpy(c.positions_precise(), {static_cast<std::size_t>(c.n_replicas()),
@@ -530,7 +540,7 @@ NB_MODULE(_core, m) {
             return vector_to_numpy(c.degrees_of_freedom(),
                                    {static_cast<std::size_t>(c.n_replicas())});
           },
-          "int32 (n_replicas,): N_dof = 3 * (Anzahl Atome mit inv_mass > 0).");
+          "int32 (n_replicas,): N_dof = 3 * (Anzahl Atome mit inv_mass > 0) - Anzahl Constraints.");
 
   // --- Observer ------------------------------------------------------------------------------
   nb::class_<bomd::EnergyTracker>(m, "EnergyTracker", "Energie-Zeitreihe im VRAM.")
@@ -550,10 +560,14 @@ NB_MODULE(_core, m) {
                 e.data, {static_cast<std::size_t>(e.shape[0]), static_cast<std::size_t>(e.shape[1]),
                          static_cast<std::size_t>(e.shape[2])});
             d["steps"] = vector_to_numpy(steps, {steps.size()});
+            const auto& mid = res.arrays[2];
+            d["kinetic_mid"] = vector_to_numpy(mid.data, {static_cast<std::size_t>(mid.shape[0]),
+                                                          static_cast<std::size_t>(mid.shape[1])});
             return d;
           },
           "dict: energies float64 (n_replicas, n_frames, 1 + N_ENERGY_TERMS) [kJ/mol],\n"
-          "steps int64 (n_frames,).");
+          "steps int64 (n_frames,), kinetic_mid float64 (n_replicas, n_frames) [kJ/mol]: E_kin\n"
+          "nach dem O-Schritt im beobachteten Schritt (OQ-14).");
   cls.def(
       "add_energy_tracker",
       [](SimulationContext& c, int stride, int capacity) -> bomd::EnergyTracker& {

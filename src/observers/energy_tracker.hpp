@@ -22,7 +22,8 @@ class EnergyTracker final : public ObserverPlugin {
   void initialize(SimulationContext& ctx) override;
   void observe(const DeviceState& s, std::int64_t step, cudaStream_t stream) override;
   void reset() override;
-  /// Arrays "energies" (n_replicas, n_frames, 1 + N_TERMS) [kJ/mol] und "steps" (n_frames,).
+  /// Arrays "energies" (n_replicas, n_frames, 1 + N_TERMS) [kJ/mol], "steps" (n_frames,) und
+  /// "kinetic_mid" (n_replicas, n_frames) [kJ/mol]: E_kin nach O im beobachteten Schritt (OQ-14).
   ObserverResult download() const override;
 
   int n_frames() const { return n_frames_; }
@@ -37,6 +38,7 @@ class EnergyTracker final : public ObserverPlugin {
   std::vector<std::int64_t> steps_;
   SimulationContext* ctx_ = nullptr;
   DeviceBuffer<double> frames_;  // (capacity, n_replicas, 1 + N_TERMS)
+  DeviceBuffer<double> mid_;     // (capacity, n_replicas): E_kin nach O
 };
 
 }  // namespace bomd

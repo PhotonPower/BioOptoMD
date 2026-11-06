@@ -1,6 +1,7 @@
 // BioOptoMD – SimulationContext: Allokation, Host-Setter, Kernel-Aufrufe, Plugin-Pipeline.
 #include <climits>
 #include <cmath>
+#include <limits>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -47,6 +48,7 @@ SimulationContext::SimulationContext(int n_replicas, int n_atoms, int device) : 
   status_ = DeviceBuffer<unsigned int>(1);
   energy_frame_ =
       DeviceBuffer<double>(static_cast<std::size_t>(n_replicas) * detail::kEnergyFrameColumns);
+  ekin_mid_ = DeviceBuffer<double>(n_replicas);
   // Blockierender Stream ⇒ implizit geordnet mit dem Legacy-Default-Stream (z. B. von CuPy).
   stream_ = CudaStream::create();
 
@@ -62,6 +64,11 @@ SimulationContext::SimulationContext(int n_replicas, int n_atoms, int device) : 
   temperature_.zero_async(stream_.get());
   image_.zero_async(stream_.get());
   status_.zero_async(stream_.get());
+  {
+    const std::vector<double> nan(n_replicas, std::numeric_limits<double>::quiet_NaN());
+    ekin_mid_.upload_async(nan.data(), stream_.get());
+    BOMD_CUDA_CHECK(cudaStreamSynchronize(stream_.get()));  // Host-Vektor lebt bis hier
+  }
 
   state_.n_replicas = n_replicas;
   state_.n_atoms = n_atoms;
@@ -77,6 +84,7 @@ SimulationContext::SimulationContext(int n_replicas, int n_atoms, int device) : 
   state_.d_temperature = temperature_.data();
   state_.d_image = image_.data();
   state_.d_status = status_.data();
+  state_.d_ekin_mid = ekin_mid_.data();
 
   synchronize();
 }
@@ -379,6 +387,10 @@ void SimulationContext::step(std::int64_t n) {
   const cudaStream_t st = stream_.get();
   const LangevinIntegrator& li = *integrator_;
   for (std::int64_t k = 0; k < n; ++k) {
+    // E_kin nach O nur in Schritten, deren Ende ein Observer sieht, und im letzten (OQ-14).
+    bool record_mid = k == n - 1;
+    for (const auto& observer : observers_)
+      record_mid = record_mid || (step_ + 1) % observer->stride() == 0;
     if (constraints_) {
       // B, RATTLE, A+SHAKE, O, RATTLE, A+SHAKE (PHYSICS_MODEL.md §1)
       const ConstraintSet& cs = *constraints_;
@@ -388,10 +400,12 @@ void SimulationContext::step(std::int64_t n) {
       cs.drift_and_shake(state_, li.half_dt(), st);
       li.thermostat(state_, step_, st);
       cs.rattle(state_, st);
+      if (record_mid) detail::launch_kinetic_energy(state_, state_.d_ekin_mid, st);
       li.drift(state_, cs.d_in_cluster(), st);
       cs.drift_and_shake(state_, li.half_dt(), st);
     } else {
-      li.first_half(state_, step_, st);
+      li.first_half(state_, step_, st);  // v danach = v nach O (das zweite A ändert nur x)
+      if (record_mid) detail::launch_kinetic_energy(state_, state_.d_ekin_mid, st);
     }
     detail::launch_wrap_xy(state_, st);
     ++step_;
@@ -410,6 +424,14 @@ std::vector<double> SimulationContext::energy_frame() {
   detail::launch_energy_frame(state_, energy_frame_.data(), stream_.get());
   std::vector<double> out(energy_frame_.size());
   energy_frame_.download_async(out.data(), stream_.get());
+  synchronize();
+  return out;
+}
+
+std::vector<double> SimulationContext::kinetic_energy_mid() {
+  activate();
+  std::vector<double> out(ekin_mid_.size());
+  ekin_mid_.download_async(out.data(), stream_.get());
   synchronize();
   return out;
 }

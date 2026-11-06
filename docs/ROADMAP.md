@@ -271,11 +271,17 @@ Dokumentation, Verzeichnisstruktur, Agenten-Anweisungen, Build-Entwürfe.
 1. Zweite Temperatur (OQ-14): Kandidaten Geschwindigkeiten nach dem O-Schritt und konfigurationelle
    Temperatur messen; der Schätzer, der den Bias bei Δt = 4 fs (HMR, H-Constraints) beseitigt, wird
    zusätzlich gemeldet. E_kin am vollen Schritt bleibt unverändert.
+   *Umgesetzt:* E_kin nach O (+ RATTLE), `ctx.kinetic_energy_mid()` und `kinetic_mid` im
+   EnergyTracker. Die konfigurationelle Temperatur bräuchte die Spur der Hesse-Matrix aller
+   Kraftterme; sie war nicht nötig, weil schon der erste Kandidat den Bias beseitigt.
 2. C¹-glattes Clamping von ζ in `ImageChargeForce` (OQ-18 d), ζ_c = 0.1 nm bleibt.
 
 Abnahmetests (Vorschlag):
-- Zweite Temperatur bei 300 K, Δt = 4 fs, 1 × 2 k mit Constraints: |⟨T⟩ − 300 K| < 1 % (4σ); bei
-  1 fs stimmen beide Schätzer überein (4σ).
+- Zweite Temperatur bei 300 K, Δt = 4 fs, 1 × 2 k mit Constraints: |⟨T⟩ − 300 K| < 1 % (4σ).
+  ~~Bei 1 fs stimmen beide Schätzer überein (4σ).~~ Revidiert nach der Messung: Auch bei 1 fs liegt
+  E_kin am vollen Schritt noch 1.8 K unter 300 K (Bias ∝ Δt²: 31.5 / 7.7 / 1.8 K bei 4 / 2 / 1 fs).
+  Stattdessen gilt: Das Verhältnis der Bias von 4 fs zu 2 fs liegt zwischen 3 und 5.
+  `tests/python/test_phase9_temperature.py::test_temperature_mid_4fs`.
 - Image: Kraft = −∇E (finite Differenzen) auch im Übergangsbereich um ζ_c; Energie und Kraft stetig
   über ζ_c; NVE-Drift mit H-Atomen nahe Gold nicht schlechter als in Phase 9.5; alle Tests aus 9.5 grün.
 
