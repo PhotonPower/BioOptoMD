@@ -2,7 +2,7 @@
 
 > Diese Datei wird am Ende **jeder** Arbeitssitzung aktualisiert (AGENTS.md §2.4).
 
-**Aktive Phase:** 10 – MD ↔ FEM-Kopplung (Branch `phase-10/md-fem`, lokal), 10.0–10.4 abgenommen 2026-11-06, 10.5 (3D-hp-FEM-Adapter) abgenommen 2026-11-06, 10.6 (REMD im Treiber) abgenommen 2026-11-06, Phase 10 vollständig; offen 9.4 (Hairpin-Lauf (b)) und 9.6 (Schlussmessung). Phasen 9.5 und 9.7 abgenommen 2026-11-06.
+**Aktive Phase:** 11 – Coarse-Grained (ADR 0017, Branch `phase-11/cg-adr`, lokal), 11.1–11.3 abgenommen 2026-11-06, 11.4 (IgG über Gold, REMD) in Arbeit. Phase 10 vollständig abgenommen; Phasen 9.4–9.7 abgenommen 2026-11-06 (9.6 mit gesenktem Kriterium ≥ 1.10×, OQ-19).
 Alle PRs #1–#6, #9–#14 am 2026-11-05 nach `main` gemergt (Merge-Commits, Reihenfolge des Stapels).
 **Phase 9.3 (GB-neck2) abgenommen** am 2026-11-05, ADR 0012 und Abnahmekriterien bestätigt.
 **Phase 9.2 (Replica Exchange) abgenommen** am 2026-11-05, ADR 0011 und Abnahmekriterien bestätigt.
@@ -25,6 +25,54 @@ Alle PRs #1–#6, #9–#14 am 2026-11-05 nach `main` gemergt (Merge-Commits, Rei
 
 - Phase 5 (PR #5): HMR, SHAKE/RATTLE auf H-Bindungen, N_dof. Abgenommen 2026-11-03; Nacharbeit nach
   Review siehe unten.
+
+## Phase 11 – Coarse-Grained: ADR 0017 (Accepted 2026-11-06), Branch `phase-11/cg-adr`
+- Vorschlag: CG-Rahmen auf den vorhandenen Kerneln; Stufe 1 Antikörper als Cα-ENM/Gō
+  (Debye-Hückel, Wand, Bildladungen, Optik per Summenregel), neu nur kosinus-harmonische Winkel
+  und wählbare Paarform; Stufe 2 CG-Aptamere nach OQ-27; kein explizites MARTINI. Offen:
+  OQ-27/28/29. Phase-10-PRs #19–#21 gepusht (gestapelt auf #18).
+- 11.1: `BondedForce` mit `angle_form` (kosinus-harmonisch) und `pair_form` (12-10 Gō); Tests gegen
+  FP64-Referenz (rel. 1e-5, Referenz gegen finite Differenzen), θ → 0/π endlich.
+- 11.2: `biooptomd.cg.enm_go_from_pdb` (Ubiquitin 1UBQ als Testeingabe). Review umgesetzt: Cα-Winkel
+  (kosinus-harmonisch, auch im Gelenk), Disulfide als Bindungen, Lückenwarnung, je Kette eine Domäne
+  als Default, Protonierungs-Aliase/MSE, H₂O am C-Terminus (Masse = Summenformel exakt), go_form.
+  Gegen OpenMM je Term (σ = 0.015 nm): Bindungen+Winkel 1.1e-6, Gō 5.5e-6, Nonbonded 8.9e-7 der
+  jeweiligen RMS-Kraft. Frühere Begründung im Test (Gō-Auslöschung) war falsch: der absolute
+  Fehler kam aus den steifen Kettenbindungen (FP32-Rundung von r · k). OQ-30 (CG-Parameter).
+- 11.3: Wand und Bildladungen für Perlen: `cg.solvent_scale(model, lam)` (λ je Residuenname,
+  Oberflächen-Typ = Optik-Typ, OQ-29 unkalibriert) für `surface.wall_table`; Bildladungen über
+  `builder.add_image_charges` unverändert. Tests:
+  - `test_cg_wall_image`: Gold 9-3 + Bilder gegen NumPy, je Term getrennt (Wand ≤ 1.7e-7, Bild
+    ≤ 3.1e-6 der RMS-Kraft des Terms), Energien rel. 1e-5; λ-Mapping inkl. „GLY+H2O“.
+  - `test_enm_fluctuations_vs_anm`: Ubiquitin-Kern 1–72 (Ende 73–76 im 0.9-nm-Netz nicht starr,
+    7. Nullmode), 30 K: MD/ANM 1.010, Korrelation 0.99994. Bei 300 K ist das reine Zentralkraftnetz
+    stark anharmonisch (MD/ANM 1.63, Korrelation 0.85; Median je Perle 1.16, wenige Schleifenperlen
+    bis 4.8), Befund zu OQ-30. Test bei 30 K vom Projektinhaber am 2026-11-06 bestätigt.
+  - `test_cg_nve`: Drift je 100 ps 0.5–1.0e-5 (10 fs) bzw. 1.2–2.9e-5 (20 fs) · E_kin, über 1 ns
+    bestimmt; über nur 100 ps ist die Regression bei 20 fs zu verrauscht (≈ 1e-4). Fluktuation
+    0.2e-3 (10 fs) bzw. 0.76–0.81e-3 (20 fs) < 1e-3 · E_kin wie atomistisch. Messfenster 1 ns statt
+    100 ps vom Projektinhaber am 2026-11-06 bestätigt (wie Phase 3 am 2026-11-03).
+  - `test_cg_optics_sum_rule`: Σ α′, v der Perlen = atomistisches 1UBQ + H (1231 Atome) rel. 1e-6;
+    n(z)-Profilabweichung zum Kontrast 5.4 % / 2.9 % / 1.3 % bei w = 0.2 / 0.5 / 1.0 nm; Engine-Pfad
+    (Kontext mit `types=model.types` → Profiler) gleich dem NumPy-Histogramm.
+  - Review (unabhängiger Agent): kein hoher Befund; umgesetzt: Fluktuationskriterium im NVE-Test,
+    Wand/Bild getrennt geprüft, λ-Prüfung (0, 1] inkl. NaN in `solvent_scale` und `wall_table`,
+    Engine-Pfad im Optiktest, Integraltoleranz 2e-3 begründet, n_w aus `OPTICS_TARGETS`.
+  - Nebenbefund: `test_phase7::test_end_to_end_biosensor` prüfte seit dem Review 10.0 noch n_w = 1.333
+    statt `N_WATER` des Beispiels (1.3317); korrigiert (eigener Commit). Der slow-Test war damit seit
+    dem Review 10.0 rot, die Abnahmen 10.0–10.6 liefen ohne vollen `pytest`-Lauf.
+- 11.4 (in Arbeit): `examples/igg_on_gold` – CG-IgG 1IGT (1316 Perlen, 7 Domänen, Gelenk ohne
+  Domäne, 17 Disulfide) über Gold mit λ je Residuum, Bildladungen, Decke bei 30 nm (halbharmonisch
+  über `add_voxel_grid`), 4 REMD-Leitern × 8 T (300–370 K), Δt = 20 fs, fortsetzbar (bitgleich
+  geprüft). Durchsatz 9.7 µs/Tag je Replica (8 Replicas) bzw. 4.6 µs/Tag (32 Replicas);
+  Austauschakzeptanz ≈ 0.3. Tests: `test_igg_example` (Modell, Startorientierungen, Decke Energie
+  und Kraft, REMD-Lauf, Klassen), `test_igg_example_analyse` (synthetisch), `test_igg_example_resume`
+  (Fortsetzen über `main` bitgleich). Produktionslauf 4 × 8 × 2 µs gestartet 2026-11-06.
+  Review (unabhängiger Agent): kein hoher Befund; umgesetzt: Hinweis auf irreversible Adsorption
+  bei λ = 1 (Klassenanteile kein Gleichgewicht) und Desorptionsereignisse je Walker in summary.json,
+  Kraft der Decke getestet, Fortsetzen und `analyse` getestet, OQ-31 (Decke, Reibung), erste
+  Adsorption nach Klassendefinition, ⟨cos⟩ auch nur über adsorbierte Frames, Typ 0 ohne Decke,
+  Herkunft/Filter der PDB-Datei, Doku.
 
 ## Phase 10.6 – Replica Exchange im Treiber: abgenommen 2026-11-06, Branch `phase-10/coupling-remd`
 - `SelfConsistentOptics(remd=..., exchange_steps=..., target_states=...)`: Zyklen mit Austausch,
@@ -108,7 +156,7 @@ Alle PRs #1–#6, #9–#14 am 2026-11-05 nach `main` gemergt (Merge-Commits, Rei
     ζ_raw statt dζ < 1, Doku. Nicht umgesetzt: Reduktion im letzten Schritt von `step(n)` lazy machen
     (eine kleine Reduktion je `step()`-Aufruf, vernachlässigbar).
 
-## Phase 9.6 – Tile-Paarliste (ADR 0014 inkl. Rev. 1 Accepted), implementiert; Abnahme später (OQ-19)
+## Phase 9.6 – Tile-Paarliste (ADR 0014 inkl. Rev. 1 Accepted): abgenommen 2026-11-06 (Kriterium ≥ 1.10×, OQ-19)
 - Vorab-Messung 1 × 20 k: räumliche Sortierung bringt nichts (Atomreihenfolge 13.3 % lebende
   Tile-Paare, Morton 14.7 %) ⇒ Tile-Paarliste statt Cell-List (Projektinhaber 2026-11-06).
 - Implementiert: Listenaufbau (Thread je Tile-Paar, warpweise Atomics), persistenter Kernel je
@@ -337,10 +385,9 @@ ADR 0007 → **0009** (Mixed Precision), unsere OQ-08…11 → **OQ-11…14**.
   Structs unterschiedlich aus. Vor dem Push mit beiden prüfen oder Kommentare über die Member setzen.
 
 ## Nächster konkreter Schritt
-1. Hairpin-Lauf (OQ-15 b) auswerten, PR #15 aktualisieren, Phase 9.4 zur Abnahme; danach
-   Schlussmessung 9.6 auf freier GPU (OQ-19).
-2. Phase 10 vollständig (10.0–10.6 abgenommen); Branches `phase-10/md-fem` → `hpfem-3d` → `coupling-remd`
-   lokal, Push/PR auf Anfrage. Nächste große Phase nach ROADMAP (Coarse-Grained) – Entscheidung Projektinhaber.
+1. Phase 11.4: Beispiel IgG über Gold mit REMD, Durchsatz.
+2. Abnahme-Commits 9.4/9.6 sind lokal per Merge durch den Stapel übernommen (#15 → … → #21 →
+   `phase-11/cg-adr`) und am 2026-11-06 gepusht.
 3. Nachholen: Kontrolllauf auf der RTX 6000 Ada; Nsight Compute (Counter-Freigabe).
 
 ## Sitzungslog
@@ -383,7 +430,10 @@ ADR 0007 → **0009** (Mixed Precision), unsere OQ-08…11 → **OQ-11…14**.
 | 2026-11-06 | Projektinhaber | Phase 10 (10.0–10.4) abgenommen; 3D-hp-FEM-Adapter als nächster Schritt (10.5), nicht Teil der Abnahme. |
 | 2026-11-06 | Projektinhaber | Phase 10.5 (3D-hp-FEM-Adapter, eigener hp-FEM-Build) abgenommen; weiter mit REMD im Treiber. |
 | 2026-11-06 | Projektinhaber | Phase 10.6 (REMD im Kopplungstreiber) abgenommen; Phase 10 vollständig. |
+| 2026-11-06 | Projektinhaber | ADR 0017 (Coarse-Grained) angenommen; OQ-27 (3SPN.2C prüfen, Aptamere vorerst atomistisch), OQ-28 (Lorentz-Berthelot), OQ-29 (Wand-λ aus eigenen atomistischen Läufen). |
 | 2026-11-06 | Projektinhaber | Phase 9.6: Kriterium nach der Endmessung bei freier GPU gesenkt (1 × 20 k ≥ 1.10×, gemessen 1.12×), Phase 9.6 abgenommen (OQ-19). |
+| 2026-11-06 | Projektinhaber | Phase 11.3: Abweichungen bestätigt – ENM-gegen-ANM-Test bei 30 K auf dem Ubiquitin-Kern 1–72, NVE-Drift über 1 ns bestimmt (Toleranzen unverändert). |
+| 2026-11-06 | Projektinhaber | Phase 11.3 abgenommen; Branches pushen, weiter mit 11.4. |
 | 2026-11-05 | Claude Opus 5.5 | Phase 9.2 Replica Exchange implementiert (ADR 0011 Proposed), 113/113 Tests grün. |
 | 2026-11-05 | Claude Opus 5.5 | Phase 9.1 GB-OBC2 implementiert (ADR 0010 Proposed, gb_ref, TiledGeneralizedBorn, Builder), 12/12 Phase-9-Tests grün. |
 | 2026-11-05 | Claude Opus 5.5 | Phase 8: Benchmark vs. OpenMM (32×2k Faktor 3.5), Tile-Vorauswahl, M-SHAKE/RATTLE; Review umgesetzt, 94/94 Tests grün. |

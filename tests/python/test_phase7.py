@@ -255,7 +255,8 @@ def test_trajectory_writers(tmp_path):
 def test_end_to_end_biosensor():
     """Oberflächenfixiertes Aptamer (examples/aptamer_on_graphene), 8 Replicas, 1 ns:
     Observer liefern endliche, normierte Zeitreihen (|μ̂| = 1, 0 ≤ κ² ≤ 4, 0 ≤ E ≤ 1, d > 0);
-    n(z) → n_w für z ≫ Molekülhöhe; Anker bleibt an der Oberfläche; keine Statusbits."""
+    n(z) → n_w (Wasser bei der Kalibrierwellenlänge, ``N_WATER`` des Beispiels) für
+    z ≫ Molekülhöhe; Anker bleibt an der Oberfläche; keine Statusbits."""
     import importlib.util
     from pathlib import Path
 
@@ -292,9 +293,9 @@ def test_end_to_end_biosensor():
     occupied = (nz["s_alpha_mean"] > 0) | (nz["s_volume_mean"] > 0)
     for r in range(8):
         top_k = np.flatnonzero(occupied[r]).max()
-        np.testing.assert_array_equal(nz["n"][r, top_k + 1 :], np.float32(1.333))
+        np.testing.assert_array_equal(nz["n"][r, top_k + 1 :], np.float32(ex.N_WATER))
         assert nz["z"][-1] - nz["z"][top_k] > 1.0, "Profil endet zu nah am Molekül"
-    assert (nz["n"][:, nz["z"] < 3.0] > 1.333).any(axis=1).all(), "Molekül im Profil sichtbar"
+    assert (nz["n"][:, nz["z"] < 3.0] > ex.N_WATER).any(axis=1).all(), "Molekül im Profil sichtbar"
 
     # Anker: z am Ende nahe der Sollhöhe (k_z = 10⁴ ⇒ σ_z ≈ √(k_BT/k) ≈ 0.016 nm; 6σ ≈ 0.1 nm).
     z_anchor = ctx.positions_precise()[:, meta["anchor"], 2]

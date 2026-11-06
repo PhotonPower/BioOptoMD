@@ -181,3 +181,46 @@ def finite_difference_forces(energy_fn, pos, h=1e-4):
             e_minus = energy_fn(p)
             f[a, d] = -(e_plus - e_minus) / (2 * h)
     return f
+
+
+def angles_cosine(pos, idx, k, theta0, box=None):
+    """Kosinus-harmonischer Winkel (ADR 0017): V = ½k(cos θ − cos θ0)², F = −∇V über
+    d cos θ/dx_i = (b/|b| − cos θ a/|a|)/|a| (FP64, ohne Sonderfall bei θ = 0, π)."""
+    pos = np.asarray(pos, np.float64)
+    idx = np.asarray(idx)
+    a = _min_image(pos[idx[:, 0]] - pos[idx[:, 1]], box)
+    b = _min_image(pos[idx[:, 2]] - pos[idx[:, 1]], box)
+    la, lb = np.sqrt(_dot(a, a)), np.sqrt(_dot(b, b))
+    c = _dot(a, b) / (la * lb)
+    dc = c - np.cos(np.asarray(theta0, np.float64))
+    k = np.asarray(k, np.float64)
+    energy = 0.5 * k * dc**2
+    dci = (b / lb[:, None] - c[:, None] * a / la[:, None]) / la[:, None]
+    dck = (a / la[:, None] - c[:, None] * b / lb[:, None]) / lb[:, None]
+    fi = -(k * dc)[:, None] * dci
+    fk = -(k * dc)[:, None] * dck
+    forces = np.zeros_like(pos)
+    np.add.at(forces, idx[:, 0], fi)
+    np.add.at(forces, idx[:, 2], fk)
+    np.add.at(forces, idx[:, 1], -fi - fk)
+    return energy.sum(), forces
+
+
+def pairs_go1210(pos, idx, qq, sigma, eps, kappa, eps_r, box=None):
+    """Paarterm 12-10 (Gō, ADR 0017): ε[5(σ/r)¹² − 6(σ/r)¹⁰] + Debye-Hückel wie pairs14."""
+    pos = np.asarray(pos, np.float64)
+    idx = np.asarray(idx)
+    d = _min_image(pos[idx[:, 0]] - pos[idx[:, 1]], box)
+    r = np.sqrt(_dot(d, d))
+    sigma, eps, qq = (np.asarray(x, np.float64) for x in (sigma, eps, qq))
+    s = sigma / r
+    e_lj = eps * (5 * s**12 - 6 * s**10)
+    f_lj = 60 * eps * (s**12 - s**10) / r  # −dV/dr
+    ex = np.exp(-kappa * r)
+    e_dh = ONE_4PI_EPS0 * qq * ex / (eps_r * r)
+    f_dh = ONE_4PI_EPS0 * qq * ex * (kappa * r + 1.0) / (eps_r * r * r)
+    fi = ((f_lj + f_dh) / r)[:, None] * d
+    forces = np.zeros_like(pos)
+    np.add.at(forces, idx[:, 0], fi)
+    np.add.at(forces, idx[:, 1], -fi)
+    return (e_lj + e_dh).sum(), forces

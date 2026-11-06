@@ -29,6 +29,7 @@ BONDED_KEYS = (
     "bonds", "bond_k", "bond_r0", "angles", "angle_k", "angle_theta0", "torsions", "torsion_k",
     "torsion_n", "torsion_phase", "pairs14", "pair_qq", "pair_sigma", "pair_eps",
 )  # fmt: skip
+OPTIONAL_BONDED_KEYS = ("angle_form", "pair_form")  # ADR 0017, Phase 11
 
 
 @dataclass
@@ -360,6 +361,9 @@ def build_context(
             masses, spec.bonded["bonds"], spec.is_hydrogen, h_mass
         )
     bonded = {k: np.asarray(spec.bonded[k]) for k in BONDED_KEYS}
+    for k in OPTIONAL_BONDED_KEYS:  # Winkel-/Paarform (ADR 0017), nur falls vorhanden
+        if k in spec.bonded:
+            bonded[k] = np.asarray(spec.bonded[k])
     cons = None
     if constraints:
         cons, bonded = _constraints.constraint_topology(bonded, spec.is_hydrogen)

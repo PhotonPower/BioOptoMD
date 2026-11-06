@@ -75,8 +75,11 @@ __global__ void k_bonds(DeviceState s, const int4* index, const float4* param, c
   detail::warp_add_energy(s, r, kEnergyBond, energy);
 }
 
-/// Angle: θ = atan2(|a×b|, a·b) (AGENTS.md Regel 3), V = ½k(θ − θ0)².
-/// F_i = −V'(a×n)/(|a|²|n|), F_k = −V'(n×b)/(|b|²|n|), F_j = −F_i − F_k; |n|² < EPS_CROSS2 ⇒ F = 0.
+/// Angle: θ = atan2(|a×b|, a·b) (AGENTS.md Regel 3). Form 0: V = ½k(θ − θ0)²; Form 1
+/// (kosinus-harmonisch, ADR 0017): V = ½k(cos θ − cos θ0)² mit dV/dθ = −k(cos θ − cos θ0) sin θ.
+/// F_i = −V'(a×n)/(|a|²|n|), F_k = −V'(n×b)/(|b|²|n|), F_j = −F_i − F_k. Form 0: |n|² < EPS_CROSS2
+/// ⇒ F = 0. Form 1: V'/|n| = −k(cos θ − cos θ0)/(|a||b|) bleibt endlich, die Kraft geht mit |n|
+/// stetig gegen 0 (θ = 0, π); |a||b| < EPS_R2 (Atome aufeinander) ⇒ V = 0, F = 0.
 __global__ void k_angles(DeviceState s, const int4* index, const float4* param, const int2* range) {
   const int t = blockIdx.x * blockDim.x + threadIdx.x;
   const int r = blockIdx.y;
@@ -84,24 +87,39 @@ __global__ void k_angles(DeviceState s, const int4* index, const float4* param, 
   float energy = 0.0f;
   if (t < rg.y) {
     const int4 id = index[rg.x + t];
-    const float4 p = param[rg.x + t];  // (k, θ0)
+    const float4 p = param[rg.x + t];  // (k, θ0, cos θ0, Form)
     const int base = r * s.n_pad;
     const float2 box = s.d_box[r];
     const float3 a = delta(s, base + id.x, base + id.y, box);
     const float3 b = delta(s, base + id.z, base + id.y, box);
     const float3 n = cross(a, b);
     const float n2 = dot(n, n);
-    const float theta = atan2f(sqrtf(n2), dot(a, b));
-    const float dth = theta - p.y;
-    energy = 0.5f * p.x * dth * dth;
-    if (n2 >= units::EPS_CROSS2) {
-      const float dv = p.x * dth;
-      const float nn = sqrtf(n2);
-      const float3 fi = (-dv / (dot(a, a) * nn)) * cross(a, n);
-      const float3 fk = (-dv / (dot(b, b) * nn)) * cross(n, b);
-      add_force3(s, base + id.x, fi);
-      add_force3(s, base + id.z, fk);
-      add_force3(s, base + id.y, -(fi + fk));
+    if (p.w != 0.0f) {  // kosinus-harmonisch
+      const float aa = dot(a, a), bb = dot(b, b);
+      const float ab = sqrtf(aa * bb);
+      if (ab >= units::EPS_R2) {
+        const float dc = dot(a, b) / ab - p.z;
+        energy = 0.5f * p.x * dc * dc;
+        const float coef = -p.x * dc / ab;  // V'/|n|
+        const float3 fi = (-coef / aa) * cross(a, n);
+        const float3 fk = (-coef / bb) * cross(n, b);
+        add_force3(s, base + id.x, fi);
+        add_force3(s, base + id.z, fk);
+        add_force3(s, base + id.y, -(fi + fk));
+      }
+    } else {
+      const float theta = atan2f(sqrtf(n2), dot(a, b));
+      const float dth = theta - p.y;
+      energy = 0.5f * p.x * dth * dth;
+      if (n2 >= units::EPS_CROSS2) {
+        const float dv = p.x * dth;
+        const float nn = sqrtf(n2);
+        const float3 fi = (-dv / (dot(a, a) * nn)) * cross(a, n);
+        const float3 fk = (-dv / (dot(b, b) * nn)) * cross(n, b);
+        add_force3(s, base + id.x, fi);
+        add_force3(s, base + id.z, fk);
+        add_force3(s, base + id.y, -(fi + fk));
+      }
     }
   }
   detail::warp_add_energy(s, r, kEnergyAngle, energy);
@@ -146,8 +164,8 @@ __global__ void k_torsions(DeviceState s, const int4* index, const float4* param
   detail::warp_add_energy(s, r, kEnergyTorsion, energy);
 }
 
-/// 1-4-Paar: V = 4ε[(σ/r)^12 − (σ/r)^6] + C qq exp(−κr)/(ε_r r) (PHYSICS_MODEL.md §2, §3).
-/// r² < EPS_R2 ⇒ V = 0, F = 0.
+/// 1-4-Paar: V = 4ε[(σ/r)^12 − (σ/r)^6] + C qq exp(−κr)/(ε_r r) (PHYSICS_MODEL.md §2, §3);
+/// Form 1 (Gō 12-10, ADR 0017): LJ-Teil ε[5(σ/r)^12 − 6(σ/r)^10]. r² < EPS_R2 ⇒ V = 0, F = 0.
 __global__ void k_pairs14(DeviceState s, const int4* index, const float4* param, const int2* range,
                           const float2* screening) {
   const int t = blockIdx.x * blockDim.x + threadIdx.x;
@@ -156,7 +174,7 @@ __global__ void k_pairs14(DeviceState s, const int4* index, const float4* param,
   float energy = 0.0f;
   if (t < rg.y) {
     const int4 id = index[rg.x + t];
-    const float4 p = param[rg.x + t];  // (qq, σ, ε, 0)
+    const float4 p = param[rg.x + t];  // (qq, σ, ε, Form)
     const int base = r * s.n_pad;
     const float3 d = delta(s, base + id.x, base + id.y, s.d_box[r]);
     const float r2 = dot(d, d);
@@ -167,10 +185,18 @@ __global__ void k_pairs14(DeviceState s, const int4* index, const float4* param,
       const float sr6 = sr2 * sr2 * sr2;
       const float ex = expf(-sc.x * dist);
       const float c = units::ONE_4PI_EPS0_F * p.x * ex / (sc.y * dist);
-      energy = 4.0f * p.z * (sr6 * sr6 - sr6) + c;
-      // −dV/dr / r: LJ 4ε(12 sr6² − 6 sr6)/r², DH c (κr + 1)/r²
-      const float f_over_r =
-          (4.0f * p.z * (12.0f * sr6 * sr6 - 6.0f * sr6) + c * (sc.x * dist + 1.0f)) / r2;
+      float e_lj, f_lj;   // f_lj = −dV/dr · r
+      if (p.w != 0.0f) {  // 12-10: ε(5 s¹² − 6 s¹⁰), −dV/dr·r = 60ε(s¹² − s¹⁰)
+        const float sr12 = sr6 * sr6, sr10 = sr6 * sr2 * sr2;
+        e_lj = p.z * (5.0f * sr12 - 6.0f * sr10);
+        f_lj = 60.0f * p.z * (sr12 - sr10);
+      } else {
+        e_lj = 4.0f * p.z * (sr6 * sr6 - sr6);
+        f_lj = 4.0f * p.z * (12.0f * sr6 * sr6 - 6.0f * sr6);
+      }
+      energy = e_lj + c;
+      // −dV/dr / r: LJ f_lj/r², DH c (κr + 1)/r²
+      const float f_over_r = (f_lj + c * (sc.x * dist + 1.0f)) / r2;
       const float3 fi = f_over_r * d;
       add_force3(s, base + id.x, fi);
       add_force3(s, base + id.y, -fi);
@@ -199,6 +225,12 @@ BondedForce::BondedForce(BondedParams params) : params_(std::move(params)) {
   for (const auto& t : params_.topologies) {
     check_sizes(t.bond_k.size(), t.bonds.size(), 2, {t.bond_r0.size()}, "bonds");
     check_sizes(t.angle_k.size(), t.angles.size(), 3, {t.angle_theta0.size()}, "angles");
+    require(t.angle_form.empty() || t.angle_form.size() == t.angle_k.size(),
+            "angle_form: leer oder je Winkel");
+    for (int f : t.angle_form) require(f == 0 || f == 1, "angle_form: 0 (θ) oder 1 (cos θ)");
+    require(t.pair_form.empty() || t.pair_form.size() == t.pair_qq.size(),
+            "pair_form: leer oder je Paar");
+    for (int f : t.pair_form) require(f == 0 || f == 1, "pair_form: 0 (12-6) oder 1 (12-10)");
     check_sizes(t.torsion_k.size(), t.torsions.size(), 4,
                 {t.torsion_n.size(), t.torsion_phase.size()}, "torsions");
     check_sizes(t.pair_qq.size(), t.pairs14.size(), 2, {t.pair_sigma.size(), t.pair_eps.size()},
@@ -269,7 +301,8 @@ void BondedForce::initialize(SimulationContext& ctx) {
   build(
       angles_, 3, [](const BondedTopology& t) -> const std::vector<int>& { return t.angles; },
       [](const BondedTopology& t, int k) {
-        return make_float4(t.angle_k[k], t.angle_theta0[k], 0.f, 0.f);
+        const float form = t.angle_form.empty() ? 0.f : static_cast<float>(t.angle_form[k]);
+        return make_float4(t.angle_k[k], t.angle_theta0[k], std::cos(t.angle_theta0[k]), form);
       },
       [](const BondedTopology& t) { return t.angle_k.size(); }, "angles");
   build(
@@ -282,7 +315,8 @@ void BondedForce::initialize(SimulationContext& ctx) {
   build(
       pairs_, 2, [](const BondedTopology& t) -> const std::vector<int>& { return t.pairs14; },
       [](const BondedTopology& t, int k) {
-        return make_float4(t.pair_qq[k], t.pair_sigma[k], t.pair_eps[k], 0.f);
+        const float form = t.pair_form.empty() ? 0.f : static_cast<float>(t.pair_form[k]);
+        return make_float4(t.pair_qq[k], t.pair_sigma[k], t.pair_eps[k], form);
       },
       [](const BondedTopology& t) { return t.pair_qq.size(); }, "pairs14");
 

@@ -245,7 +245,7 @@ Dokumentation, Verzeichnisstruktur, Agenten-Anweisungen, Build-Entwürfe.
 - `::test_image_determinism` – zwei Läufe bitidentisch.
 - Messung (kein Kriterium): Kosten des Passes für ein Aptamer auf Gold relativ zu Debye-Hückel.
 
-### Phase 9.6 – Tile-Paarliste für große Einzelsysteme (ADR 0014, Accepted 2026-11-06)
+### Phase 9.6 – Tile-Paarliste für große Einzelsysteme (ADR 0014, Accepted 2026-11-06; abgenommen 2026-11-06)
 
 **Aufgaben**
 1. Listenaufbau je Auswertung (Thread je Tile-Paar, Hüllentest wie bisher), persistenter
@@ -348,6 +348,26 @@ Abnahmetests (revidierte Fassung vom Projektinhaber bestätigt 2026-11-06):
 Abnahmetests (Vorschlag): siehe ADR 0016, Konsequenzen (`test_polarizability_grid_vs_numpy`,
 `test_voxel_set_values`, `test_tmm_reference`, `test_coupling_fixed_point`, `test_coupling_scaling`,
 `test_hpfem_adapter_planar`, `test_coupling_resume`); vom Projektinhaber am 2026-11-06 bestätigt.
+
+### Phase 11 – Coarse-Grained-Modelle (ADR 0017, Accepted 2026-11-06)
+1. Kosinus-harmonische Winkel im `BondedForce`; Paarliste mit wählbarer Form (12-6, optional 12-10).
+   *Umgesetzt 2026-11-06* (`angle_form`, `pair_form`; `test_phase11.py::test_cosine_angle`,
+   `test_pair_go1210`).
+2. Builder: Cα-ENM/Gō aus PDB (`biooptomd.cg.enm_go_from_pdb`), Domänen und native Kontakte,
+   Ladungen je Residuum, Optiktabellen je Perle (Summenregel der kalibrierten Atomwerte).
+   *Umgesetzt 2026-11-06* (`test_cg_builder_ubiquitin`, `test_cg_builder_domains`,
+   `test_cg_builder_chains_disulfide`, `test_cg_forces_vs_openmm` je Term: ≤ 5.5e-6 der RMS-Kraft).
+3. Wand und Bildladungen für Perlen (λ unkalibriert, OQ-29). *Umgesetzt und abgenommen 2026-11-06*
+   (`cg.solvent_scale`: λ je Residuenname über den Oberflächen-Typ; `test_cg_wall_image`,
+   `test_enm_fluctuations_vs_anm` (Ubiquitin-Kern 1–72, 30 K), `test_cg_nve` (10/20 fs, Drift über
+   1 ns bestimmt), `test_cg_optics_sum_rule` (Summenregel + n(z))).
+4. Beispiel IgG über Gold mit REMD, Durchsatz. *In Arbeit 2026-11-06* (`examples/igg_on_gold`,
+   `test_igg_example`, `test_igg_example_analyse`, `test_igg_example_resume`; Durchsatz 9.7 µs/Tag
+   je Replica bei 8, 4.6 µs/Tag bei 32 Replicas; Lauf 4 × 8 × 2 µs; Decke/Reibung OQ-31).
+5. (Stufe 1b, optional) gemischte Auflösung (OQ-28); (Stufe 2) CG-Aptamere nach OQ-27.
+
+Abnahmetests (Vorschlag): ADR 0017, Konsequenzen (`test_cg_forces_vs_openmm`,
+`test_enm_fluctuations_vs_anm`, `test_cg_nve`, `test_cosine_angle`, `test_cg_optics_sum_rule`).
 
 - Generalized Born OBC2 (ADR 0004)
 - Replica-Exchange-Moves (Temperatur-Austausch auf Host-Seite)

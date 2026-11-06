@@ -13,12 +13,15 @@ namespace bomd {
 
 /// Eine Topologie (ein Molekülsystem). Atomindizes sind lokal (< n_atoms), row-major.
 struct BondedTopology {
-  std::vector<int> bonds;            ///< (n_b, 2)
-  std::vector<float> bond_k;         ///< k [kJ/mol/nm²]
-  std::vector<float> bond_r0;        ///< r0 [nm]
-  std::vector<int> angles;           ///< (n_a, 3), Scheitel in der Mitte
-  std::vector<float> angle_k;        ///< k [kJ/mol/rad²]
-  std::vector<float> angle_theta0;   ///< θ0 [rad]
+  std::vector<int> bonds;           ///< (n_b, 2)
+  std::vector<float> bond_k;        ///< k [kJ/mol/nm²]
+  std::vector<float> bond_r0;       ///< r0 [nm]
+  std::vector<int> angles;          ///< (n_a, 3), Scheitel in der Mitte
+  std::vector<float> angle_k;       ///< k [kJ/mol/rad²]
+  std::vector<float> angle_theta0;  ///< θ0 [rad]
+  /// Winkelform je Term (ADR 0017): 0 = harmonisch in θ, ½k(θ − θ0)² [k in kJ/mol/rad²];
+  /// 1 = kosinus-harmonisch, ½k(cos θ − cos θ0)² [k in kJ/mol]. Leer ⇒ alle 0.
+  std::vector<int> angle_form;
   std::vector<int> torsions;         ///< (n_t, 4), Impropers ebenfalls periodisch
   std::vector<float> torsion_k;      ///< k [kJ/mol]
   std::vector<int> torsion_n;        ///< Periodizität n >= 1
@@ -27,6 +30,10 @@ struct BondedTopology {
   std::vector<float> pair_qq;        ///< skaliertes Ladungsprodukt [e²]
   std::vector<float> pair_sigma;     ///< σ [nm] (kombiniert)
   std::vector<float> pair_eps;       ///< ε [kJ/mol] (kombiniert, skaliert)
+  /// Paarform je Term (ADR 0017): 0 = LJ 12-6, 4ε[(σ/r)¹² − (σ/r)⁶]; 1 = 12-10 (Gō nach
+  /// Karanicolas-Brooks), ε[5(σ/r)¹² − 6(σ/r)¹⁰], Minimum −ε bei r = σ. Debye-Hückel unverändert.
+  /// Leer ⇒ alle 0.
+  std::vector<int> pair_form;
 };
 
 struct BondedParams {

@@ -138,6 +138,17 @@ lassen Padding-Atome unverändert. Test-Hooks ohne Produktionsphysik liegen in `
   oben/unten), strukturiertes Tetraedernetz aus `hpfem.box`, ε je Tetraeder über `set_cell`,
   |E|² über `Scattering3D.sample` (Phase 10.5).
 
+### 3.7 Coarse-Grained (Phase 11, ADR 0017)
+
+- `BondedForce`: `angle_form` (1 = kosinus-harmonisch) und `pair_form` (1 = Gō 12-10).
+- `biooptomd.cg.enm_go_from_pdb`: PDB → `CGModel` (SystemSpec mit Perlen am Cα, Kette, elastisches
+  Netz je Domäne ohne Ausschlüsse, Gō-Kontakte zwischen Domänen als Paarterme, Ladungen je Residuum,
+  Optik-Typ je Residuenname mit α′/v per Summenregel); weiter mit `builder.build_context`
+  (`types=model.types`).
+- Wand und Bildladungen wie atomistisch: `surface.wall_table(material, info.lj_table,
+  cg.solvent_scale(model, lam))` (Oberflächen-Typ = Optik-Typ, λ je Residuenname, OQ-29) und
+  `builder.add_image_charges` mit den Perlenladungen.
+
 ## 4. Module
 
 | Verzeichnis | Inhalt | Phase |
