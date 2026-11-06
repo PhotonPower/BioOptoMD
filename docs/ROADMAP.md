@@ -267,6 +267,20 @@ Dokumentation, Verzeichnisstruktur, Agenten-Anweisungen, Build-Entwürfe.
 - Messung (Kriterium): 1 × 20 k mindestens 1.25× schneller als vorher; 32 × 2 k und 128 × 1 k nicht
   langsamer (Toleranz 2 %); Vergleich mit OpenMM berichtet, kein Muss. Messung erst bei freier GPU.
 
+### Phase 9.7 – Folgearbeiten aus OQ-14 und OQ-18 (d) (Projektinhaber 2026-11-06; Kriterien Vorschlag)
+1. Zweite Temperatur (OQ-14): Kandidaten Geschwindigkeiten nach dem O-Schritt und konfigurationelle
+   Temperatur messen; der Schätzer, der den Bias bei Δt = 4 fs (HMR, H-Constraints) beseitigt, wird
+   zusätzlich gemeldet. E_kin am vollen Schritt bleibt unverändert.
+2. C¹-glattes Clamping von ζ in `ImageChargeForce` (OQ-18 d), ζ_c = 0.1 nm bleibt.
+
+Abnahmetests (Vorschlag):
+- Zweite Temperatur bei 300 K, Δt = 4 fs, 1 × 2 k mit Constraints: |⟨T⟩ − 300 K| < 1 % (4σ); bei
+  1 fs stimmen beide Schätzer überein (4σ).
+- Image: Kraft = −∇E (finite Differenzen) auch im Übergangsbereich um ζ_c; Energie und Kraft stetig
+  über ζ_c; NVE-Drift mit H-Atomen nahe Gold nicht schlechter als in Phase 9.5; alle Tests aus 9.5 grün.
+
+### Nächste große Phase (Projektinhaber 2026-11-06): Gekoppelte MD ↔ FEM-Iteration vor Coarse-Grained; ADR folgt.
+
 - Generalized Born OBC2 (ADR 0004)
 - Replica-Exchange-Moves (Temperatur-Austausch auf Host-Seite)
 - `ImageChargeForce` für Metalloberflächen
