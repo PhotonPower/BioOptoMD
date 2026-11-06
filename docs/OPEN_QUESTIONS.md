@@ -23,7 +23,7 @@ Die Vorschläge aus den Reviews vom 2026-11-04 (inklusive der Nachträge aus Rev
 | OQ-12 | assumption | Gouy-Chapman-Term für Atome hinter der Wand (ζ < 0): wie fortsetzen? | – | V = q Φ0 konstant, F = 0 (energiekonsistent; die 9-3-Wand verhindert ζ < 0 praktisch). | – (Bestätigung offen) |
 | OQ-13 | resolved | Widerspruch PHYSICS_MODEL §4.1 ↔ ADR 0002: Clamp bei 0.1 σ erzeugte Kräfte ≫ 2³¹, Fixed-Point-Summen konnten überlaufen. | – | Entschieden 2026-11-03 (Projektinhaber): Kraftschranke für ζ_c + Sättigung pro Beitrag + Geräte-Statusflags, siehe ADR 0008. | Projektinhaber (2026-11-03) |
 | OQ-14 | open | Welcher Temperaturschätzer soll gemeldet werden? Die kinetische Temperatur am vollen BAOAB-Schritt ist bei Δt = 4 fs um ~10 % zu niedrig (PHYSICS_MODEL §1), obwohl die Konfigurationen korrekt bei 300 K gesampelt werden. Alternativen: Geschwindigkeiten nach dem O-Schritt (Halbschritt), konfigurationelle Temperatur, oder nur dokumentieren. | – | Unverändert: E_kin am vollen Schritt, Bias dokumentiert. | – (Bestätigung offen) |
-| OQ-15 | assumption | GB-Modell und Radiensatz für Nukleinsäuren: OBC2 (mbondi2, ADR 0004) oder GB-neck2 (GBn2, mbondi3, Nguyen et al. 2014), das für DNA/RNA-Strukturen als deutlich besser gilt? | – | Projektinhaber 2026-11-05: zuerst OBC2 mit mbondi2 und Salzkorrektur (ADR 0010); GBn2 mit mbondi3 und Nukleinsäure-Parametern als zweites Modell ergänzt (ADR 0012, Phase 9.3). **Entschieden 2026-11-05 (§OQ-15):** GBn2 als Default für Nukleinsäure-Systeme; Validierung mit OL21 vor Produktionsläufen offen. | Projektinhaber (2026-11-05) |
+| OQ-15 | assumption | GB-Modell und Radiensatz für Nukleinsäuren: OBC2 (mbondi2, ADR 0004) oder GB-neck2 (GBn2, mbondi3, Nguyen et al. 2014), das für DNA/RNA-Strukturen als deutlich besser gilt? | – | Projektinhaber 2026-11-05: zuerst OBC2 mit mbondi2 und Salzkorrektur (ADR 0010); GBn2 mit mbondi3 und Nukleinsäure-Parametern als zweites Modell ergänzt (ADR 0012, Phase 9.3). **Entschieden 2026-11-05 (§OQ-15):** GBn2 als Default für Nukleinsäure-Systeme; Validierung mit OL21: (a) Duplex-Stabilität nach Auswertung auf der 100-ns-Skala bestanden (Claude, 2026-11-05; Bestätigung durch den Projektinhaber offen), (b) Hairpin-Faltung 1PQT bestanden (Claude, 2026-11-06; bestätigt vom Projektinhaber 2026-11-06). | Projektinhaber (2026-11-05) |
 | OQ-16 | open | GB nahe der Oberfläche: Die Wand (Graphen/Gold) ist im GB-Modell Lösungsmittel; die dielektrische Grenze (Desolvatation an der Oberfläche, Bildladungen) fehlt. Wie modellieren (Wand als Niedrig-ε-Halbraum in den Born-Integralen, ImageChargeForce)? Folgen: Desolvatation an der Wand fehlt, ACE überschätzt die zugängliche Fläche an der Wand, der Gouy-Chapman-Wandterm arbeitet weiter mit κ (konsistent, aber nicht aus GB abgeleitet). | – | Vorerst nicht modelliert, in ADR 0010 dokumentiert. | – (offen) |
 | OQ-17 | open | Replica Exchange mit Gouy-Chapman: Ist Φ0 der diffusen Schicht über die Temperaturleiter konstant (fest vorgegebenes Potential) oder folgt es bei fester Oberflächenladung der Grahame-Gleichung Φ0(T, κ)? | – | Φ0 fest über alle Zustände; κ folgt dem Zustand (ADR 0011). | – (offen) |
 
@@ -205,6 +205,67 @@ entschieden, offen bleibt die Validierung mit OL21 (unten).
 - (c) Optional Vergleich mit expliziter Wasser-Referenz (OpenMM, TIP3P/OPC) für ein Aptamer-Fragment.
 Akzeptanz: GBn2 mindestens so stabil wie OBC2 und strukturell näher am Experiment. Sonst OQ-15 neu
 bewerten (z. B. GB-Neck3 oder OL21-angepasste Radien).
+
+**Ergebnis (a), 2026-11-05** (`examples/gb_validation/duplex_stability.py`, Seed 2026, RTX 3090;
+Mittel über 50–100 ns, ± Standardfehler über die 4 Replicas. Alle Replicas starten aus derselben
+Struktur, das ± ist daher ein Rauschmaß, keine Präzision; „0.84 ± 0.00“ heißt: alle 4 Replicas sitzen
+bei 10/12 intakten Paaren fest. Referenz ist die Startstruktur: 1BNA
+mit Wasserstoffen, 300 Schritte minimiert (OL15, Debye-Hückel), 0.068 nm Schweratom-RMSD zum Kristall.
+
+| Größe | GBn2 | OBC2 |
+|---|---|---|
+| RMSD Schweratome, alle 12 bp [nm] | 0.215 ± 0.005 | 0.361 ± 0.004 |
+| RMSD Schweratome, innere 8 bp [nm] | 0.150 ± 0.001 | 0.197 ± 0.001 |
+| Watson-Crick-Paare intakt, alle | 0.94 ± 0.02 | 0.84 ± 0.00 |
+| Watson-Crick-Paare intakt, innere 8 | 0.999 | 0.994 ± 0.001 |
+| kleinster P–P-Abstand zwischen den Strängen [nm] (Start 1.269) | 1.246 ± 0.003 | 1.238 ± 0.005 |
+
+- OBC2: Der RMSD (alle) steigt über 0–60 ns von 0.28 auf 0.36 nm und bleibt dann konstant. Gleichzeitig
+  fällt der Anteil intakter Paare von 0.99 auf 0.83, d. h. im Mittel sind die beiden Endpaare dauerhaft
+  geöffnet (Fraying); der Kern bleibt gepaart, ist aber stärker verzerrt (0.197 nm).
+- GBn2: Der RMSD bleibt über 100 ns bei 0.20–0.22 nm, der Kern bei 0.15 nm. Die Endpaare öffnen
+  zeitweise. Ihr Anteil intakter Paare sinkt in den letzten 30 ns leicht (0.97 → 0.91 je 10-ns-Block);
+  ob das ein beginnender Trend oder Schwankung ist, klärt erst ein längerer Lauf.
+- Keine Statusfehler, keine Konstraint-Probleme; Durchsatz ≈ 1000 ns/Tag je Replica (4 Replicas).
+
+**Bewertung (a), Einschätzung Claude:** Akzeptanzkriterium auf der 100-ns-Skala erfüllt; ob GBn2 in
+längeren Läufen ebenfalls ausfranst (OBC2 brauchte ≈ 60 ns), ist offen. GBn2 hält den Duplex stabiler als OBC2 und bleibt
+deutlich näher an der Kristallstruktur (Kern 0.15 statt 0.20 nm). Einschränkungen: Furchenbreiten
+wurden nicht direkt ausgewertet, der minimale P–P-Abstand ist nur ein grobes Ersatzmaß und
+unterscheidet die Modelle nicht. Gemessen wurde ein einziges Sequenzsystem bei einem Seed. (b)
+Hairpin-Faltung: siehe unten; (c) explizites Wasser steht aus.
+
+**Ergebnis (b), 2026-11-06** (`examples/gb_validation/hairpin_folding.py --ns 1000`, RTX 3090,
+87 934 s Laufzeit für 32 Replicas × 1 µs; Austauschakzeptanz 0.62–0.71 je Nachbarpaar). Leitern 0, 1
+starten aus der NMR-Struktur, Leitern 2, 3 aus gestreckten Strukturen (RMSD 0.67/0.86 nm, kein Stammpaar).
+Anteil gefaltet je Temperatur, zweite Hälfte (500–1000 ns), ± Standardfehler aus 10 Blöcken zu 50 ns.
+Die Blöcke sind bei hohen T nicht unabhängig (lange Entfaltungsepisoden, s. u.); die Fehler sind dort zu klein.
+
+| Leiter (Start) | 300 K | 318.5 K | 338.2 K | 359.1 K | 370 K |
+|---|---|---|---|---|---|
+| 0 (NMR) | 0.995 ± 0.001 | 0.993 ± 0.001 | 0.986 ± 0.002 | 0.972 ± 0.003 | 0.960 ± 0.005 |
+| 1 (NMR) | 0.993 ± 0.001 | 0.991 ± 0.002 | 0.976 ± 0.007 | 0.947 ± 0.020 | 0.906 ± 0.047 |
+| 2 (gestreckt) | 0.994 ± 0.001 | 0.990 ± 0.003 | 0.977 ± 0.006 | 0.930 ± 0.021 | 0.864 ± 0.050 |
+| 3 (gestreckt) | 0.991 ± 0.002 | 0.974 ± 0.003 | 0.948 ± 0.009 | 0.855 ± 0.028 | 0.672 ± 0.070 |
+
+- Faltung aus gestreckter Struktur: Der 300-K-Zustand ist in den Leitern 2, 3 nach 1.5 bzw. 2.4 ns
+  erstmals gefaltet; im ersten Viertel (0–250 ns) liegt der Anteil bei 300 K noch bei 0.73/0.69, bei
+  370 K bei 0.07/0.03. Ab 250 ns liegen beide Leitern bei 300 K über 0.97. Median-RMSD bei 300 K:
+  0.101/0.102 nm (NMR-Starts), 0.110/0.116 nm (gestreckte Starts).
+- Mischung: 300–615 Rundreisen 300 K ↔ 370 K je Walker, in Leiter 3 am wenigsten (297–403).
+- Hohe Temperaturen nicht konvergiert: Die Unterschiede bei 370 K (0.96 vs. 0.67) gehen auf einzelne
+  Walker zurück, die über Hunderte ns ungefaltet bleiben und dabei die oberen Zustände besetzen
+  (Leiter 3: Walker 0 und 7 nur zu 0.70/0.73 gefaltet, die übrigen ≥ 0.95). Ungefaltet heißt bei
+  370 K überwiegend „kein Stammpaar“ (56–71 %), Median-RMSD 0.44–0.49 nm. Eine Schmelzkurve lässt sich
+  aus 1 µs daher nicht belastbar ablesen; ein Vergleich mit der experimentellen Schmelztemperatur
+  wurde nicht gemacht.
+
+**Bewertung (b), Einschätzung Claude (vom Projektinhaber am 2026-11-06 bestätigt, Phase 9.4 abgenommen):** Akzeptanzkriterium (b) erfüllt. Beide gestreckten Leitern
+falten in den nativen Zustand (RMSD ≈ 0.1 nm zum NMR-Modell 1), und der Anteil gefaltet bei 300 K in
+der zweiten Hälfte stimmt in allen 4 Leitern überein (0.991–0.995, Streuung 0.002 bei Blockfehlern
+0.001–0.002). Einschränkungen: ein System, ein Seed je Leiter, Gefaltet-Schwelle nach Annahme
+(RMSD < 0.25 nm + beide Stammpaare); das Temperaturverhalten oberhalb ≈ 340 K ist nicht konvergiert
+und sagt nichts über eine mögliche Überstabilisierung durch GBn2 + OL21 aus.
 
 **Quellen (per Websuche geprüft, 2026-11-05):** Stony Brook Research Connect / PMC4805114 (Nguyen et
 al. 2015, Bibliographie und Abstract); chemRxiv 666325fbe7ccf7753a3a337c (GB-Neck3-Preprint, 2024).

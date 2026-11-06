@@ -15,6 +15,11 @@ zustandsabhängige Parameter reduziert sich Δ auf (β_i − β_j)(U(x_b) − U(
 
 Paarschema: abwechselnd Nachbarpaare (0,1), (2,3), … und (1,2), (3,4), … der Temperaturleiter;
 jeder einzelne Zug erfüllt die detaillierte Bilanz, die deterministische Abfolge die Balance.
+
+Mehrere unabhängige Leitern in einem Kontext (``ladders=L``): Die Slots zerfallen in L
+zusammenhängende Blöcke zu m = n_replicas/L; Block b trägt die Zustände b·m … b·m + m − 1 mit
+denselben Temperaturen, getauscht wird nur innerhalb eines Blocks (z. B. Konvergenzprüfung mit
+verschiedenen Startstrukturen bei vollem Durchsatz).
 Zufallszahlen aus ``numpy.random.Generator`` (PCG64, Seed) ⇒ deterministisch.
 
 Nicht zustandsabhängig: die Oberflächenladung bzw. Φ0 der Gouy-Chapman-Wand (κ folgt dem Zustand),
@@ -42,25 +47,40 @@ class ReplicaExchange:
         ctx: Kontext mit n_replicas Slots; Integrator und Kräfte bereits gesetzt. Der Cutoff r_c muss
             für alle Zustände gelten (ADR 0006: r_c = n_κ/min_k κ_k – ``build_context`` mit allen
             Temperaturen aufbauen).
-        temperatures_k: T_k [K] der Zustände, aufsteigend, (n_replicas,).
+        temperatures_k: T_k [K] der Zustände einer Leiter, aufsteigend, (n_replicas / ladders,).
         ionic_strength_molar: Ionenstärke [mol/L]; dann ε_k = ε_r,Wasser(T_k) und κ_k aus I, T_k, ε_k
             (OQ-10). Oder ``kappa``/``eps_r`` je Zustand explizit; ohne beides bleibt die Abschirmung
-            unverändert (reiner Temperaturaustausch).
+            unverändert (reiner Temperaturaustausch). ``kappa``/``eps_r`` je Zustand einer Leiter
+            oder skalar.
         seed: Seed der Akzeptanzzufallszahlen.
+        ladders: Anzahl unabhängiger Leitern L (s. o.); n_replicas muss durch L teilbar sein.
+
+    Attributes:
+        temperatures: T je globalem Zustand, (n_replicas,) (die Leiter L-mal wiederholt).
+        attempts, accepted: je Paar (k, k+1) globaler Zustände, (n_replicas − 1,); Paare über eine
+            Blockgrenze werden nie versucht.
     """
 
     def __init__(self, ctx, temperatures_k, ionic_strength_molar=None, kappa=None, eps_r=None,
-                 seed: int = 0):  # fmt: skip
+                 seed: int = 0, ladders: int = 1):  # fmt: skip
         self.ctx = ctx
-        self.temperatures = np.asarray(temperatures_k, np.float64)
         n = ctx.n_replicas
-        if self.temperatures.shape != (n,) or not np.all(np.diff(self.temperatures) > 0):
-            raise ValueError("temperatures_k: aufsteigend, eine je Replica")
+        if ladders < 1 or n % ladders != 0:
+            raise ValueError("ladders: Teiler von n_replicas")
+        self.ladders = int(ladders)
+        self.ladder_size = m = n // self.ladders
+        ladder = np.asarray(temperatures_k, np.float64)
+        if ladder.shape != (m,) or not np.all(np.diff(ladder) > 0):
+            raise ValueError("temperatures_k: aufsteigend, eine je Replica einer Leiter")
+        self.temperatures = np.tile(ladder, self.ladders)
         if ionic_strength_molar is not None:
             if kappa is not None or eps_r is not None:
                 raise ValueError("entweder ionic_strength_molar oder kappa/eps_r")
             eps_r = _nonbonded.water_permittivity(self.temperatures)
             kappa = _nonbonded.debye_kappa(ionic_strength_molar, self.temperatures, eps_r)
+        elif kappa is not None or eps_r is not None:
+            kappa = None if kappa is None else self._per_state(kappa)
+            eps_r = None if eps_r is None else self._per_state(eps_r)
         self.kappa = None if kappa is None else np.broadcast_to(np.asarray(kappa, np.float64), (n,))
         self.eps_r = None if eps_r is None else np.broadcast_to(np.asarray(eps_r, np.float64), (n,))
         if (self.kappa is None) != (self.eps_r is None):
@@ -82,6 +102,17 @@ class ReplicaExchange:
         ctx.compute_forces()
 
     # --- Zustände ----------------------------------------------------------------------------
+    def _per_state(self, values):
+        """Skalar oder (Leiterlänge,) → je globalem Zustand."""
+        v = np.asarray(values, np.float64)
+        if v.ndim == 0:
+            return v
+        if v.shape not in ((1,), (self.ladder_size,)):
+            raise ValueError(
+                f"kappa/eps_r: skalar oder je Zustand einer Leiter ({self.ladder_size},)"
+            )
+        return np.tile(np.broadcast_to(v, (self.ladder_size,)), self.ladders)
+
     def _apply(self, state):
         self.ctx.set_temperatures(self.temperatures[state].astype(np.float32))
         if self.kappa is not None:
@@ -109,10 +140,11 @@ class ReplicaExchange:
         """Ein Austauschversuch aller Paare der aktuellen Parität. Erwartet Kräfte/Energien zum
         aktuellen Zustand (nach ``ctx.step`` gegeben). Returns: bool (n_pairs,) akzeptiert je
         Leiterpaar (False für nicht versuchte Paare)."""
-        n = len(self.state)
+        n, m = len(self.state), self.ladder_size
         parity = self.n_cycles % 2
         self.n_cycles += 1
-        pairs = [(k, k + 1) for k in range(parity, n - 1, 2)]
+        pairs = [(b * m + k, b * m + k + 1) for b in range(self.ladders)
+                 for k in range(parity, m - 1, 2)]  # fmt: skip
         accepted = np.zeros(n - 1, bool)
         if not pairs:
             return accepted

@@ -2,7 +2,8 @@
 
 > Diese Datei wird am Ende **jeder** Arbeitssitzung aktualisiert (AGENTS.md §2.4).
 
-**Aktive Phase:** 9+ – nächste Erweiterung nach Entscheidung des Projektinhabers.
+**Aktive Phase:** 9.4 – Validierung GBn2 + OL21 (OQ-15), Branch `phase-9/gb-validation`.
+Alle PRs #1–#6, #9–#14 am 2026-11-05 nach `main` gemergt (Merge-Commits, Reihenfolge des Stapels).
 **Phase 9.3 (GB-neck2) abgenommen** am 2026-11-05, ADR 0012 und Abnahmekriterien bestätigt.
 **Phase 9.2 (Replica Exchange) abgenommen** am 2026-11-05, ADR 0011 und Abnahmekriterien bestätigt.
 **Phase 8 abgenommen** am 2026-11-05 durch den Projektinhaber (RTX 3090, PR #11).
@@ -24,6 +25,21 @@
 
 - Phase 5 (PR #5): HMR, SHAKE/RATTLE auf H-Bindungen, N_dof. Abgenommen 2026-11-03; Nacharbeit nach
   Review siehe unten.
+
+## Phase 9.4 – Validierung GBn2 + OL21 (OQ-15): abgenommen 2026-11-06
+- OL21 ist in OpenMM 8.6 vorhanden (`amber19/DNA.OL21.xml`), kompatibel mit `implicit/gbn2.xml` und
+  `obc2.xml` (frühere Notiz „OL21 nicht verfügbar“ war falsch).
+- (a) `examples/gb_validation/duplex_stability.py`: 1BNA, 4 × 100 ns je Modell, HMR/4 fs, 0.15 M.
+  **Bestanden:** GBn2 RMSD 0.215 nm (alle) / 0.150 nm (innen), 94 % Paare intakt; OBC2 0.361 / 0.197 nm,
+  84 % (Endpaare dauerhaft offen). Tabelle und Einschränkungen in OPEN_QUESTIONS §OQ-15.
+- (b) Hairpin-Faltung, Projektinhaber 2026-11-05: d(GCGAAGC), PDB 1PQT (NMR, sequenzidentisch;
+  per PDB geprüft). `examples/gb_validation/hairpin_folding.py`: 4 unabhängige REMD-Leitern × 8 T
+  (300–370 K), 2 aus NMR-, 2 aus gestreckter Struktur, 1 µs je Replica (24.4 h).
+  Dafür neu: `ReplicaExchange(ladders=L)` (Test `test_remd_multiple_ladders`).
+  **Bestanden (2026-11-06):** beide gestreckten Leitern falten (erstmals nach 1.5/2.4 ns bei 300 K),
+  Anteil gefaltet bei 300 K in der zweiten Hälfte 0.995/0.993/0.994/0.991 (Blockfehler ≤ 0.002),
+  Median-RMSD 0.10–0.12 nm. Oberhalb ≈ 340 K nicht konvergiert (370 K: 0.96–0.67 je Leiter, einzelne
+  lange Entfaltungsepisoden). Tabelle in OPEN_QUESTIONS §OQ-15.
 
 ## Phase 9.3 – GB-neck2: abgenommen 2026-11-05 (Branch `phase-9/gbn2`)
 - ADR 0012 (Accepted 2026-11-05): Modell wie OpenMM `implicit/gbn2.xml`, Parameter und interpolierte Neck-Tabellen
@@ -229,6 +245,9 @@ ADR 0007 → **0009** (Mixed Precision), unsere OQ-08…11 → **OQ-11…14**.
 | 2026-11-05 | Projektinhaber | Phase 9.2 abgenommen, ADR 0011 und Kriterien bestätigt; nächste Erweiterung: GB-neck2. |
 | 2026-11-05 | Claude Opus 5.5 | Phase 9.3 GB-neck2 implementiert (ADR 0012). |
 | 2026-11-05 | Projektinhaber | Phase 9.3 abgenommen, ADR 0012 und Kriterien bestätigt; Vorschlag zu OQ-15 angenommen (GBn2 Default für Nukleinsäuren, Validierung offen). |
+| 2026-11-06 | Projektinhaber | Phase 9.4 abgenommen: OQ-15 (b) Hairpin-Faltung 1PQT bestanden (Kriterium (b) erfüllt). |
+| 2026-11-05 | Claude Opus 5.5 | PRs #1–#6, #9–#14 nach main gemergt; Validierung (a) Duplex 1BNA gestartet. |
+| 2026-11-05 | Claude Opus 5.5 | Validierung (a) abgeschlossen: GBn2 stabiler und näher am Kristall als OBC2 (PR #15). |
 | 2026-11-05 | Claude Opus 5.5 | Phase 9.2 Replica Exchange implementiert (ADR 0011 Proposed), 113/113 Tests grün. |
 | 2026-11-05 | Claude Opus 5.5 | Phase 9.1 GB-OBC2 implementiert (ADR 0010 Proposed, gb_ref, TiledGeneralizedBorn, Builder), 12/12 Phase-9-Tests grün. |
 | 2026-11-05 | Claude Opus 5.5 | Phase 8: Benchmark vs. OpenMM (32×2k Faktor 3.5), Tile-Vorauswahl, M-SHAKE/RATTLE; Review umgesetzt, 94/94 Tests grün. |

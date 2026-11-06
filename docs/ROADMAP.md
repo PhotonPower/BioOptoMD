@@ -207,6 +207,21 @@ Dokumentation, Verzeichnisstruktur, Agenten-Anweisungen, Build-Entwürfe.
 - `test_phase9_gbn2.py::test_gbn2_vs_openmm` (`reference`) – Builder-Weg gesamt vs. OpenMM, Energie/Kräfte < 1e-4.
 - `test_phase9_gbn2.py::test_gbn2_nve` (`slow`) – NVE wie test_gb_nve (0.5 fs), Drift < 1e-4.
 
+### Phase 9.4 – Validierung GBn2 + OL21 (OQ-15; vom Projektinhaber am 2026-11-05 gewählt; abgenommen 2026-11-06)
+
+**Aufgaben**
+1. (a) Duplex 1BNA, GBn2 vs. OBC2, 4 × 100 ns, 0.15 M, 300 K (`examples/gb_validation/duplex_stability.py`).
+2. (b) Hairpin d(GCGAAGC), PDB 1PQT (Wahl des Projektinhabers): REMD-Faltung aus gestreckter Struktur,
+   4 unabhängige Leitern × 8 T (300–370 K), 1 µs je Replica (`examples/gb_validation/hairpin_folding.py`).
+3. `ReplicaExchange(ladders=L)`: mehrere unabhängige Leitern je Kontext.
+
+**Abnahmekriterien (Vorschlag, Bestätigung durch den Projektinhaber offen)**
+- (a) GBn2 mindestens so stabil wie OBC2 (intakte Paare) und näher an der Kristallstruktur (RMSD), OQ-15.
+- (b) Leitern aus gestreckter Struktur erreichen den nativen Zustand; Anteil gefaltet bei 300 K in der
+  zweiten Hälfte in allen 4 Leitern übereinstimmend (Abweichung im Rahmen der Leiter-zu-Leiter-Streuung).
+- `test_phase9_remd.py::test_remd_multiple_ladders`, `::test_remd_explicit_screening_ladders` –
+  Entscheidungen, Zähler und Zustandsparameter je Leiter exakt wie unabhängig berechnet.
+
 - Generalized Born OBC2 (ADR 0004)
 - Replica-Exchange-Moves (Temperatur-Austausch auf Host-Seite)
 - `ImageChargeForce` für Metalloberflächen
