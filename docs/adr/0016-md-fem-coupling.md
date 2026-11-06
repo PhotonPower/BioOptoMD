@@ -1,6 +1,6 @@
 # ADR 0016: Selbstkonsistente Kopplung MD ↔ FEM (optische Kräfte rückgekoppelt)
 
-- **Status:** Proposed
+- **Status:** Accepted (Projektinhaber 2026-11-06, Kriterien bestätigt; Solver hp-FEM, OQ-20)
 - **Datum:** 2026-11-06
 - **Bezug:** OQ-01/02 (α′, Atomvolumina, Kalibrierung offen), OQ-04 (Normierung, Überschusspolarisierbarkeit,
   Lokalfeldfaktor offen), PHYSICS_MODEL §4.3 (`VoxelGridForce3D`) und §6.3 (`RefractiveIndexProfiler`),
@@ -41,8 +41,13 @@ ein Feld W(r), und unter diesem Feld reproduziert die MD dieselbe Verteilung.
   denn sie ist das Sensorsignal. Die Kraft ist allerdings dann bedeutungslos.
 
 Randbedingungen:
-- Der FEM-Solver ist extern (z. B. COMSOL, JCMsuite, FEniCS, MEEP); welchen der Projektinhaber
-  nutzt, ist offen (OQ-20).
+- Der FEM-Solver ist extern: **hp-FEM** (https://github.com/PhotonPower/hp-FEM, Projektinhaber
+  2026-11-06, OQ-20). Eigenschaften von hp-FEM, die die Schnittstelle bestimmen:
+  - Python-Paket mit SI-Einheiten und Zeitkonvention e^{−iωt}; Felder sind komplexe
+    Spitzenamplituden, genau wie OQ-04.
+  - Material je Zelle über `MaterialMap.set_cell`, Zellschwerpunkte über `mesh.cell_centroids()`.
+  - Feldwerte an Punkten über `problem.sample(solution, locator, points)`; Schichtstapel als
+    Hintergrund (`LayerStack3D`).
 - Das optische Feld folgt der Konfiguration instantan. Ein FEM-Lauf je MD-Schritt ist aber unmöglich
   (Sekunden bis Minuten je Lösung gegenüber ~1 ms je MD-Schritt).
 
@@ -81,9 +86,19 @@ Randbedingungen:
    - Mitgeliefert werden zwei Adapter:
      - (a) **TMM-Referenzsolver** (NumPy, 1D, geschichtetes Medium, p/s-Polarisation, z. B. Kretschmann/SPR
        über Gold). Er ist exakt für planare Schichten, die Referenz der Tests und nützlich für
-       planare Sensoren.
-     - (b) **Datei-Adapter:** ε schreiben, auf das Ergebnis des externen Solvers warten, W einlesen.
-       Format und Interpolation vom FEM-Netz auf das Gitter: OQ-20.
+       planare Sensoren. Er dient auch als Gegenprobe zu hp-FEM: Im planaren Fall muss hp-FEM mit
+       `LayerStack3D` dasselbe W liefern.
+     - (b) **hp-FEM-Adapter `HpFemSolver`** (OQ-20), läuft im selben Python-Prozess. Der Nutzer liefert
+       eine Fabrik für Netz und Setup seiner Geometrie (Materialien, Anregung, PML bzw. Schichtstapel)
+       sowie die Zellen des Molekülbereichs.
+       - Je Zelle im Molekülbereich wird ε = ⟨ε⟩ am Schwerpunkt (trilinear aus dem Beobachtergitter)
+         über `set_cell` gesetzt. Die Zellen dort sollen nicht gröber als die Merkmale von ⟨ε⟩ sein.
+       - Dann lösen und |E|² an den Punkten des Kraftgitters über `problem.sample` auswerten.
+       - Umrechnung: nm ↔ m (Faktor 10⁻⁹), W[(V/nm)²] = Σ_c |E_c[V/m]|² · 10⁻¹⁸.
+       - Die Eingangsamplitude folgt aus der Intensität: I = ½ n c ε₀ |E₀|².
+     - (c) **Datei-Adapter** (npz auf regulärem Gitter) als Rückfall, falls hp-FEM nicht im selben
+       Interpreter läuft (unter Windows baut hp-FEM mit MSYS2, BioOptoMD mit MSVC). Ob ein
+       gemeinsamer Interpreter möglich ist, klärt Phase 10.
 5. **Treiber `SelfConsistentOptics`.**
    - Hält Iterationszähler, Mischparameter und Verlauf (ε- und W-Änderung, Observablen je Iteration).
    - Ein Checkpoint je Iteration (Kontext über `io.save_checkpoint` plus W, ⟨ε⟩, Verlauf), damit
@@ -95,7 +110,11 @@ Randbedingungen:
    - Keine Erwärmung in Hotspots; Fluorophore im Optikmodus ausgeschlossen.
 7. **Voraussetzungen vor der Kopplung (Phase 10.0):**
    - (a) `test_voxel_optical_sphere_consistency` (Lokalfeldfaktor, offen seit Phase 6).
-   - (b) Kalibrierung von α′ und v an dn/dc (`test_refractive_index_dn_dc`, OQ-01/02).
+   - (b) Kalibrierung von α′ und v an dn/dc (`test_refractive_index_dn_dc`, OQ-01/02). Eigene
+     Messwerte gibt es noch nicht (Projektinhaber 2026-11-06). Kalibriert wird an Literaturwerten,
+     deren Unsicherheit als Toleranz dient: Proteine 0.190 ± 0.003 mL/g bei 589 nm (Zhao et al.
+     2011), DNA ≈ 0.17 mL/g bei 633 nm (Handbuchwert, Salzabhängigkeit offen). Eigene Messungen
+     ersetzen die Werte später.
 
    Ohne beides ist die Rückkopplung quantitativ nicht belastbar. Kräfte und ε hängen direkt an α′_eff.
 
@@ -141,5 +160,8 @@ Randbedingungen:
     - Bei Feldstärke 0 ist es identisch mit der ungekoppelten MD (bitgleich).
   - **Größenordnung:** `test_coupling_scaling`. Die Verschiebung von ⟨z⟩ einer Testschicht skaliert
     im schwachen Feld linear mit der Intensität.
+  - **hp-FEM-Adapter:** `test_hpfem_adapter_planar` (`reference`, nur wenn hp-FEM installiert ist).
+    Planare Schicht über Gold: W aus hp-FEM gegen den TMM-Referenzsolver, rel. < 1 % nach
+    hp-Verfeinerung; Einheiten und Amplitudenkonvention über den Fall ohne Schicht (Fresnel).
   - **Fortsetzen:** `test_coupling_resume`. Abbruch und Fortsetzen nach Iteration k liefern dasselbe
     Ergebnis wie ein durchgehender Lauf (bitgleich bei gleichem Seed).
