@@ -305,16 +305,42 @@ Abnahmetests (revidierte Fassung vom Projektinhaber bestätigt 2026-11-06):
    `test_coupling_scaling`, `test_coupling_resume`). hp-FEM-Adapter `HpFemGratingSolver` (in x
    periodisch, in y invariant; `test_hpfem_adapter_planar`, rel. 3e-5 gegen TMM;
    `test_hpfem_adapter_lateral`) und
-   `NpzFileSolver` (`test_npz_file_solver`). Offen: allgemeiner 3D-Adapter (`Scattering3D` mit
-   `LayerStack3D`), Treiber mit Replica Exchange (Zielzustand über die Slots, ADR 0016 Punkt 5).
+   `NpzFileSolver` (`test_npz_file_solver`). Offen: Treiber mit Replica Exchange (Zielzustand über
+   die Slots, ADR 0016 Punkt 5); der 3D-Adapter folgt in Punkt 5.
 4. Beispiel: Aptamerschicht über Gold im Kretschmann-Aufbau mit dem TMM-Adapter. *Umgesetzt
    2026-11-06* (`examples/aptamer_spr_gold`, `test_example_aptamer_spr_gold`).
-5. *Nächster Schritt (Projektinhaber 2026-11-06):* 3D-hp-FEM-Adapter (`Scattering3D` mit
+5. *Abgenommen 2026-11-06:* 3D-hp-FEM-Adapter (`Scattering3D` mit
    `LayerStack3D`, Bloch-Einheitszelle in x und y, strukturiertes Tetraedernetz `hpfem.box`) für
    Strukturen, die in x und y variieren (Nanopartikel, Hotspots). Kriterien (Vorschlag): an einer in y
    invarianten Struktur gleiches W wie `HpFemGratingSolver` (rel. < 1 %); planar gegen TMM
    (rel. < 1 %); Speicher und Laufzeit je Lösung über der ε-Auflösung im Molekülbereich dokumentiert.
-   Offen daneben: Replica Exchange im Treiber.
+   *Umgesetzt 2026-11-06:* `HpFemSolver3D` (Streufeld auf `LayerStack3D`, Bloch-Paare in x und y,
+   PML oben/unten, ε je Tetraeder zellkonstant, Mittel an Netzlinien). Tests: `test_hpfem3d_planar`
+   (gegen TMM p 1.3e-4, s 1.9e-6; Schichteffekt W − W_Wasser 6.6e-4 bzw. 1.5e-3),
+   `test_hpfem3d_vs_grating` (slow, Grad 3: x-Struktur gegen 2.5D 3.8e-3; y-Struktur mit s bei 0°
+   gegen x-Struktur mit p im 2.5D-Adapter 7.2e-3; Verschiebung in y; Zeilenkontrast 15 %).
+   Aufwand je Lösung (Box 6 × 6 nm, Bereich 8 nm, Kretschmann p, RTX 3090 / 24 Kerne, paralleler
+   MD-Hintergrundlauf, Einzelmessung inkl. Python-Zellschleife; Unbekannte vor der statischen
+   Kondensation). Release-Wheel 0.4.0: einfädig, nur SparseLU. Eigener Build (OQ-26): OpenMP
+   16 Threads, MUMPS 5.9 (METIS), cuDSS 0.8 (CUDA 12.9). Speicher: Spitzen-Arbeitsspeicher des
+   Prozesses (eigener Build); `estimate_memory` (SparseLU) überschätzt ihn deutlich.
+
+   | ε-Zelle lateral × Δz | Grad | Unbekannte | Wheel, SparseLU | Build, SparseLU | Build, MUMPS | Build, cuDSS |
+   |---|---|---|---|---|---|---|
+   | 2.0 nm × 0.5 nm | 2 | 42 522 | 11.5 s | 2.9 s / 0.6 GiB | 2.7 s / 0.4 GiB | 2.2 s / 0.5 GiB |
+   | 1.0 nm × 0.5 nm | 2 | 156 834 | 328 s | 273 s / 9.8 GiB | 24 s / 2.3 GiB | 9.2 s / 1.0 GiB |
+   | 1.0 nm × 0.5 nm | 3 | 447 147 | 1433 s | – | 125 s / 10.2 GiB | 61 s / 4.5 GiB |
+   | 0.5 nm × 0.5 nm | 2 | 601 458 | – | – | 185 s / 16.0 GiB | 78 s / 3.8 GiB |
+
+   Weitere Messungen mit dem Wheel: 2.0 nm × 0.25 nm Grad 2 7.8 s; 2.0 nm × 0.5 nm Grad 3 44 s,
+   Grad 3 / Bereich 1 59 s. Alle Backends liefern dasselbe W (rel. ≈ 1e-6).
+
+   Genauigkeit über dem Grad: planar gegen TMM (p) Grad 3 5e-5, Grad 2 1.3e-4, Grad 1 im Bereich
+   1.5e-3 → Default Grad 2; lateral strukturiert an ε-Kanten Grad 2 ≈ 1 %, Grad 3 ≈ 0.5 % (Hotspots:
+   Grad 3). Empfehlung: `backend="cudss"` (bzw. "auto", wählt ab 10 000 Unbekannten cuDSS), laterale
+   ε-Zellen bis 0.5 nm; die PML (600 nm je Seite, ≈ 60 % der z-Zeilen) ist der nächste Hebel.
+6. Replica Exchange im Treiber (ADR 0016 Punkt 5): Austauschzyklen während der Segmente, ⟨ε⟩ nur aus
+   dem Zielzustand (Slots über die Austauschpermutation verfolgt), REMD-Zustand im Checkpoint.
 
 Abnahmetests (Vorschlag): siehe ADR 0016, Konsequenzen (`test_polarizability_grid_vs_numpy`,
 `test_voxel_set_values`, `test_tmm_reference`, `test_coupling_fixed_point`, `test_coupling_scaling`,

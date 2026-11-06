@@ -104,7 +104,8 @@ Randbedingungen:
          periodisch mit der Box, in y invariant, ⟨ε⟩ über y gemittelt; strukturiertes Netz aus
          `hpfem.rectangle`, da hp-FEM 0.4.0 ohne gmsh kommt). ε je FEM-Zelle als Wert der ε-Zelle
          (Default, ⟨ε⟩ ist ein Zellmittel und so konsistent mit dem TMM; bilinear als Option statt
-         trilinear). Der allgemeine 3D-Adapter (`Scattering3D`) folgt bei Bedarf.
+         trilinear). Der allgemeine 3D-Adapter `HpFemSolver3D` (`Scattering3D`, Bloch in x und y)
+         folgt als Phase 10.5 (umgesetzt 2026-11-06; Aufwand ROADMAP 10.5, Build-Frage OQ-26).
      - (c) **Datei-Adapter** (npz auf regulärem Gitter) als Rückfall, falls hp-FEM nicht im selben
        Interpreter läuft. *Geprüft 2026-11-06:* Das Release-Wheel hp-FEM 0.4.0 (cp311-win_amd64, für
        python.org-CPython) importiert zusammen mit BioOptoMD im selben Interpreter, mit
