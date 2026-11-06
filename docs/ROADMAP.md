@@ -269,7 +269,7 @@ Dokumentation, Verzeichnisstruktur, Agenten-Anweisungen, Build-Entwürfe.
 - Messung (Kriterium): 1 × 20 k mindestens 1.25× schneller als vorher; 32 × 2 k und 128 × 1 k nicht
   langsamer (Toleranz 2 %); Vergleich mit OpenMM berichtet, kein Muss. Messung erst bei freier GPU.
 
-### Phase 9.7 – Folgearbeiten aus OQ-14 und OQ-18 (d) (Projektinhaber 2026-11-06; Kriterien Vorschlag)
+### Phase 9.7 – Folgearbeiten aus OQ-14 und OQ-18 (d) (Projektinhaber 2026-11-06; abgenommen 2026-11-06)
 1. Zweite Temperatur (OQ-14): Kandidaten Geschwindigkeiten nach dem O-Schritt und konfigurationelle
    Temperatur messen; der Schätzer, der den Bias bei Δt = 4 fs (HMR, H-Constraints) beseitigt, wird
    zusätzlich gemeldet. E_kin am vollen Schritt bleibt unverändert.
@@ -278,7 +278,7 @@ Dokumentation, Verzeichnisstruktur, Agenten-Anweisungen, Build-Entwürfe.
    Kraftterme; sie war nicht nötig, weil schon der erste Kandidat den Bias beseitigt.
 2. C¹-glattes Clamping von ζ in `ImageChargeForce` (OQ-18 d), ζ_c = 0.1 nm bleibt.
 
-Abnahmetests (Vorschlag):
+Abnahmetests (revidierte Fassung vom Projektinhaber bestätigt 2026-11-06):
 - Zweite Temperatur bei 300 K, Δt = 4 fs, 1 × 2 k mit Constraints: |⟨T⟩ − 300 K| < 1 % (4σ).
   ~~Bei 1 fs stimmen beide Schätzer überein (4σ).~~ Revidiert nach der Messung: Auch bei 1 fs liegt
   E_kin am vollen Schritt noch 1.8 K unter 300 K (Bias ∝ Δt²: 31.5 / 7.7 / 1.8 K bei 4 / 2 / 1 fs).

@@ -26,7 +26,7 @@ Alle PRs #1–#6, #9–#14 am 2026-11-05 nach `main` gemergt (Merge-Commits, Rei
 - Phase 5 (PR #5): HMR, SHAKE/RATTLE auf H-Bindungen, N_dof. Abgenommen 2026-11-03; Nacharbeit nach
   Review siehe unten.
 
-## Phase 9.7 – Folgearbeiten OQ-14 / OQ-18 (d), implementiert, Abnahme offen (Branch `phase-9/followups`)
+## Phase 9.7 – Folgearbeiten OQ-14 / OQ-18 (d): abgenommen 2026-11-06 (Branch `phase-9/followups`, PR #18)
 - C¹-glattes ζ-Clamping in `ImageChargeForce` (h = ζ_c/2): Referenz `smooth_zeta`, neue Tests
   `test_image_smooth_clamp_reference` (Stetigkeit, Kraft = −dU/dz) und `test_image_smooth_clamp_gpu`;
   alle 17 Tests aus 9.5 + neu grün; NVE-Drift 0.7–1.1·10⁻⁵ kJ/mol/ps/Atom (vorher 1–2·10⁻⁵),
@@ -38,7 +38,8 @@ Alle PRs #1–#6, #9–#14 am 2026-11-05 nach `main` gemergt (Merge-Commits, Rei
   Schritt von `step(n)`.
   - Messung 2k-System (HMR, H-Constraints, γ = 1/ps): 300.4 ± 0.3 / 300.2 / 300.2 K bei 4 / 2 / 1 fs;
     am vollen Schritt 268.5 / 292.3 / 298.2 K (Bias ∝ Δt²).
-  - Das Kriterium „bei 1 fs stimmen beide überein“ war falsch und ist revidiert (ROADMAP 9.7).
+  - Das Kriterium „bei 1 fs stimmen beide überein“ war falsch und ist revidiert (ROADMAP 9.7, vom
+    Projektinhaber bestätigt 2026-11-06).
   - `tests/python/test_phase9_temperature.py`: 3 Tests grün.
   - Review (unabhängiger Agent): kein kritischer Befund. Umgesetzt: NaN nach `set_velocities` und
     `restore_state`, Test „am Stück vs. in Stücken“ (Stride-Auswahl), NVE-Grenze 3e-5, Zähler über
@@ -304,6 +305,7 @@ ADR 0007 → **0009** (Mixed Precision), unsere OQ-08…11 → **OQ-11…14**.
 | 2026-11-06 | Projektinhaber | ADR 0014 (Tile-Paarliste statt Cell-List) angenommen, Rev. 1 bestätigt; Phase 9.6 erst später abnehmen, Kriterium 1.25× bleibt (OQ-19). |
 | 2026-11-06 | Projektinhaber / Claude | ADR 0015 (Constraint-Löser mit gemischter Präzision) angenommen; Prototyp verfehlt das Kriterium (−2 % statt −30 %) ⇒ nach Punkt 4 zurückgezogen (Rejected). |
 | 2026-11-06 | Projektinhaber | Vorschläge angenommen: OQ-15 (a) bestätigt; OQ-14 zweite Temperatur (Schätzer nach Messung); OQ-16 vorerst nicht modelliert; OQ-17 Φ0 fest; OQ-18 (a)–(c) wie Annahme, (d) C¹-glattes Clamping; Phase 9.6 als Entwurf-PR pushen; #15/#16 gemeinsam mergen nach Abnahme 9.4; nächste große Phase MD ↔ FEM-Kopplung (vor Coarse-Grained); Prototyp-Branch ADR 0015 lokal behalten. |
+| 2026-11-06 | Projektinhaber | Revidiertes Kriterium ROADMAP 9.7 (Bias-Verhältnis 4 fs / 2 fs zwischen 3 und 5) bestätigt; Phase 9.7 abgenommen, PR #18 gestapelt auf #17. |
 | 2026-11-05 | Claude Opus 5.5 | Phase 9.2 Replica Exchange implementiert (ADR 0011 Proposed), 113/113 Tests grün. |
 | 2026-11-05 | Claude Opus 5.5 | Phase 9.1 GB-OBC2 implementiert (ADR 0010 Proposed, gb_ref, TiledGeneralizedBorn, Builder), 12/12 Phase-9-Tests grün. |
 | 2026-11-05 | Claude Opus 5.5 | Phase 8: Benchmark vs. OpenMM (32×2k Faktor 3.5), Tile-Vorauswahl, M-SHAKE/RATTLE; Review umgesetzt, 94/94 Tests grün. |
