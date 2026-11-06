@@ -287,7 +287,18 @@ Abnahmetests (revidierte Fassung vom Projektinhaber bestätigt 2026-11-06):
 - Image: Kraft = −∇E (finite Differenzen) auch im Übergangsbereich um ζ_c; Energie und Kraft stetig
   über ζ_c; NVE-Drift mit H-Atomen nahe Gold nicht schlechter als in Phase 9.5; alle Tests aus 9.5 grün.
 
-### Nächste große Phase (Projektinhaber 2026-11-06): Gekoppelte MD ↔ FEM-Iteration vor Coarse-Grained; ADR folgt.
+### Phase 10 – Selbstkonsistente Kopplung MD ↔ FEM (ADR 0016, Proposed; Reihenfolge Projektinhaber 2026-11-06)
+0. Voraussetzungen: `test_voxel_optical_sphere_consistency` (Lokalfeldfaktor, OQ-04) und Kalibrierung
+   α′/v an dn/dc (`test_refractive_index_dn_dc`, OQ-01/02), beide offen seit Phase 6.
+1. `PolarizabilityGridObserver` (3D-ε-Karte, Gauß-Verschmierung, Lorentz-Lorenz).
+2. `VoxelGridForce3D::set_values` (Laufzeit-Update).
+3. `biooptomd.coupling`: Solver-Protokoll, TMM-Referenzsolver (1D), Datei-Adapter (Format OQ-20),
+   Treiber `SelfConsistentOptics` (Picard mit Dämpfung β, Checkpoint je Iteration).
+4. Beispiel: Aptamerschicht über Gold im Kretschmann-Aufbau mit dem TMM-Adapter.
+
+Abnahmetests (Vorschlag): siehe ADR 0016, Konsequenzen (`test_polarizability_grid_vs_numpy`,
+`test_voxel_set_values`, `test_tmm_reference`, `test_coupling_fixed_point`, `test_coupling_scaling`,
+`test_coupling_resume`).
 
 - Generalized Born OBC2 (ADR 0004)
 - Replica-Exchange-Moves (Temperatur-Austausch auf Host-Seite)

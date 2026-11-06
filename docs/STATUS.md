@@ -26,6 +26,11 @@ Alle PRs #1–#6, #9–#14 am 2026-11-05 nach `main` gemergt (Merge-Commits, Rei
 - Phase 5 (PR #5): HMR, SHAKE/RATTLE auf H-Bindungen, N_dof. Abgenommen 2026-11-03; Nacharbeit nach
   Review siehe unten.
 
+## Phase 10 – MD ↔ FEM-Kopplung: ADR 0016 (Proposed), Branch `phase-10/md-fem`
+- ADR 0016: Mean-Field-Fixpunktiteration mit Dämpfung, 3D-ε-Observer, `VoxelGridForce3D::set_values`,
+  Solver als Python-Protokoll (TMM-Referenz, Datei-Adapter), Voraussetzungen Lokalfeldtest und
+  dn/dc-Kalibrierung (Phase 10.0). Offen: OQ-20 (Solver, Format), OQ-21 (Mean-Field).
+
 ## Phase 9.7 – Folgearbeiten OQ-14 / OQ-18 (d): abgenommen 2026-11-06 (Branch `phase-9/followups`, PR #18)
 - C¹-glattes ζ-Clamping in `ImageChargeForce` (h = ζ_c/2): Referenz `smooth_zeta`, neue Tests
   `test_image_smooth_clamp_reference` (Stetigkeit, Kraft = −dU/dz) und `test_image_smooth_clamp_gpu`;
