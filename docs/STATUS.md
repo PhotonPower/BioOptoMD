@@ -30,6 +30,8 @@ Alle PRs #1–#6, #9–#14 am 2026-11-05 nach `main` gemergt (Merge-Commits, Rei
 - `SelfConsistentOptics(remd=..., exchange_steps=..., target_states=...)`: Zyklen mit Austausch,
   ⟨ε⟩ nur aus dem Zielzustand. Zielzustand 300 K: Breite 0.1695 nm = Theorie; Feld 0 bitgleich zu
   `remd.run`; Fortsetzen mit REMD-Zustand bitgleich.
+  Review umgesetzt (Konstruktorpfad und zwei Leitern getestet, Prüfungen, Breite in L); Seed-Scan
+  mit unabhängigem Thermostat-Rauschen: Breite/Theorie 0.999 ± 0.004 (10 Läufe).
 
 ## Phase 10.5 – 3D-hp-FEM-Adapter: abgenommen 2026-11-06, Branch `phase-10/hpfem-3d`
 - `HpFemSolver3D`: planar gegen TMM p 1.3e-4 / s 1.9e-6 (Grad 2, Default); lateral strukturiert
