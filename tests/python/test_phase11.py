@@ -425,3 +425,310 @@ def test_cg_forces_vs_openmm():
         print(f"{name}: max |ΔF|/RMS = {err:.2e} (RMS {rms:.3g}), E {e_gpu:.5g} / {e_ref:.5g}")
         assert err < 1e-4, name
         assert e_gpu == pytest.approx(e_ref, rel=1e-4), name
+
+
+def _kabsch_align(x, ref):
+    """x (m, n, 3) je Frame optimal (Kabsch, gleiche Gewichte) auf ref (n, 3) gedreht/verschoben."""
+    xc = x - x.mean(axis=1, keepdims=True)
+    rc = ref - ref.mean(axis=0)
+    h = np.einsum("fni,nj->fij", xc, rc)
+    u, _, vt = np.linalg.svd(h)
+    d = np.sign(np.linalg.det(np.einsum("fij,fjk->fik", u, vt)))
+    u[:, :, 2] *= d[:, None]
+    rot = np.einsum("fij,fjk->fik", u, vt)
+    return np.einsum("fni,fij->fnj", xc, rot) + ref.mean(axis=0)
+
+
+def _unwrap(x, box):
+    """x (R, n, 3) in x/y periodisch gefaltet ⇒ zusammenhängend relativ zu Perle 0."""
+    d = x - x[:, :1]
+    d[..., :2] -= np.round(d[..., :2] / box) * box
+    return x[:, :1] + d
+
+
+def test_cg_wall_image():
+    """Wand und Bildladungen für Perlen (ADR 0017 Stufe 1, Phase 11.3): CG-Ubiquitin über Gold
+    (9-3, Perlen-LJ σ = 0.4 nm, ε = 0.05 kJ/mol nach Lorentz-Berthelot), λ je Residuenname über
+    ``cg.solvent_scale`` (Lys 0.5, Glu 0.8, Gly 0.7 – auch für den C-terminalen Typ „GLY+H2O“ –,
+    sonst 1; OQ-29 unkalibriert), Bildladungen (f = 1) mit den Perlenladungen. Zwei Replicas in
+    verschiedener Höhe (unterste Perle 0.25 bzw. 0.6 nm über der obersten Goldlage). Energien und
+    Kräfte jedes Terms getrennt gegen die NumPy-Referenzen (surface_ref, image_charge_ref) wie
+    atomistisch: Energie rel. 1e-5, Kräfte rel. 1e-4 zur RMS-Kraft des Terms (Differenz eines
+    Kontexts mit nur diesem Term zu einem Kontext ohne Wand und Bilder)."""
+    import surface_ref
+    from image_charge_ref import image_charges
+
+    from biooptomd import _core as core
+    from biooptomd import builder, cg, surface
+
+    m = cg.enm_go_from_pdb(UBQ)
+    spec = m.spec
+    n = spec.n_atoms
+    box = 8.0
+    lam = cg.solvent_scale(m, {"LYS": 0.5, "GLU": 0.8, "GLY": 0.7})
+    names = m.names.astype(str)
+    assert lam[0] == 0.0 and lam.shape == (len(names),)
+    assert np.all(lam[names == "LYS"] == 0.5) and np.all(lam[names == "GLU"] == 0.8)
+    assert sorted(names[np.char.startswith(names, "GLY")]) == ["GLY", "GLY+H2O"]
+    assert np.all(lam[np.char.startswith(names, "GLY")] == 0.7)
+    assert np.all(lam[names == "ALA"] == 1.0)
+    for bad in ({"TRP": 0.5}, {"GLY+H2O": 0.5}, {"LYS": 0.0}, {"LYS": 1.5}, {"LYS": np.nan}):
+        with pytest.raises(ValueError):  # Trp fehlt in Ubiquitin; nur Namen ohne „+H2O“; (0, 1]
+            cg.solvent_scale(m, bad)
+
+    pos0 = spec.positions - spec.positions.mean(axis=0) + [box / 2, box / 2, 0.0]
+    z_top = surface.MATERIALS["gold"].z_top_nm
+    pos = np.stack([pos0 + [0.0, 0.0, z_top + h - pos0[:, 2].min()] for h in (0.25, 0.6)])
+
+    def make(wall, image):
+        ctx, info = builder.build_context(spec, 2, (box, box), 300.0, 0.15, positions=pos,
+                                          types=m.types)  # fmt: skip
+        if wall:
+            t = surface.wall_table("gold", info.lj_table, lam)
+            ctx.add_planar_surface(t["prefactor"], t["sigma"], form=t["form"], delta=t["delta"],
+                                   z0=0.0)  # fmt: skip
+        if image:
+            builder.add_image_charges(ctx, info, "gold")
+        ctx.compute_forces()
+        return ctx, info
+
+    ctx, info = make(True, True)
+    base, _ = make(False, False)
+    only_wall, _ = make(True, False)
+    only_image, _ = make(False, True)
+    t = surface.wall_table("gold", info.lj_table, lam)
+    lj = info.lj_types
+    c = t["prefactor"][m.types, lj].astype(np.float64)
+    sig = t["sigma"][m.types, lj].astype(np.float64)
+    terms = list(core.ENERGY_TERMS)
+    col_wall, col_img = 1 + terms.index("surface"), 1 + terms.index("image")
+    x = ctx.positions_precise()[:, :n, :3]
+    f_base = base.forces()[:, :n, :3].astype(np.float64)
+    df_wall = only_wall.forces()[:, :n, :3] - f_base
+    df_img = only_image.forces()[:, :n, :3] - f_base
+    df = ctx.forces()[:, :n, :3] - f_base
+    for r in range(2):
+        e_w, f_w, clamped = surface_ref.wall(x[r, :, 2], t["form"], c, sig, t["delta"], 0.0)
+        assert not clamped.any()
+        kappa = np.broadcast_to(info.kappa, (2,))[r]
+        eps_r = np.broadcast_to(info.eps_r, (2,))[r]
+        e_i, f_i = image_charges(x[r], spec.charges, (box, box), z_top, 1.0, kappa, eps_r,
+                                 info.r_switch, info.r_cutoff)  # fmt: skip
+        assert ctx.energies()[r, col_wall] == pytest.approx(e_w.sum(), rel=1e-5)
+        assert ctx.energies()[r, col_img] == pytest.approx(e_i, rel=1e-5)
+        f_wall = np.zeros_like(f_i)
+        f_wall[:, 2] = f_w
+        errs = []
+        for got, want in ((df_wall[r], f_wall), (df_img[r], f_i), (df[r], f_wall + f_i)):
+            errs.append(np.sqrt(((got - want) ** 2).sum(axis=1).mean()) / _rms(want))
+        print(f"Replica {r}: E_Wand {e_w.sum():.2f}, E_Bild {e_i:.2f} kJ/mol, rel. RMS Wand/Bild/"
+              f"beide {errs[0]:.1e} / {errs[1]:.1e} / {errs[2]:.1e}")  # fmt: skip
+        assert max(errs) < 1e-4
+        assert e_w.sum() < 0.0  # Perlen im Anziehungsbereich
+    # λ wirkt je Residuum: Vorfaktor der Lys-Perlen halb so groß wie mit λ = 1
+    t1 = surface.wall_table("gold", info.lj_table, np.ones(len(names)))
+    c1 = t1["prefactor"][m.types, lj].astype(np.float64)
+    lys = names[m.types] == "LYS"
+    assert lys.sum() == 7
+    np.testing.assert_allclose(c[lys], 0.5 * c1[lys], rtol=1e-6)
+    assert ctx.status() == 0
+
+
+def _pure_enm(path):
+    """Reines elastisches Netz: Kette + Federn, ohne Winkel, Gō, LJ und Ladungen."""
+    import dataclasses
+
+    from biooptomd import cg
+
+    m = cg.enm_go_from_pdb(path, k_angle=0.0, charged_termini=False)
+    n = m.spec.n_atoms
+    spec = dataclasses.replace(m.spec, charges=np.zeros(n), epsilon=np.zeros(n))
+    return m, spec
+
+
+def test_enm_fluctuations_vs_anm(tmp_path):
+    """Abnahmetest ADR 0017: reines elastisches Netz (Ubiquitin-Kern, Residuen 1–72, Kette k = 1e4
+    + Federn 500 kJ/mol/nm², ohne Winkel, Gō, LJ, Ladungen) – Fluktuationen ⟨Δr_i²⟩ aus
+    Langevin-MD (BAOAB, Δt = 10 fs, γ = 1/ps, 64 Replicas × 400 ps nach 50 ps, Kabsch-Ausrichtung
+    auf die native Struktur) gegen die Normalmodenanalyse k_B T · Spur der 3×3-Blöcke der
+    Pseudoinversen der Hesse-Matrix (genau 6 Nullmoden). Kriterien: Korrelation > 0.95, Mittel
+    rel. 5 %.
+
+    Das C-terminale Ende 73–76 (in Lösung flexibel) ist im 0.9-nm-Netz nicht starr: Perle 76 hängt
+    nur an drei Federn ⇒ siebte Nullmode (Drehung um die Achse 74–75), dafür gibt es kein ANM.
+    Temperatur 30 K: Die ANM ist der harmonische Grenzfall T → 0 (3 K: MD/ANM 0.998, 30 K: 1.010 /
+    Korrelation 0.99994 – die Abweichung wächst linear in T wie eine Störungskorrektur). Bei 300 K
+    misst das reine Netz MD/ANM 1.63, Korrelation 0.85: Der Median je Perle liegt bei 1.16 (Störungs-
+    korrektur), das Mittel treiben wenige schwach eingebundene Perlen mit Verhältnissen 1.7–4.8
+    (β1/β2-Schleife um Residuen 8–12, Schleife um 47, Kernende 72) – nicht störungstheoretische
+    Ausflüge; auch die mittlere Struktur verschiebt sich (gegen sie 1.42). Befund zu OQ-30."""
+    from biooptomd import builder, units
+
+    core = tmp_path / "ubq_1_72.pdb"
+    core.write_text("".join(line for line in UBQ.read_text().splitlines(keepends=True)
+                            if not (line.startswith("ATOM") and int(line[22:26]) > 72)))  # fmt: skip
+    _, spec = _pure_enm(core)
+    assert spec.n_atoms == 72
+    n = spec.n_atoms
+    pos = spec.positions
+    b = spec.bonded
+    hess = np.zeros((3 * n, 3 * n))
+    for (i, j), k in zip(b["bonds"], b["bond_k"], strict=True):
+        e = pos[j] - pos[i]
+        blk = k * np.outer(e, e) / (e @ e)
+        for p, q, s in ((i, i, 1.0), (j, j, 1.0), (i, j, -1.0), (j, i, -1.0)):
+            hess[3 * p : 3 * p + 3, 3 * q : 3 * q + 3] += s * blk
+    w, v = np.linalg.eigh(hess)
+    assert np.all(np.abs(w[:6]) < 1e-8 * w[-1]) and w[6] > 1e-6 * w[-1]  # starr: 6 Nullmoden
+    temp = 30.0
+    cov = units.KB * temp * (v[:, 6:] / w[6:]) @ v[:, 6:].T
+    msf_anm = np.array([np.trace(cov[3 * i : 3 * i + 3, 3 * i : 3 * i + 3]) for i in range(n)])
+
+    reps, box = 64, 20.0
+    start = pos - pos.mean(axis=0) + [box / 2, box / 2, 0.0]
+    # ε_r(T) von Wasser gilt erst ab 273 K; ohne Ladungen sind ε_r und κ ohne Wirkung.
+    ctx, _ = builder.build_context(spec, reps, (box, box), temp, 0.15, positions=start,
+                                   eps_r=78.5, kappa=1.0)  # fmt: skip
+    ctx.set_integrator(0.01, 1.0, seed=11)
+    ctx.step(5_000)  # 50 ps Äquilibrierung
+    frames = []
+    for _ in range(400):  # 400 ps, Abstand 1 ps
+        ctx.step(100)
+        frames.append(_unwrap(ctx.positions_precise()[:, :n, :3].astype(np.float64), box))
+    al = _kabsch_align(np.concatenate(frames), start)
+    msf_md = ((al - start) ** 2).sum(axis=2).mean(axis=0)
+    corr = np.corrcoef(msf_md, msf_anm)[0, 1]
+    ratio = msf_md.mean() / msf_anm.mean()
+    print(f"Korrelation {corr:.4f}, Mittel MD/ANM {ratio:.4f}, ⟨Δr²⟩ ANM {msf_anm.mean():.2e} nm²")
+    assert corr > 0.95
+    assert abs(ratio - 1.0) < 0.05
+    assert ctx.status() == 0
+
+
+@pytest.mark.parametrize("dt_fs", [10, 20])
+def test_cg_nve(dt_fs):
+    """Abnahmetest ADR 0017: NVE des vollständigen CG-Modells (Ubiquitin mit zwei Domänen: Kette,
+    Federn, kosinus-harmonische Winkel, Gō 12-10, LJ + Debye-Hückel) bei Δt = 10 bzw. 20 fs, zwei
+    Replicas mit Maxwell-Geschwindigkeiten bei 300 K aus der nativen Struktur. Wie die atomistischen
+    NVE-Tests (test_phase3, test_gb_nve): Drift (Regressionssteigung) < 1e-4 kJ/mol/ps je Perle und
+    Fluktuation < 1e-3 · ⟨E_kin⟩; dazu nach ADR 0017 Drift über 100 ps < 1e-4 · ⟨E_kin⟩.
+
+    Messfenster 1 ns, Steigung auf 100 ps umgerechnet (Abnahmeentscheidung offen, vgl. Phase 3,
+    2026-11-03): Bei 20 fs schwankt die Gesamtenergie langsam (10-ps-Blockmittel bis ≈ 1e-3 ·
+    E_kin); die Steigung aus nur 100 ps hat dort einen statistischen Fehler von ≈ 1e-4 und löst das
+    Kriterium nicht auf. Für lineare Drift schätzt das längere Fenster dieselbe Steigung mit etwa
+    30-mal kleinerem Fehler (Vorabmessung mit 8 Replicas über 1 ns: ≤ 0.4e-4 je 100 ps bei 20 fs;
+    über 100 ps einzelne Replicas bis 8.9e-4). Die Fluktuation skaliert mit Δt² (≈ 0.2e-3 bei
+    10 fs, ≈ 0.8e-3 bei 20 fs), Verhalten des Schatten-Hamiltonians."""
+    from biooptomd import builder, cg, units
+
+    m = cg.enm_go_from_pdb(UBQ, domains=[[("A", 1, 35)], [("A", 41, 76)]])
+    spec = m.spec
+    n = spec.n_atoms
+    assert len(m.go_pairs) > 0
+    box = 10.0
+    start = spec.positions - spec.positions.mean(axis=0) + [box / 2, box / 2, 0.0]
+    ctx, _ = builder.build_context(spec, 2, (box, box), 300.0, 0.15, positions=start)
+    rng = np.random.default_rng(5)
+    v = rng.normal(0.0, 1.0, (2, n, 3)) * np.sqrt(units.KB * 300.0 / spec.masses)[None, :, None]
+    v -= (v * spec.masses[None, :, None]).sum(axis=1, keepdims=True) / spec.masses.sum()
+    ctx.set_velocities(v)
+    dt = dt_fs * 1e-3
+    ctx.set_integrator(dt, 0.0, seed=0)
+    steps = round(1000.0 / dt)
+    tracker = ctx.add_energy_tracker(stride=steps // 1000, capacity=1000)
+    ctx.step(steps)
+    res = tracker.result()
+    en = res["energies"]
+    total = en[:, :, 0] + en[:, :, 1:].sum(axis=2)
+    t_ps = res["steps"] * dt
+    slope = np.array([np.polyfit(t_ps, total[r], 1)[0] for r in range(2)])
+    ekin = en[:, :, 0].mean(axis=1)
+    rel = np.abs(slope) * 100.0 / ekin
+    fluct = total.std(axis=1) / ekin
+    print(f"Δt {dt_fs} fs: Drift je 100 ps rel. {rel}, je Perle {slope / n} kJ/mol/ps, "
+          f"Fluktuation rel. {fluct}")  # fmt: skip
+    assert np.all(rel < 1e-4)
+    assert np.all(np.abs(slope) / n < 1e-4)
+    assert np.all(fluct < 1e-3)
+    assert ctx.status() == 0
+
+
+@pytest.mark.reference
+def test_cg_optics_sum_rule():
+    """Abnahmetest ADR 0017, Optik: (1) Summenregel – Σ α′ und Σ v der Perlen = Summe der
+    kalibrierten Atomwerte des atomistischen Ubiquitins (1UBQ + H nach OpenMM/amber14 bei pH 7,
+    1231 Atome, dieselbe Summenformel), rel. 1e-6, also dasselbe dn/dc. (2) n(z) einer CG-Schicht
+    (Perlen am Cα) gegen die atomistische Schicht gleicher Konfiguration: Lorentz-Lorenz mit
+    Wasser-Hintergrund wie im ε-Observer, Querschnitt 6 × 6 nm, Gauß-Verschmierung w. Die
+    Profilabweichung relativ zum Kontrast fällt mit w (Seitenkettenatome liegen bis ≈ 0.6 nm vom
+    Cα) und liegt bei w = 0.5 nm unter 5 %; ∫ (n − n_w) dz stimmt bis auf die Nichtlinearität von
+    Lorentz-Lorenz überein: Beitrag 2. Ordnung ≈ (max Δn / n_w) · Profilabweichung ≈ 0.03 · 0.05,
+    also rel. 2e-3. (3) Engine-Pfad: CG-Modell → ``build_context(types=model.types)`` →
+    ``add_refractive_index_profiler`` (Punktverteilung) mit ``model.alpha``/``model.volume``: S_α, S_V
+    je Schicht = NumPy-Histogramm der Perlen (rel. 1e-5) und n(z) = Lorentz-Lorenz wie
+    ``eps_from_histograms`` (rel. 1e-6)."""
+    from openmm import app, unit
+
+    from biooptomd import builder, cg
+    from biooptomd.coupling import eps_from_histograms
+
+    m = cg.enm_go_from_pdb(UBQ)
+    table = builder.calibrate_optics("protein")[0]
+    pdb = app.PDBFile(str(UBQ))
+    mod = app.Modeller(pdb.topology, pdb.positions)
+    mod.delete([r for r in mod.topology.residues() if r.name == "HOH"])
+    mod.addHydrogens(app.ForceField("amber14-all.xml"), pH=7.0)
+    el = [a.element.symbol for a in mod.topology.atoms()]
+    xyz = np.array(mod.getPositions().value_in_unit(unit.nanometer))
+    a_at = np.array([table[e][0] for e in el])
+    v_at = np.array([table[e][1] for e in el])
+    a_cg = m.alpha[m.types].astype(np.float64)
+    v_cg = m.volume[m.types].astype(np.float64)
+    assert len(el) == 1231
+    assert a_cg.sum() == pytest.approx(a_at.sum(), rel=1e-6)
+    assert v_cg.sum() == pytest.approx(v_at.sum(), rel=1e-6)
+
+    area, n_w = 36.0, builder.OPTICS_TARGETS["protein"]["n_water"]
+    z = np.linspace(-4.0, 4.0, 801)
+    dz = z[1] - z[0]
+    z_cg = m.spec.positions[:, 2] - xyz[:, 2].mean()
+    z_at = xyz[:, 2] - xyz[:, 2].mean()
+
+    def n_profile(zz, a, v, w):
+        g = np.exp(-0.5 * ((z[:, None] - zz[None]) / w) ** 2) / (np.sqrt(2.0 * np.pi) * w)
+        s_a, s_v = g @ a * dz, g @ v * dz  # je Schicht der Dicke dz
+        return np.sqrt(eps_from_histograms(s_a, s_v, area * dz, n_w))
+
+    errs = []
+    for w in (0.2, 0.5, 1.0):
+        n_at, n_cg = n_profile(z_at, a_at, v_at, w), n_profile(z_cg, a_cg, v_cg, w)
+        err = np.sqrt(((n_cg - n_at) ** 2).sum() / ((n_at - n_w) ** 2).sum())
+        i_at, i_cg = (n_at - n_w).sum() * dz, (n_cg - n_w).sum() * dz
+        print(f"w = {w} nm: Profilabweichung {err:.3f}, ∫(n − n_w) dz {i_at:.5f} / {i_cg:.5f} nm, "
+              f"max n − n_w {np.max(n_at - n_w):.4f}")  # fmt: skip
+        errs.append(err)
+        assert i_cg == pytest.approx(i_at, rel=2e-3)
+    assert errs[0] > errs[1] > errs[2]
+    assert errs[1] < 0.05
+
+    # (3) Engine-Pfad mit eingefrorener Konfiguration (eine Replica, keine Dynamik)
+    box, dz_e, n_bins = 6.0, 0.05, 140
+    pos = m.spec.positions - m.spec.positions.mean(axis=0) + [box / 2, box / 2, 0.0]
+    pos[:, 2] += 0.5123 - pos[:, 2].min()  # unterste Perle nicht auf einer Schichtgrenze
+    ctx, _ = builder.build_context(m.spec, 1, (box, box), 300.0, 0.15, positions=pos,
+                                   types=m.types)  # fmt: skip
+    prof = ctx.add_refractive_index_profiler(dz_e, n_bins, m.alpha, m.volume, z_min=0.0,
+                                             n_water=n_w, smearing="point")  # fmt: skip
+    ctx.observe_now()
+    res = prof.result()
+    zb = ctx.positions_precise()[0, : m.spec.n_atoms, 2].astype(np.float32)
+    k = np.floor(zb / np.float32(dz_e)).astype(np.int64)  # Schichtindex in FP32 wie im Kernel
+    s_a = np.bincount(k, weights=a_cg, minlength=n_bins)
+    s_v = np.bincount(k, weights=v_cg, minlength=n_bins)
+    np.testing.assert_allclose(res["s_alpha_mean"][0], s_a, rtol=1e-5, atol=1e-6 * s_a.max())
+    np.testing.assert_allclose(res["s_volume_mean"][0], s_v, rtol=1e-5, atol=1e-6 * s_v.max())
+    assert res["s_alpha_mean"][0].sum() == pytest.approx(a_at.sum(), rel=1e-5)  # Summenregel
+    n_ref = np.sqrt(eps_from_histograms(res["s_alpha_mean"][0], res["s_volume_mean"][0],
+                                        box * box * dz_e, n_w))  # fmt: skip
+    np.testing.assert_allclose(res["n"][0], n_ref, rtol=1e-6)

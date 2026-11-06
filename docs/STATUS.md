@@ -39,6 +39,28 @@ Alle PRs #1–#6, #9–#14 am 2026-11-05 nach `main` gemergt (Merge-Commits, Rei
   Gegen OpenMM je Term (σ = 0.015 nm): Bindungen+Winkel 1.1e-6, Gō 5.5e-6, Nonbonded 8.9e-7 der
   jeweiligen RMS-Kraft. Frühere Begründung im Test (Gō-Auslöschung) war falsch: der absolute
   Fehler kam aus den steifen Kettenbindungen (FP32-Rundung von r · k). OQ-30 (CG-Parameter).
+- 11.3: Wand und Bildladungen für Perlen: `cg.solvent_scale(model, lam)` (λ je Residuenname,
+  Oberflächen-Typ = Optik-Typ, OQ-29 unkalibriert) für `surface.wall_table`; Bildladungen über
+  `builder.add_image_charges` unverändert. Tests:
+  - `test_cg_wall_image`: Gold 9-3 + Bilder gegen NumPy, je Term getrennt (Wand ≤ 1.7e-7, Bild
+    ≤ 3.1e-6 der RMS-Kraft des Terms), Energien rel. 1e-5; λ-Mapping inkl. „GLY+H2O“.
+  - `test_enm_fluctuations_vs_anm`: Ubiquitin-Kern 1–72 (Ende 73–76 im 0.9-nm-Netz nicht starr,
+    7. Nullmode), 30 K: MD/ANM 1.010, Korrelation 0.99994. Bei 300 K ist das reine Zentralkraftnetz
+    stark anharmonisch (MD/ANM 1.63, Korrelation 0.85; Median je Perle 1.16, wenige Schleifenperlen
+    bis 4.8), Befund zu OQ-30. **Abnahmeentscheidung offen:** Test bei 30 K (ADR nennt keine T).
+  - `test_cg_nve`: Drift je 100 ps 0.5–1.0e-5 (10 fs) bzw. 1.2–2.9e-5 (20 fs) · E_kin, über 1 ns
+    bestimmt; über nur 100 ps ist die Regression bei 20 fs zu verrauscht (≈ 1e-4). Fluktuation
+    0.2e-3 (10 fs) bzw. 0.76–0.81e-3 (20 fs) < 1e-3 · E_kin wie atomistisch. **Abnahmeentscheidung
+    offen:** Messfenster 1 ns statt 100 ps (wie Phase 3 am 2026-11-03).
+  - `test_cg_optics_sum_rule`: Σ α′, v der Perlen = atomistisches 1UBQ + H (1231 Atome) rel. 1e-6;
+    n(z)-Profilabweichung zum Kontrast 5.4 % / 2.9 % / 1.3 % bei w = 0.2 / 0.5 / 1.0 nm; Engine-Pfad
+    (Kontext mit `types=model.types` → Profiler) gleich dem NumPy-Histogramm.
+  - Review (unabhängiger Agent): kein hoher Befund; umgesetzt: Fluktuationskriterium im NVE-Test,
+    Wand/Bild getrennt geprüft, λ-Prüfung (0, 1] inkl. NaN in `solvent_scale` und `wall_table`,
+    Engine-Pfad im Optiktest, Integraltoleranz 2e-3 begründet, n_w aus `OPTICS_TARGETS`.
+  - Nebenbefund: `test_phase7::test_end_to_end_biosensor` prüfte seit dem Review 10.0 noch n_w = 1.333
+    statt `N_WATER` des Beispiels (1.3317); korrigiert (eigener Commit). Der slow-Test war damit seit
+    dem Review 10.0 rot, die Abnahmen 10.0–10.6 liefen ohne vollen `pytest`-Lauf.
 
 ## Phase 10.6 – Replica Exchange im Treiber: abgenommen 2026-11-06, Branch `phase-10/coupling-remd`
 - `SelfConsistentOptics(remd=..., exchange_steps=..., target_states=...)`: Zyklen mit Austausch,
@@ -343,9 +365,10 @@ ADR 0007 → **0009** (Mixed Precision), unsere OQ-08…11 → **OQ-11…14**.
   Structs unterschiedlich aus. Vor dem Push mit beiden prüfen oder Kommentare über die Member setzen.
 
 ## Nächster konkreter Schritt
-1. Hairpin-Lauf (OQ-15 b) auswerten, PR #15 aktualisieren, Phase 9.4 zur Abnahme; danach
-   Schlussmessung 9.6 auf freier GPU (OQ-19).
-2. Phase 11.3: Wand und Bildladungen für Perlen, ENM-Fluktuationen gegen ANM, NVE (10/20 fs).
+1. Abnahme 9.4 (Hairpin (b) bestanden, Commit `048a084` auf `phase-9/gb-validation`, lokal) und
+   Entscheidung 9.6 nach OQ-19 (Endmessung 1.12×, Commit `460e52a` auf `phase-9/tile-list`, lokal);
+   beide Commits danach in die gestapelten Branches übernehmen.
+2. Phase 11.4: Beispiel IgG über Gold mit REMD, Durchsatz (nach Abnahme 11.3).
 3. Nachholen: Kontrolllauf auf der RTX 6000 Ada; Nsight Compute (Counter-Freigabe).
 
 ## Sitzungslog

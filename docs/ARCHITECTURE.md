@@ -145,6 +145,9 @@ lassen Padding-Atome unverändert. Test-Hooks ohne Produktionsphysik liegen in `
   Netz je Domäne ohne Ausschlüsse, Gō-Kontakte zwischen Domänen als Paarterme, Ladungen je Residuum,
   Optik-Typ je Residuenname mit α′/v per Summenregel); weiter mit `builder.build_context`
   (`types=model.types`).
+- Wand und Bildladungen wie atomistisch: `surface.wall_table(material, info.lj_table,
+  cg.solvent_scale(model, lam))` (Oberflächen-Typ = Optik-Typ, λ je Residuenname, OQ-29) und
+  `builder.add_image_charges` mit den Perlenladungen.
 
 ## 4. Module
 

@@ -118,7 +118,7 @@ def wall_table(material, lj_table, solvent_scale):
     lam = np.asarray(solvent_scale, np.float64)
     if lam.ndim != 1 or lam.size < 1:
         raise ValueError("solvent_scale: 1D-Array (n_surface,)")
-    if ((lam[1:] <= 0.0) | (lam[1:] > 1.0)).any():
+    if not ((lam[1:] > 0.0) & (lam[1:] <= 1.0)).all():  # so auch NaN abgewiesen
         raise ValueError("solvent_scale: λ ∈ (0, 1] für Oberflächen-Typen >= 1")
     sigma_iw = 0.5 * (sigma_l + mat.sigma_nm)
     eps_iw = np.sqrt(eps_l * mat.epsilon_kj_mol)

@@ -24,6 +24,9 @@ Stufe 1: Proteine (Antikörper) als Cα-Netz mit Gō-Kontakten (:func:`enm_go_fr
   Nonbonded-Kernel; ausgeschlossen sind Kettennachbarn 1-2 und 1-3, Disulfide und die Gō-Paare.
 - Optik: α′ und v je Perle = Summe der kalibrierten Atomwerte der Residue (Summenregel, Phase 10.0),
   ein Optik-Typ je Residuenname (bzw. „…+H2O“ für C-terminale Residuen).
+- Wand und Bildladungen wie atomistisch: ``surface.wall_table(material, info.lj_table,
+  solvent_scale(model, lam))`` mit den Perlen-LJ-Parametern (Oberflächen-Typ = Optik-Typ, λ je
+  Residuenname, OQ-29) und ``builder.add_image_charges`` mit den Perlenladungen.
 
 ASSUMPTION(OQ-30): Defaults nach ElNeDyn (Periole et al., JCTC 2009: Cutoff 0.9 nm,
 k = 500 kJ/mol/nm²) und Karanicolas & Brooks (Protein Sci. 2002: 12-10-Kontakte); k_bond, k_angle,
@@ -300,3 +303,31 @@ def enm_go_from_pdb(path, *, chains=None, domains=None, enm_cutoff_nm: float = 0
     return CGModel(spec, residues, domain, enm_pairs, go_pairs, disulfides, types,
                    alpha.astype(np.float32), volume.astype(np.float32),
                    np.array([""] + type_names))  # fmt: skip
+
+
+def solvent_scale(model: CGModel, lam=None) -> np.ndarray:
+    """Wand-λ je Oberflächen-Typ der Perlen (ADR 0017 Stufe 1, ADR 0007) für
+    :func:`biooptomd.surface.wall_table`.
+
+    Oberflächen-Typ = Optik-Typ ``model.types`` (ein Typ je Residuenname, „…+H2O“ wie das Residuum),
+    die Wand wirkt über die Perlen-LJ-Parameter. ``build_context(..., types=model.types)`` übergeben.
+
+    Args:
+        lam: dict Residuenname → λ ∈ (0, 1]; fehlende Namen λ = 1. ASSUMPTION(OQ-29): unkalibriert;
+            die Kalibrierung je Residuentyp aus atomistischen Adsorptionsläufen steht aus.
+
+    Returns:
+        λ (n_types,) float64, Index 0 (Anker/keine Wand) = 0.
+    """
+    lam = {} if lam is None else dict(lam)
+    residues = [str(n).split("+")[0] for n in model.names[1:]]
+    unknown = sorted(set(lam) - set(residues))
+    if unknown:
+        raise ValueError(
+            f"solvent_scale: Residuen {unknown} kommen im Modell nicht vor "
+            "(Residuennamen ohne „+H2O“ angeben)"
+        )
+    bad = {k: v for k, v in lam.items() if not 0.0 < float(v) <= 1.0}  # NaN fällt hier heraus
+    if bad:
+        raise ValueError(f"solvent_scale: λ ∈ (0, 1] verlangt, erhalten {bad}")
+    return np.array([0.0] + [float(lam.get(r, 1.0)) for r in residues])
