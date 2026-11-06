@@ -352,8 +352,10 @@ Abnahmetests (Vorschlag): siehe ADR 0016, Konsequenzen (`test_polarizability_gri
 1. Kosinus-harmonische Winkel im `BondedForce`; Paarliste mit wählbarer Form (12-6, optional 12-10).
    *Umgesetzt 2026-11-06* (`angle_form`, `pair_form`; `test_phase11.py::test_cosine_angle`,
    `test_pair_go1210`).
-2. Builder: Cα-ENM/Gō aus PDB (`builder.cg_from_pdb`), Domänen und native Kontakte, Ladungen je
-   Residuum, Optiktabellen je Perle (Summenregel der kalibrierten Atomwerte).
+2. Builder: Cα-ENM/Gō aus PDB (`biooptomd.cg.enm_go_from_pdb`), Domänen und native Kontakte,
+   Ladungen je Residuum, Optiktabellen je Perle (Summenregel der kalibrierten Atomwerte).
+   *Umgesetzt 2026-11-06* (`test_cg_builder_ubiquitin`, `test_cg_builder_domains`,
+   `test_cg_forces_vs_openmm`: max |ΔF|/RMS 4.6e-7).
 3. Wand und Bildladungen für Perlen (λ unkalibriert, OQ-29).
 4. Beispiel IgG über Gold mit REMD, Durchsatz.
 5. (Stufe 1b, optional) gemischte Auflösung (OQ-28); (Stufe 2) CG-Aptamere nach OQ-27.
