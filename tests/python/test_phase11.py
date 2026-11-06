@@ -732,3 +732,85 @@ def test_cg_optics_sum_rule():
     n_ref = np.sqrt(eps_from_histograms(res["s_alpha_mean"][0], res["s_volume_mean"][0],
                                         box * box * dz_e, n_w))  # fmt: skip
     np.testing.assert_allclose(res["n"][0], n_ref, rtol=1e-6)
+
+
+def _igg_example():
+    import importlib.util
+
+    path = Path(__file__).resolve().parents[2] / "examples" / "igg_on_gold" / "igg_on_gold.py"
+    spec_ = importlib.util.spec_from_file_location("igg_on_gold", path)
+    ex = importlib.util.module_from_spec(spec_)
+    spec_.loader.exec_module(ex)
+    return ex
+
+
+def test_igg_example():
+    """Beispiel 11.4 (examples/igg_on_gold): CG-IgG aus 1IGT – 1316 Perlen, 4 Ketten, Nettoladung 0
+    (His neutral), 17 Disulfide wie SSBOND (darunter 3 zwischen den schweren Ketten im Gelenk und 2
+    zwischen leichter und schwerer Kette); 7 Domänen, das Gelenk ohne Domäne (2 × 19 Perlen) ist
+    in Fab 1, Fab 2 und Fc nicht enthalten, die Gruppen sind disjunkt und decken alle übrigen
+    Perlen ab. Kontext: Startorientierungen als echte Drehungen, unterste Perle 2 nm über Gold;
+    Decke ½ k (z − h)² als Gitterpotential: Energie = lineare Interpolation der Knotenwerte
+    (rel. 1e-5; gegen die analytische Parabel Fehler ≤ k Δz²/8 je Perle); REMD-Lauf über 10 ps
+    ohne Statusbits; Messgrößen endlich; Orientierungsklassen nach der Definition im Skript."""
+    from biooptomd import _core as core
+
+    ex = _igg_example()
+    m = ex.load_model()
+    spec = m.spec
+    n = spec.n_atoms
+    assert n == 1316 and sorted({r.chain for r in m.residues}) == ["A", "B", "C", "D"]
+    assert spec.charges.sum() == pytest.approx(0.0, abs=1e-9)
+    chain = np.array([r.chain for r in m.residues])
+    resseq = np.array([r.resseq for r in m.residues])
+    ss = {tuple(sorted((chain[i] + str(resseq[i]), chain[j] + str(resseq[j]))))
+          for i, j in m.disulfides}  # fmt: skip
+    assert len(ss) == 17
+    assert {("B237", "D237"), ("B240", "D240"), ("B242", "D242")} <= ss
+    assert {("A214", "B128"), ("C214", "D128")} <= ss
+    assert set(np.unique(m.domain)) == set(range(-1, 7))
+    hinge = np.flatnonzero(m.domain < 0)
+    assert len(hinge) == 38 and set(chain[hinge]) == {"B", "D"}
+    assert np.all((resseq[hinge] >= 223) & (resseq[hinge] <= 245))
+
+    ctx, remd, meta = ex.build(n_ladders=1, seed=3, model=m)
+    groups = meta["groups"]
+    allg = np.concatenate(list(groups.values()))
+    assert len(allg) == len(set(allg.tolist())) == n - len(hinge)
+    assert not set(allg.tolist()) & set(hinge.tolist())
+    x = ex.unwrapped(ctx, n)
+    ref = spec.positions - spec.positions.mean(axis=0)
+    for r in range(ctx.n_replicas):  # Startstruktur bis auf eine Drehung (keine Spiegelung)
+        xc = x[r] - x[r].mean(axis=0)
+        u, _, vt = np.linalg.svd(ref.T @ xc)
+        assert np.linalg.det(u @ vt) > 0
+        assert np.abs(ref @ (u @ vt) - xc).max() < 1e-4
+        assert x[r, :, 2].min() - meta["z_top"] == pytest.approx(ex.START_GAP_NM, abs=1e-4)
+
+    # Decke: Slot 0 so verschieben, dass die obersten Perlen über h liegen
+    pos = ctx.positions_precise()[:, :n, :3].astype(np.float64)
+    pos[0, :, 2] += ex.CEILING_NM + 0.5 - pos[0, :, 2].max()
+    ctx.set_positions(pos.astype(np.float32))
+    ctx.compute_forces()
+    z = ctx.positions_precise()[0, :n, 2].astype(np.float64)
+    above = np.clip(z - ex.CEILING_NM, 0.0, None)
+    col = 1 + list(core.ENERGY_TERMS).index("external")
+    vals, origin, spacing = ex.ceiling_grid(ex.BOX)
+    z_nodes = origin[2] + spacing[2] * np.arange(vals.shape[0])
+    e_ref = np.interp(z, z_nodes, vals[:, 0, 0, 0].astype(np.float64), left=0.0).sum()
+    e_parab = 0.5 * ex.K_CEILING * (above**2).sum()
+    n_above = int((above > 0).sum())
+    assert n_above > 3
+    assert ctx.energies()[0, col] == pytest.approx(e_ref, rel=1e-5)
+    assert 0.0 <= e_ref - e_parab <= n_above * ex.K_CEILING * spacing[2] ** 2 / 8 + 1e-9
+    assert np.all(ctx.energies()[1:, col] == 0.0)
+
+    remd.run(10, ex.EXCHANGE_STEPS)  # 10 ps
+    assert ctx.status() == 0
+    h, c, a = ex.metrics(ex.unwrapped(ctx, n), meta)
+    assert h.shape == (8,) and c.shape == (8, 3) and a.shape == (8, 3)
+    assert np.isfinite(h).all() and np.isfinite(a).all() and (np.abs(a) <= 1.0 + 1e-12).all()
+    on = ex.GROUP_MIN_CONTACTS
+    cases = np.array([[0, 0, 0], [0, 0, on], [on, 0, 0], [on, on, 0], [0, on, on], [on, on, on],
+                      [on - 1, 0, on]])  # fmt: skip
+    assert ex.classify(cases).tolist() == [0, 1, 2, 2, 3, 4, 1]

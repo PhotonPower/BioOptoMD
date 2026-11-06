@@ -61,6 +61,12 @@ Alle PRs #1–#6, #9–#14 am 2026-11-05 nach `main` gemergt (Merge-Commits, Rei
   - Nebenbefund: `test_phase7::test_end_to_end_biosensor` prüfte seit dem Review 10.0 noch n_w = 1.333
     statt `N_WATER` des Beispiels (1.3317); korrigiert (eigener Commit). Der slow-Test war damit seit
     dem Review 10.0 rot, die Abnahmen 10.0–10.6 liefen ohne vollen `pytest`-Lauf.
+- 11.4 (in Arbeit): `examples/igg_on_gold` – CG-IgG 1IGT (1316 Perlen, 7 Domänen, Gelenk ohne
+  Domäne, 17 Disulfide) über Gold mit λ je Residuum, Bildladungen, Decke bei 30 nm (halbharmonisch
+  über `add_voxel_grid`), 4 REMD-Leitern × 8 T (300–370 K), Δt = 20 fs, fortsetzbar (bitgleich
+  geprüft). Durchsatz 9.7 µs/Tag je Replica (8 Replicas) bzw. 4.6 µs/Tag (32 Replicas);
+  Austauschakzeptanz ≈ 0.3. `test_igg_example` (Modell, Startorientierungen, Decke, REMD-Lauf,
+  Klassen). Produktionslauf 4 × 8 × 2 µs gestartet 2026-11-06.
 
 ## Phase 10.6 – Replica Exchange im Treiber: abgenommen 2026-11-06, Branch `phase-10/coupling-remd`
 - `SelfConsistentOptics(remd=..., exchange_steps=..., target_states=...)`: Zyklen mit Austausch,

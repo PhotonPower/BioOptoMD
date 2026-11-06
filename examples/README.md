@@ -33,3 +33,20 @@ Referenzlauf (2026-11-06, RTX 3090, 1 m 33 s, ε-Gitter damals bis 8 nm): δR �
 auf 1.7e-3. Δε ist anfangs vor allem die Relaxation des Strangs zum Gold (bei 1 MW/cm² ist die
 optische Kraft klein), dabei wächst der Selbstfeldanteil auf ≈ 17 % (Warnung OQ-24). Für Produktion
 länger äquilibrieren, bevor die Iteration beginnt.
+
+## `igg_on_gold/`
+CG-Antikörper (IgG, PDB 1IGT) über Gold mit Replica Exchange (ROADMAP Phase 11.4, ADR 0017):
+`biooptomd.cg.enm_go_from_pdb` mit sieben Domänen (je Arm Fv und CL/CH1, zwei CH2, CH3-Paar; Gelenk
+ohne Domäne), Gold-Wand mit λ je Residuum (`cg.solvent_scale`, unkalibriert, OQ-29), Bildladungen,
+Decke bei 30 nm (Gitterpotential), 4 Leitern × 8 Temperaturen (300–370 K), Δt = 20 fs.
+
+```bash
+python examples/igg_on_gold/igg_on_gold.py --ns 2000 --out run_igg
+```
+
+Ausgabe: `series.npz` (Höhe, Kontakte und Achsen-Kosinus je Gruppe Fab 1/Fab 2/Fc, Zustand je
+Slot, alle 100 ps), `summary.json` (je Leiter bei 300 K: adsorbierter Anteil, Orientierungsklassen
+desorbiert/„Fc unten“/„Fab unten“/seitlich/flach), `checkpoint.npz` (bitgleich fortsetzbar).
+Durchsatz (RTX 3090, 1316 Perlen, Wand + Bilder + Decke, Paarliste): 9.7 µs/Tag je Replica bei
+8 Replicas, 4.6 µs/Tag je Replica (148 µs/Tag gesamt) bei 32 Replicas. Die Adsorptionsstärke ist
+mit λ = 1 nur qualitativ (OQ-29).
