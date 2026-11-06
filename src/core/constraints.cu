@@ -129,6 +129,14 @@ __global__ void k_shake(DeviceState s, const int4* clusters, const float4* dista
     }
     x_un[k] = c.x[k];
   }
+  // Bildverschiebung je Bindung einmal bestimmen: Cluster-Atome liegen weit näher als L/2
+  // beieinander, n = rint(d/L) ändert sich während der Iteration nicht. Gleiche Rechnung wie
+  // delta() (d − L·n), ohne die FP64-Division je Iteration.
+  double3 shift[kMaxH];
+  for (int k = 1; k <= c.n_h; ++k) {
+    const double3 d = sub(c.x[k], c.x[0]);
+    shift[k - 1] = make_double3(box.x * rint(d.x / box.x), box.y * rint(d.y / box.y), 0.0);
+  }
   // Newton-Iteration auf allen Constraints des Clusters gemeinsam (M-SHAKE): Korrekturen entlang
   // der Referenzrichtungen, x_k −= g_k w_k ref_k, x_0 += w_0 Σ_l g_l ref_l. Linearisiert gilt
   // J g = f mit f_k = |r_k|² − d_k², J_kl = 2 r_k·(w_0 ref_l + δ_kl w_k ref_k); quadratische
@@ -140,7 +148,7 @@ __global__ void k_shake(DeviceState s, const int4* clusters, const float4* dista
     double3 rk[kMaxH];
     double f[kMaxH] = {0.0, 0.0, 0.0};
     for (int k = 1; k <= c.n_h; ++k) {
-      rk[k - 1] = delta(c.x[k], c.x[0], box);
+      rk[k - 1] = sub(sub(c.x[k], c.x[0]), shift[k - 1]);
       f[k - 1] = dot3(rk[k - 1], rk[k - 1]) - c.d2[k - 1];
       if (fabs(f[k - 1]) > 2.0 * tol * c.d2[k - 1]) converged = false;
     }
