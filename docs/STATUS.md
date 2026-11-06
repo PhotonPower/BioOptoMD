@@ -40,7 +40,10 @@ Alle PRs #1–#6, #9–#14 am 2026-11-05 nach `main` gemergt (Merge-Commits, Rei
   Listenpuffer nur bei `tile_list != "off"`, `std::numbers::pi`, Doku (Rauschen, OQ-19).
 - Messung bei geteilter GPU (Verhältnisse, vorläufig, Rauschen ≈ ±4 %): 1 × 20 k ≈ 1.14–1.18×, 32 × 2 k 1.01×,
   128 × 1 k 1.00×. Kriterium 1.25× nicht erreicht; i-Tile-Akkumulation gemessen und verworfen
-  (0.77× bzw. neutral). Details ADR 0014 Rev. 1. Endmessung bei freier GPU.
+  (0.77× bzw. neutral). Details ADR 0014 Rev. 1.
+- **Endmessung bei freier GPU (2026-11-06):** 1 × 20 k 1.12× (1.115–1.135, 5 Runden), 32 × 2 k
+  1.016×, 128 × 1 k 1.000× gegen den Stand vor 9.6 (`1b42287`), inkl. Constraint-Verbesserungen.
+  Kriterium 1.25× nicht erreicht, keine Regression; Entscheidung nach OQ-19 offen. Tabelle in ADR 0014.
 - Constraint-Löser: zwei bitidentische Verbesserungen (Blockgröße nach Auslastung 128/64/32,
   Bildverschiebung je Bindung einmal je SHAKE-Aufruf), zusammen ≈ +5 % bei 1 × 20 k und ≈ +3 % bei
   32 × 2 k. ADR 0015 (3×3-Lösungen in FP32) angenommen, prototypisch gemessen und zurückgezogen:
