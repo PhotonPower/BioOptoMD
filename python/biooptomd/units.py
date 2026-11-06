@@ -12,3 +12,5 @@ AKMA_TIME_PS = 0.04888821  # ps, Zeiteinheit von CHARMM/DCD
 FIXED_POINT_SCALE = 4294967296.0  # 2^32
 EPS_R2 = 1.0e-8  # nm^2
 EPS_CROSS2 = 1.0e-12  # nm^4, Untergrenze für |a x b|^2 (kollineare Geometrien)
+C_LIGHT = 299792458.0  # m/s (SI, Optik-Kopplung)
+EPS0_SI = 8.8541878128e-12  # F/m (SI, Optik-Kopplung; konsistent mit ONE_4PI_EPS0)

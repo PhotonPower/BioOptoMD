@@ -14,4 +14,22 @@ FRET-Effizienz (dynamisch/statisch), ⟨R_DA⟩ und ⟨d⟩ je Replica.
 
 Platzhalter (siehe Kopf des Skripts und `docs/OPEN_QUESTIONS.md`): DNA-Strang aus 1BNA statt eines
 Aptamers mit Fluorophor (OQ-03), O5'-Anker statt Linker (OQ-07), unkalibrierte Optik- und
-Wandparameter (OQ-01/02/05). Die Zahlen sind daher nur qualitativ.
+Wandparameter (OQ-01/02/05). Die Zahlen sind daher nur qualitativ. Die Optikparameter sind
+inzwischen an dn/dc kalibriert (Phase 10.0).
+
+## `aptamer_spr_gold/`
+Aptamerschicht über Gold im Kretschmann-Aufbau mit selbstkonsistenter Optik (ROADMAP Phase 10.4,
+ADR 0016): derselbe Strang über einer Gold-Wand mit Bildladungen und Anker, 4 Replicas bei 300 K,
+`biooptomd.coupling.SelfConsistentOptics` mit dem TMM-Referenzsolver (BK7 | Au 50 nm | ⟨ε⟩(z) |
+Wasser, p, 72.6°, 633 nm).
+
+```bash
+python examples/aptamer_spr_gold/aptamer_spr_gold.py --iterations 10 --out spr_run
+```
+
+Ausgabe: Verlauf je Iteration (Δε, ΔW, Rauschen, Selbstfeld), `profiles.npz` (ε(z), W(z), W₀(z)),
+`history.json`, Checkpoints je Iteration; auf der Konsole R mit und ohne Schicht (Sensorsignal δR).
+Referenzlauf (2026-11-06, RTX 3090, 1 m 33 s, ε-Gitter damals bis 8 nm): δR ≈ −4.0e-3; ΔW sinkt in 10 Iterationen von 1.1e-2
+auf 1.7e-3. Δε ist anfangs vor allem die Relaxation des Strangs zum Gold (bei 1 MW/cm² ist die
+optische Kraft klein), dabei wächst der Selbstfeldanteil auf ≈ 17 % (Warnung OQ-24). Für Produktion
+länger äquilibrieren, bevor die Iteration beginnt.

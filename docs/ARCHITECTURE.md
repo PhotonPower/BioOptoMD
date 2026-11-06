@@ -119,6 +119,20 @@ Ein DLPack-Export markiert die Kräfte als veraltet (`invalidate_forces`), weil 
 Setter (`set_positions`, `set_charges`, `set_masses`, …) nehmen nur echte Atome (`(n_replicas, n_atoms, …)`) und
 lassen Padding-Atome unverändert. Test-Hooks ohne Produktionsphysik liegen in `biooptomd._core.testing`.
 
+### 3.6 Kopplung MD ↔ Optik (Phase 10, ADR 0016)
+
+- `biooptomd.coupling`: `EpsGrid` (⟨ε⟩ je Zelle), `ForceGrid` (Knoten des Kraftgitters),
+  Protokoll `OpticalSolver.solve(eps, grid) -> W` [(V/nm)², Spitzenamplitude].
+- `tmm(eps, d, λ, θ, pol)`: 1D-Transfermatrix (s: E_y, p: H_y; Amplituden je Schicht) mit
+  Feldprofil `intensity(z)`; `TmmSolver`: Prisma | Substratschichten | Wasserspalt | lateral
+  gemitteltes ⟨ε⟩(z) | Wasser.
+- `SelfConsistentOptics`: legt `PolarizabilityGridObserver` und `VoxelGridForce3D` an, iteriert
+  MD-Segment → ⟨ε⟩ → Solver → gedämpftes W → `set_values`; Konvergenz über Δε (relativ zum Kontrast)
+  und das Residuum ΔW; Checkpoint je Iteration (`resume`).
+- `HpFemGratingSolver`: hp-FEM im selben Prozess (2.5D-Einheitszelle, Netz aus `hpfem.rectangle`,
+  ⟨ε⟩ je Zelle über `MaterialMap.set_cell`, |E|² über `GratingResult.field`); `NpzFileSolver`:
+  externer Solver über `eps_k.npz` → `field_k.npz` (`read_eps_file` für Python-Skripte).
+
 ## 4. Module
 
 | Verzeichnis | Inhalt | Phase |
@@ -203,7 +217,9 @@ x = sim.positions(dlpack=True)   # Zero-Copy nach CuPy/PyTorch
 - Observer (`src/observers/optics.*`) mit Ringpuffer im VRAM (`DeviceRingBuffer`: älteste Frames werden
   überschrieben, `overwritten` zählt sie; Download chronologisch, nur auf Anfrage):
   `add_dipole_tracker` (R_F, μ̂, d), `add_fret_tracker` (R_DA, κ², optional E), `add_refractive_index_profiler`
-  (S_α, S_V je Schicht, Mittel und Varianz über Frames; n(z) nach Lorentz-Lorenz beim Download).
+  (S_α, S_V je Schicht, Mittel und Varianz über Frames; n(z) nach Lorentz-Lorenz beim Download),
+  `add_polarizability_grid` (3D-Gegenstück, ADR 0016: S_α, S_V je Voxel, separable Gauß-Verschmierung
+  ±4σ oder Punkt, optional periodisch in x/y; ε = n² beim Download).
 - `ctx.observe_now()` führt alle Observer am aktuellen Zustand aus (statische Auswertungen, Tests).
 - Gruppen/Achsen der Sonden pro Replica als CSR (ADR 0005); Schwerpunkte in FP64 aus der Mixed-Precision-
   Position und den Imagezählern (ungewrappt).

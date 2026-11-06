@@ -1,8 +1,10 @@
 // BioOptoMD – In-situ-Optik-Observer (docs/PHYSICS_MODEL.md §6): DipoleAndDistanceTracker,
-// FRETTracker, RefractiveIndexProfiler. NumPy-Referenz: tests/reference/observers_ref.py.
+// FRETTracker, RefractiveIndexProfiler, PolarizabilityGridObserver (ADR 0016).
+// NumPy-Referenz: tests/reference/observers_ref.py.
 // Alle Observer ignorieren Padding-Atome (AGENTS.md Regel 6) und akkumulieren im VRAM (Regel 12).
 #pragma once
 
+#include <array>
 #include <cstdint>
 #include <string_view>
 #include <vector>
@@ -118,6 +120,54 @@ class RefractiveIndexProfiler final : public ObserverPlugin {
   DeviceBuffer<float4> d_type_params_;    // (α′, v, R, 0), R = (3v/4π)^(1/3)
   DeviceBuffer<long long> d_frame_hist_;  // (n_replicas, 2, n_bins) Fixed-Point
   DeviceBuffer<double> d_sums_;           // (n_replicas, 4, n_bins): Σα, Σα², ΣV, ΣV²
+};
+
+/// 3D-Gegenstück zum RefractiveIndexProfiler (ADR 0016 Punkt 2). Zellen (Voxel) [x0 + i·Δx,
+/// x0 + (i+1)·Δx) usw.; anders als VoxelGridForce3D (Knoten) ist das Gitter zellzentriert.
+struct PolarizabilityGridParams {
+  std::array<int, 3> shape{0, 0, 0};         ///< (nx, ny, nz), je >= 1
+  std::array<float, 3> origin_nm{0, 0, 0};   ///< untere Ecke (x0, y0, z0)
+  std::array<float, 3> spacing_nm{0, 0, 0};  ///< (Δx, Δy, Δz) > 0
+  std::vector<float> alpha_nm3;              ///< α′ je Optik-Typ (d_types.y) [nm³]
+  std::vector<float> volume_nm3;             ///< v je Optik-Typ [nm³]
+  float n_water = 1.333f;
+  /// kGauss (Default): separables Gauß-Gewicht je Achse wie im 1D-Profiler (σ = R/√5, Fenster
+  /// ±4σ, normiert auf das Fenster); kPoint: Zelle des Mittelpunkts. kSphere ist nicht erlaubt.
+  LayerSmearing smearing = LayerSmearing::kGauss;
+  /// Periodisch in x/y (nx·Δx = L_x, ny·Δy = L_y); sonst fallen Anteile außerhalb des Gitters weg.
+  bool periodic_xy = false;
+};
+
+/// Histogramme S_α, S_V je Voxel und Frame (Fixed-Point, deterministisch), über Frames als Summe
+/// und Quadratsumme akkumuliert; ε = n² nach Lorentz-Lorenz mit Wasser-Hintergrund beim Download.
+/// Speicher: 48 B je Voxel und Replica auf dem Gerät (Histogramm 16 B, Summen 32 B), beim Download
+/// zusätzlich 5 Felder à 8 B auf dem Host. Aufwand je Atom und Frame bis zu m_x·m_y·m_z Atomics
+/// (Fensterzellen je Achse); bei kleinen Voxeln ``stride`` entsprechend wählen.
+class PolarizabilityGridObserver final : public ObserverPlugin {
+ public:
+  PolarizabilityGridObserver(PolarizabilityGridParams params, int stride);
+  std::string_view name() const override { return "PolarizabilityGridObserver"; }
+  int stride() const override { return stride_; }
+  void initialize(SimulationContext& ctx) override;
+  void observe(const DeviceState& s, std::int64_t step, cudaStream_t stream) override;
+  void reset() override;
+  /// "x", "y", "z" Zellmitten [nm]; "eps", "s_alpha_mean"/"s_alpha_var", "s_volume_mean"/
+  /// "s_volume_var" (n_replicas, nz, ny, nx) [1, nm³ bzw. nm⁶]; "n_frames" (1,).
+  /// eps = NaN, wo L >= 1.
+  ObserverResult download() const override;
+  int n_frames() const { return n_frames_; }
+
+ private:
+  void check_box() const;
+
+  PolarizabilityGridParams params_;
+  int stride_;
+  int n_frames_ = 0;
+  std::uint64_t box_version_ = 0;
+  SimulationContext* ctx_ = nullptr;
+  DeviceBuffer<float4> d_type_params_;    // (α′, v, R, 0)
+  DeviceBuffer<long long> d_frame_hist_;  // (n_replicas, 2, n_vox) Fixed-Point
+  DeviceBuffer<double> d_sums_;           // (n_replicas, 4, n_vox): Σα, Σα², ΣV, ΣV²
 };
 
 }  // namespace bomd

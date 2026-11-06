@@ -1,5 +1,6 @@
 // BioOptoMD – Optik-Observer, siehe optics.hpp. Formeln: PHYSICS_MODEL.md §6 und
 // tests/reference/observers_ref.py.
+#include <climits>
 #include <cmath>
 #include <stdexcept>
 #include <string>
@@ -187,6 +188,101 @@ __global__ void k_layer_accumulate(int n_replicas, int n_bins, long long* hist, 
   out[3 * n_bins + k] += v * v;
   h[k] = 0;
   h[n_bins + k] = 0;
+}
+
+// --- PolarizabilityGridObserver ----------------------------------------------------------------
+
+constexpr int kGridWindow = 16;  // max. Zellen je Achse im Gauß-Fenster (in initialize() geprüft)
+
+struct GridAxes {
+  int n[3];
+  double x0[3], d[3];
+  int periodic_xy;
+};
+
+/// Zellen und Gewichte eines Atoms entlang einer Achse; Rückgabe: Anzahl m <= kGridWindow.
+/// Gauß wie k_layer_histogram (Fenster ±4σ, normiert auf das Fenster, nicht auf das Gitter);
+/// periodisch: Position in [x0, x0 + nΔ) gefaltet, Zellindizes modulo n.
+__device__ int axis_weights(double x, double x0, double d, int n, bool periodic, bool point,
+                            double radius, int* idx, double* w) {
+  if (periodic) {
+    const double len = n * d;
+    x -= len * floor((x - x0) / len);
+  }
+  if (point) {
+    int k = static_cast<int>(floor((x - x0) / d));
+    if (periodic) {
+      k %= n;
+      if (k < 0) k += n;
+    } else if (k < 0 || k >= n) {
+      return 0;
+    }
+    idx[0] = k;
+    w[0] = 1.0;
+    return 1;
+  }
+  const double reach = 4.0 * radius / sqrt(5.0);
+  const double inv = sqrt(5.0) / (radius * sqrt(2.0));  // 1/(σ√2)
+  const int w_lo = static_cast<int>(floor((x - reach - x0) / d));
+  const int w_hi = static_cast<int>(floor((x + reach - x0) / d));
+  const double norm = 0.5 * (erf((x0 + (w_hi + 1) * d - x) * inv) - erf((x0 + w_lo * d - x) * inv));
+  int m = 0;
+  for (int k = w_lo; k <= w_hi && m < kGridWindow; ++k) {
+    int kk = k;
+    if (periodic) {
+      kk %= n;
+      if (kk < 0) kk += n;
+    } else if (k < 0 || k >= n) {
+      continue;
+    }
+    const double lo = x0 + k * d;
+    const double wk = 0.5 * (erf((lo + d - x) * inv) - erf((lo - x) * inv)) / norm;
+    if (wk <= 0.0) continue;
+    idx[m] = kk;
+    w[m] = wk;
+    ++m;
+  }
+  return m;
+}
+
+/// Pro echtem Atom: separables Gewicht w_x w_y w_z auf die Voxel des aktuellen Frames.
+__global__ void k_grid_histogram(DeviceState s, const float4* type_params, int n_types, GridAxes g,
+                                 bool point_mode, long long* hist) {
+  const int i_local = blockIdx.x * blockDim.x + threadIdx.x;
+  const int r = blockIdx.y;
+  if (i_local >= s.n_atoms) return;  // Padding-Atome ignorieren (AGENTS.md Regel 6)
+  const int i = r * s.n_pad + i_local;
+  const int t = s.d_types[i].y;
+  if (t >= n_types) {
+    atomicOr(s.d_status, kStatusUnknownType);
+    return;
+  }
+  const float4 av = type_params[t];  // (α′, v, R, 0)
+  if (av.x == 0.0f && av.y == 0.0f) return;
+  const double3 x = detail::load_position(s, i);
+  const bool point = point_mode || av.z <= 0.0f;
+  int ix[kGridWindow], iy[kGridWindow], iz[kGridWindow];
+  double wx[kGridWindow], wy[kGridWindow], wz[kGridWindow];
+  const bool per = g.periodic_xy != 0;
+  const int mx = axis_weights(x.x, g.x0[0], g.d[0], g.n[0], per, point, av.z, ix, wx);
+  const int my = axis_weights(x.y, g.x0[1], g.d[1], g.n[1], per, point, av.z, iy, wy);
+  const int mz = axis_weights(x.z, g.x0[2], g.d[2], g.n[2], false, point, av.z, iz, wz);
+  const long long n_vox = static_cast<long long>(g.n[0]) * g.n[1] * g.n[2];
+  long long* h_alpha = hist + static_cast<long long>(r) * 2 * n_vox;
+  long long* h_volume = h_alpha + n_vox;
+  for (int c = 0; c < mz; ++c) {
+    for (int b = 0; b < my; ++b) {
+      const double wzy = wz[c] * wy[b];
+      const long long row = (static_cast<long long>(iz[c]) * g.n[1] + iy[b]) * g.n[0];
+      for (int a = 0; a < mx; ++a) {
+        const double w = wzy * wx[a];
+        detail::atomic_add_fixed_point(h_alpha + row + ix[a], static_cast<float>(w * av.x),
+                                       s.d_status);
+        detail::atomic_add_fixed_point(h_volume + row + ix[a], static_cast<float>(w * av.y),
+                                       s.d_status);
+      }
+    }
+  }
 }
 
 ObserverResult frames_result(const DeviceRingBuffer& ring, cudaStream_t stream, const char* unit) {
@@ -410,6 +506,157 @@ ObserverResult RefractiveIndexProfiler::download() const {
   HostArray frames{"n_frames", "1", {1}, {static_cast<double>(n_frames_)}};
   ObserverResult res;
   for (HostArray* a : {&z, &n, &am, &av, &vm, &vv, &frames}) res.arrays.push_back(std::move(*a));
+  return res;
+}
+
+// --- PolarizabilityGridObserver ----------------------------------------------------------------
+
+PolarizabilityGridObserver::PolarizabilityGridObserver(PolarizabilityGridParams params, int stride)
+    : params_(std::move(params)), stride_(stride) {
+  const auto& p = params_;
+  const std::string who = "PolarizabilityGridObserver: ";
+  require(stride > 0, who + "stride > 0");
+  for (int d = 0; d < 3; ++d) {
+    require(p.shape[d] >= 1, who + "shape je >= 1");
+    require(std::isfinite(p.spacing_nm[d]) && p.spacing_nm[d] > 0.0f, who + "spacing > 0");
+    require(std::isfinite(p.origin_nm[d]), who + "origin endlich");
+  }
+  require(!p.alpha_nm3.empty() && p.alpha_nm3.size() == p.volume_nm3.size(),
+          who + "alpha und volume je Optik-Typ (gleiche Länge)");
+  for (std::size_t t = 0; t < p.alpha_nm3.size(); ++t)
+    require(std::isfinite(p.alpha_nm3[t]) && p.alpha_nm3[t] >= 0.0f &&
+                std::isfinite(p.volume_nm3[t]) && p.volume_nm3[t] >= 0.0f,
+            who + "alpha, volume endlich und >= 0");
+  require(std::isfinite(p.n_water) && p.n_water >= 1.0f, who + "n_water >= 1");
+  require(p.smearing == LayerSmearing::kGauss || p.smearing == LayerSmearing::kPoint,
+          who + "Verschmierung 'gauss' oder 'point'");
+  const long long n_vox = static_cast<long long>(p.shape[0]) * p.shape[1] * p.shape[2];
+  require(4 * n_vox <= INT_MAX, who + "zu viele Voxel (4·n_vox muss in int passen)");
+  if (p.smearing == LayerSmearing::kGauss) {
+    for (float v : p.volume_nm3) {
+      // Wie im Kernel aus dem float-gerundeten R; eine Zelle Reserve, damit axis_weights nie kürzt
+      // (Fensterbreite floor(b) − floor(a) + 1 <= floor(b − a) + 2).
+      const float radius = static_cast<float>(std::cbrt(3.0 * v / (4.0 * kPi)));
+      const double reach = 4.0 * radius / std::sqrt(5.0);
+      for (int d = 0; d < 3; ++d)
+        require(std::floor(2.0 * reach / p.spacing_nm[d]) + 3.0 <= kGridWindow,
+                who +
+                    "Voxel zu klein für das Gauß-Fenster (Fenster 4σ je Seite, höchstens 16 Zellen "
+                    "je Achse)");
+    }
+  }
+}
+
+void PolarizabilityGridObserver::check_box() const {
+  const auto& p = params_;
+  if (!p.periodic_xy) return;
+  require(!ctx_->host_box().empty(), "PolarizabilityGridObserver: periodic_xy verlangt eine Box");
+  for (const float2& b : ctx_->host_box())
+    require(std::fabs(p.shape[0] * p.spacing_nm[0] - b.x) <= 1e-5f * b.x &&
+                std::fabs(p.shape[1] * p.spacing_nm[1] - b.y) <= 1e-5f * b.y,
+            "PolarizabilityGridObserver: periodic_xy verlangt nx·Δx = L_x und ny·Δy = L_y");
+}
+
+void PolarizabilityGridObserver::initialize(SimulationContext& ctx) {
+  ctx_ = &ctx;
+  check_box();
+  box_version_ = ctx.box_version();
+  const std::size_t n_types = params_.alpha_nm3.size();
+  std::vector<float4> tp(n_types);
+  for (std::size_t t = 0; t < n_types; ++t) {
+    const double radius = std::cbrt(3.0 * params_.volume_nm3[t] / (4.0 * kPi));
+    tp[t] =
+        make_float4(params_.alpha_nm3[t], params_.volume_nm3[t], static_cast<float>(radius), 0.0f);
+  }
+  const std::size_t n_vox =
+      static_cast<std::size_t>(params_.shape[0]) * params_.shape[1] * params_.shape[2];
+  d_type_params_ = DeviceBuffer<float4>(n_types);
+  d_frame_hist_ = DeviceBuffer<long long>(static_cast<std::size_t>(ctx.n_replicas()) * 2 * n_vox);
+  d_sums_ = DeviceBuffer<double>(static_cast<std::size_t>(ctx.n_replicas()) * 4 * n_vox);
+  d_type_params_.upload_async(tp.data(), ctx.stream());
+  d_frame_hist_.zero_async(ctx.stream());
+  d_sums_.zero_async(ctx.stream());
+  ctx.synchronize();
+}
+
+void PolarizabilityGridObserver::observe(const DeviceState& s, std::int64_t, cudaStream_t stream) {
+  if (box_version_ != ctx_->box_version()) {  // Periodizität hängt an der Box, V_k nicht
+    check_box();
+    box_version_ = ctx_->box_version();
+  }
+  const auto& p = params_;
+  GridAxes g{};
+  for (int d = 0; d < 3; ++d) {
+    g.n[d] = p.shape[d];
+    g.x0[d] = p.origin_nm[d];
+    g.d[d] = p.spacing_nm[d];
+  }
+  g.periodic_xy = p.periodic_xy ? 1 : 0;
+  const dim3 grid_atoms(detail::elementwise_grid(s.n_atoms), s.n_replicas);
+  k_grid_histogram<<<grid_atoms, detail::kElementwiseBlock, 0, stream>>>(
+      s, d_type_params_.data(), static_cast<int>(p.alpha_nm3.size()), g,
+      p.smearing == LayerSmearing::kPoint, d_frame_hist_.data());
+  BOMD_LAUNCH_CHECK();
+  const int n_vox = p.shape[0] * p.shape[1] * p.shape[2];
+  const dim3 grid_vox(detail::elementwise_grid(n_vox), s.n_replicas);
+  k_layer_accumulate<<<grid_vox, detail::kElementwiseBlock, 0, stream>>>(
+      s.n_replicas, n_vox, d_frame_hist_.data(), d_sums_.data());
+  BOMD_LAUNCH_CHECK();
+  ++n_frames_;
+}
+
+void PolarizabilityGridObserver::reset() {
+  ctx_->activate();
+  d_sums_.zero_async(ctx_->stream());
+  n_frames_ = 0;
+}
+
+ObserverResult PolarizabilityGridObserver::download() const {
+  ctx_->activate();
+  const auto& p = params_;
+  const int n_rep = ctx_->n_replicas();
+  const int nx = p.shape[0], ny = p.shape[1], nz = p.shape[2];
+  const std::size_t nv = static_cast<std::size_t>(nx) * ny * nz;
+  std::vector<double> sums(d_sums_.size());
+  d_sums_.download_async(sums.data(), ctx_->stream());
+  BOMD_CUDA_CHECK(cudaStreamSynchronize(ctx_->stream()));
+  auto arr = [&](const char* name, const char* unit) {
+    return HostArray{name, unit, {n_rep, nz, ny, nx}, std::vector<double>(n_rep * nv, 0.0)};
+  };
+  HostArray eps = arr("eps", "1"), am = arr("s_alpha_mean", "nm^3"),
+            av = arr("s_alpha_var", "nm^6"), vm = arr("s_volume_mean", "nm^3"),
+            vv = arr("s_volume_var", "nm^6");
+  const double nw = p.n_water;
+  const double lw = (nw * nw - 1.0) / (nw * nw + 2.0);
+  const double vk = static_cast<double>(p.spacing_nm[0]) * p.spacing_nm[1] * p.spacing_nm[2];
+  const double f = n_frames_ > 0 ? 1.0 / n_frames_ : 0.0;
+  for (int r = 0; r < n_rep; ++r) {
+    const double* s = sums.data() + static_cast<std::size_t>(r) * 4 * nv;
+    for (std::size_t k = 0; k < nv; ++k) {
+      const std::size_t o = static_cast<std::size_t>(r) * nv + k;
+      am.data[o] = s[k] * f;
+      av.data[o] = std::max(0.0, s[nv + k] * f - am.data[o] * am.data[o]);
+      vm.data[o] = s[2 * nv + k] * f;
+      vv.data[o] = std::max(0.0, s[3 * nv + k] * f - vm.data[o] * vm.data[o]);
+      if (am.data[o] == 0.0 && vm.data[o] == 0.0) {
+        eps.data[o] = nw * nw;  // reines Lösungsmittel exakt
+        continue;
+      }
+      const double fw = std::max(0.0, 1.0 - vm.data[o] / vk);
+      const double big_l = 4.0 * kPi / 3.0 * am.data[o] / vk + fw * lw;
+      eps.data[o] = big_l < 1.0 ? (1.0 + 2.0 * big_l) / (1.0 - big_l) : std::nan("");
+    }
+  }
+  ObserverResult res;
+  const char* axes[3] = {"x", "y", "z"};
+  for (int d = 0; d < 3; ++d) {
+    HostArray c{axes[d], "nm", {p.shape[d]}, {}};
+    for (int k = 0; k < p.shape[d]; ++k)
+      c.data.push_back(p.origin_nm[d] + (k + 0.5) * static_cast<double>(p.spacing_nm[d]));
+    res.arrays.push_back(std::move(c));
+  }
+  HostArray frames{"n_frames", "1", {1}, {static_cast<double>(n_frames_)}};
+  for (HostArray* a : {&eps, &am, &av, &vm, &vv, &frames}) res.arrays.push_back(std::move(*a));
   return res;
 }
 

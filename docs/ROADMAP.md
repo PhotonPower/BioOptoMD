@@ -288,7 +288,37 @@ Abnahmetests (revidierte Fassung vom Projektinhaber bestätigt 2026-11-06):
 - Image: Kraft = −∇E (finite Differenzen) auch im Übergangsbereich um ζ_c; Energie und Kraft stetig
   über ζ_c; NVE-Drift mit H-Atomen nahe Gold nicht schlechter als in Phase 9.5; alle Tests aus 9.5 grün.
 
-### Nächste große Phase (Projektinhaber 2026-11-06): Gekoppelte MD ↔ FEM-Iteration vor Coarse-Grained; ADR folgt.
+### Phase 10 – Selbstkonsistente Kopplung MD ↔ FEM (ADR 0016, Accepted 2026-11-06; Solver hp-FEM) – abgenommen 2026-11-06
+0. Voraussetzungen: `test_voxel_optical_sphere_consistency` (Lokalfeldfaktor, OQ-04; *umgesetzt
+   2026-11-06*, Ergebnis Faktor ≈ 1.6, OQ-22 (b): Lorentz-Faktor in `optical_scale`) und Kalibrierung
+   α′/v an dn/dc (`test_refractive_index_dn_dc`, OQ-01/02; *umgesetzt 2026-11-06*, klassenweise
+   Skalierung `builder.calibrate_optics`; Kopplung Profiler ↔ Kraft: `test_optical_force_dilute_solution`).
+   Ohne eigene Messwerte: Literaturwerte, deren Unsicherheit
+   als Toleranz dient (ADR 0016 Punkt 7).
+1. `PolarizabilityGridObserver` (3D-ε-Karte, Gauß-Verschmierung, Lorentz-Lorenz). *Umgesetzt
+   2026-11-06* (`ctx.add_polarizability_grid`, `test_phase10.py`).
+2. `VoxelGridForce3D::set_values` (Laufzeit-Update). *Umgesetzt 2026-11-06* (`test_voxel_set_values`).
+3. `biooptomd.coupling`: Solver-Protokoll, TMM-Referenzsolver (1D), hp-FEM-Adapter `HpFemSolver`
+   (im selben Prozess; npz-Datei-Adapter als Rückfall), Treiber `SelfConsistentOptics` (Picard mit
+   Dämpfung β, Checkpoint je Iteration). *Umgesetzt 2026-11-06:* Protokoll, `tmm`/`TmmSolver`,
+   `SelfConsistentOptics` (`test_tmm_reference`, `test_tmm_solver_grid`, `test_coupling_fixed_point`,
+   `test_coupling_scaling`, `test_coupling_resume`). hp-FEM-Adapter `HpFemGratingSolver` (in x
+   periodisch, in y invariant; `test_hpfem_adapter_planar`, rel. 3e-5 gegen TMM;
+   `test_hpfem_adapter_lateral`) und
+   `NpzFileSolver` (`test_npz_file_solver`). Offen: allgemeiner 3D-Adapter (`Scattering3D` mit
+   `LayerStack3D`), Treiber mit Replica Exchange (Zielzustand über die Slots, ADR 0016 Punkt 5).
+4. Beispiel: Aptamerschicht über Gold im Kretschmann-Aufbau mit dem TMM-Adapter. *Umgesetzt
+   2026-11-06* (`examples/aptamer_spr_gold`, `test_example_aptamer_spr_gold`).
+5. *Nächster Schritt (Projektinhaber 2026-11-06):* 3D-hp-FEM-Adapter (`Scattering3D` mit
+   `LayerStack3D`, Bloch-Einheitszelle in x und y, strukturiertes Tetraedernetz `hpfem.box`) für
+   Strukturen, die in x und y variieren (Nanopartikel, Hotspots). Kriterien (Vorschlag): an einer in y
+   invarianten Struktur gleiches W wie `HpFemGratingSolver` (rel. < 1 %); planar gegen TMM
+   (rel. < 1 %); Speicher und Laufzeit je Lösung über der ε-Auflösung im Molekülbereich dokumentiert.
+   Offen daneben: Replica Exchange im Treiber.
+
+Abnahmetests (Vorschlag): siehe ADR 0016, Konsequenzen (`test_polarizability_grid_vs_numpy`,
+`test_voxel_set_values`, `test_tmm_reference`, `test_coupling_fixed_point`, `test_coupling_scaling`,
+`test_hpfem_adapter_planar`, `test_coupling_resume`); vom Projektinhaber am 2026-11-06 bestätigt.
 
 - Generalized Born OBC2 (ADR 0004)
 - Replica-Exchange-Moves (Temperatur-Austausch auf Host-Seite)

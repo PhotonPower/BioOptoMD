@@ -2,7 +2,7 @@
 
 > Diese Datei wird am Ende **jeder** Arbeitssitzung aktualisiert (AGENTS.md §2.4).
 
-**Aktive Phase:** 9.6 – Tile-Paarliste (Branch `phase-9/tile-list`); parallel 9.4 Hairpin-Lauf (b). Phase 9.5 (ImageChargeForce) abgenommen 2026-11-06.
+**Aktive Phase:** 10 – MD ↔ FEM-Kopplung (Branch `phase-10/md-fem`, lokal), 10.0–10.4 abgenommen 2026-11-06, als Nächstes 10.5 (3D-hp-FEM-Adapter); offen 9.4 (Hairpin-Lauf (b)) und 9.6 (Schlussmessung). Phasen 9.5 und 9.7 abgenommen 2026-11-06.
 Alle PRs #1–#6, #9–#14 am 2026-11-05 nach `main` gemergt (Merge-Commits, Reihenfolge des Stapels).
 **Phase 9.3 (GB-neck2) abgenommen** am 2026-11-05, ADR 0012 und Abnahmekriterien bestätigt.
 **Phase 9.2 (Replica Exchange) abgenommen** am 2026-11-05, ADR 0011 und Abnahmekriterien bestätigt.
@@ -25,6 +25,52 @@ Alle PRs #1–#6, #9–#14 am 2026-11-05 nach `main` gemergt (Merge-Commits, Rei
 
 - Phase 5 (PR #5): HMR, SHAKE/RATTLE auf H-Bindungen, N_dof. Abgenommen 2026-11-03; Nacharbeit nach
   Review siehe unten.
+
+## Phase 10 – MD ↔ FEM-Kopplung: abgenommen 2026-11-06 (ADR 0016), Branch `phase-10/md-fem`
+- ADR 0016: Mean-Field-Fixpunktiteration mit Dämpfung, 3D-ε-Observer, `VoxelGridForce3D::set_values`,
+  Solver als Python-Protokoll (TMM-Referenz, hp-FEM-Adapter im selben Prozess, npz-Rückfall);
+  Voraussetzungen Lokalfeldtest und dn/dc-Kalibrierung an Literaturwerten (Phase 10.0).
+- Phase 10.0 (a): `test_phase6.py::test_voxel_optical_sphere_consistency` grün. Der Profiler bildet
+  α′, v auf n_p ab; die GPU-Kraft ist die additive Summe (rel. 1e-5); das Verhältnis CM/additiv ist
+  analytisch 1.638 bei n_p = 1.5 in Wasser und exakt 1 in Vakuum. OQ-22 (b): `optical_scale`
+  multipliziert per Default mit ((n_w² + 2)/3)² (`local_field=False` für das additive Modell).
+- Phase 10.3 (Teil): `biooptomd.coupling` mit TMM-Referenz und Treiber `SelfConsistentOptics`. Tests:
+  TMM gegen Fresnel und Airy (rel. 1e-12), R + T = 1, evaneszenter Abfall, SPR-Minimum 72.24° gegen
+  Plasmonen-Dispersion 72.75° (OQ-25: Literaturwinkel nicht konsistent belegt); Fixpunkt konvergiert
+  in 6 Iterationen (β = 0.5), W-Profile für β = 0.3/0.5/1.0 innerhalb 0.5 %, Feld 0 bitgleich zur
+  ungekoppelten MD; ⟨z⟩-Verschiebung linear (Verhältnis 2.0000) und = F/k; Fortsetzen bitgleich.
+  Befund OQ-24 (Selbstfeld dichter Schichten bei p-Polarisation).
+  Review 10.3 umgesetzt: stabile TMM-Rückwärtsrekursion (dicke Metallschichten), p-Feld gegen
+  Fresnel-t_E, Rauschen aus Blockmitteln (ADR Punkt 1), NaN-/W-Prüfung, atomare Checkpoints,
+  Konstanten C_LIGHT/EPS0_SI in units, `test_coupling_fixed_point` als slow; Treiber noch ohne REMD.
+- Phase 10.3 abgeschlossen: `HpFemGratingSolver` (hp-FEM 0.4.0 im selben Interpreter; Kretschmann mit
+  Schicht: max. Abweichung zu TMM p 3e-5, s 6e-9; ohne Schicht 1e-6; Review: Einheitszelle ab der
+  ε-Herkunft, Mittel an vertikalen Netzlinien, PML 1.25 λ/n, hp-FEM-Warnungen weitergereicht,
+  `test_hpfem_adapter_lateral`) und `NpzFileSolver`
+  (externer Prozess bitgleich). hp-FEM ist nicht in der venv installiert; der Test läuft mit
+  PYTHONPATH auf das Wheel und wird sonst übersprungen.
+- Phase 10.4: `examples/aptamer_spr_gold` (Aptamer über Gold, Kretschmann, TMM). Referenzlauf 10
+  Iterationen: δR ≈ −4.0e-3, ΔW 1.1e-2 → 1.7e-3; Selbstfeld wächst mit der Adsorption des
+  Strangs auf ≈ 17 % (OQ-24-Warnung). Punkte 10.0–10.4 der ROADMAP umgesetzt; nicht Teil der
+  Abnahmekriterien und offen: 3D-hp-FEM-Adapter (`Scattering3D`), REMD im Treiber. Abnahme durch den
+  Projektinhaber steht aus.
+- Phase 10.1/10.2: `PolarizabilityGridObserver` (`ctx.add_polarizability_grid`) und
+  `VoxelGridForce3D.set_values`. `test_phase10.py` (7 Tests) grün: Histogramme/Varianz/ε gegen NumPy
+  (rel. 1e-6, periodisch und nicht, Gauß und Punkt), x/y-Summe = 1D-Profiler (rel. 1e-5),
+  deterministisch, `set_values` bitgleich zu neu angelegtem Gitter (Kräfte, Energien, Trajektorie).
+  Review umgesetzt (int-Grenze, Fensterreserve, Box-Prüfung nur bei Änderung, Padding-/Typ-Test).
+  Gauß-Fenster ±4σ statt 3σ vom Projektinhaber bestätigt (2026-11-06).
+- Phase 10.0 (b): `test_phase6.py::test_refractive_index_dn_dc[protein|dna]` grün (GPU-Profiler,
+  c = 10 mg/mL: dn/dc 0.1901 bzw. 0.1701 mL/g). `builder.calibrate_optics`: s_α = 0.983 / 1.002,
+  s_v = 0.666 / 0.654; unkalibriert 0.064 / 0.065. DNA bezogen auf das Na-Salz (OQ-23); Ionen mit
+  Shannon-Radien, nicht kalibriert. `test_optical_force_dilute_solution`: GPU-Kraft einer kalibrierten
+  Lösungsschicht = Kontinuumskraft ¼ ε₀ Δε V ∇W (rel. 1.3e-3) nur mit Lorentz-Faktor. Review-Befunde
+  zu 10.0 umgesetzt. Das Beispiel `aptamer_on_graphene` nutzt die
+  DNA-Kalibrierung. Grenze: Elementtypen erfassen Aromatizität nicht (Residuen-dn/dc nach McMeekin
+  folgt mit ProtOr/NucProt).
+- OQ-20 entschieden (hp-FEM). hp-FEM 0.4.0 (Release-Wheel cp311-win_amd64) und BioOptoMD laufen im
+  selben Interpreter (geprüft in einem getrennten Verzeichnis, venv unverändert). Offen: OQ-21
+  (Mean-Field).
 
 ## Phase 9.7 – Folgearbeiten OQ-14 / OQ-18 (d): abgenommen 2026-11-06 (Branch `phase-9/followups`, PR #18)
 - C¹-glattes ζ-Clamping in `ImageChargeForce` (h = ζ_c/2): Referenz `smooth_zeta`, neue Tests
@@ -275,11 +321,9 @@ ADR 0007 → **0009** (Mixed Precision), unsere OQ-08…11 → **OQ-11…14**.
   Structs unterschiedlich aus. Vor dem Push mit beiden prüfen oder Kommentare über die Member setzen.
 
 ## Nächster konkreter Schritt
-1. Validierung GBn2 + OL21 (OQ-15: Duplex-Stabilität, Hairpin-Faltung) oder nächste Erweiterung
-   (Cell-List, ImageChargeForce, CG, MD↔FEM) – Entscheidung des Projektinhabers;
-   OQ-14/15/16/17 entscheiden; PRs #1 → #6, #9 → #13 nacheinander mergen.
-2. Danach Phase 9+ nach Forschungsbedarf (ROADMAP); offen aus Phase 6: zwei `reference`-Tests
-   (dn/dc-Kalibrierung, Clausius-Mossotti-Konsistenz).
+1. Hairpin-Lauf (OQ-15 b) auswerten, PR #15 aktualisieren, Phase 9.4 zur Abnahme; danach
+   Schlussmessung 9.6 auf freier GPU (OQ-19).
+2. Phase 10.5: 3D-hp-FEM-Adapter (`Scattering3D`); danach REMD im Treiber.
 3. Nachholen: Kontrolllauf auf der RTX 6000 Ada; Nsight Compute (Counter-Freigabe).
 
 ## Sitzungslog
@@ -315,6 +359,11 @@ ADR 0007 → **0009** (Mixed Precision), unsere OQ-08…11 → **OQ-11…14**.
 | 2026-11-06 | Projektinhaber / Claude | ADR 0015 (Constraint-Löser mit gemischter Präzision) angenommen; Prototyp verfehlt das Kriterium (−2 % statt −30 %) ⇒ nach Punkt 4 zurückgezogen (Rejected). |
 | 2026-11-06 | Projektinhaber | Vorschläge angenommen: OQ-15 (a) bestätigt; OQ-14 zweite Temperatur (Schätzer nach Messung); OQ-16 vorerst nicht modelliert; OQ-17 Φ0 fest; OQ-18 (a)–(c) wie Annahme, (d) C¹-glattes Clamping; Phase 9.6 als Entwurf-PR pushen; #15/#16 gemeinsam mergen nach Abnahme 9.4; nächste große Phase MD ↔ FEM-Kopplung (vor Coarse-Grained); Prototyp-Branch ADR 0015 lokal behalten. |
 | 2026-11-06 | Projektinhaber | Revidiertes Kriterium ROADMAP 9.7 (Bias-Verhältnis 4 fs / 2 fs zwischen 3 und 5) bestätigt; Phase 9.7 abgenommen, PR #18 gestapelt auf #17. |
+| 2026-11-06 | Projektinhaber | ADR 0016 (MD ↔ FEM) angenommen, Kriterien bestätigt; Solver hp-FEM (OQ-20); keine eigenen dn/dc-Messwerte, Kalibrierung an Literaturwerten (OQ-01/02). |
+| 2026-11-06 | Projektinhaber | OQ-22 (b): Lorentz-Lokalfeldfaktor als Default in `optical_scale`; Kalibrierung zunächst klassenweise (v auf v̄, α′ an dn/dc) statt ProtOr/NucProt. |
+| 2026-11-06 | Claude Opus 5.5 | Review Phase 10.0 umgesetzt: DNA-Bezugsmasse Na-Salz und v̄ als OQ-23, Ionenvolumina nach Shannon, Kalibrierung aller kovalenten Elemente, Elementprüfung, Test Profiler ↔ Kraft. |
+| 2026-11-06 | Projektinhaber | Gauß-Fenster ±4σ (ADR 0016 Punkt 2) bestätigt; OQ-24 (d) Warnung, (b) später; OQ-25 Ersatzkriterium SPR angenommen. |
+| 2026-11-06 | Projektinhaber | Phase 10 (10.0–10.4) abgenommen; 3D-hp-FEM-Adapter als nächster Schritt (10.5), nicht Teil der Abnahme. |
 | 2026-11-06 | Projektinhaber | Phase 9.6: Kriterium nach der Endmessung bei freier GPU gesenkt (1 × 20 k ≥ 1.10×, gemessen 1.12×), Phase 9.6 abgenommen (OQ-19). |
 | 2026-11-05 | Claude Opus 5.5 | Phase 9.2 Replica Exchange implementiert (ADR 0011 Proposed), 113/113 Tests grün. |
 | 2026-11-05 | Claude Opus 5.5 | Phase 9.1 GB-OBC2 implementiert (ADR 0010 Proposed, gb_ref, TiledGeneralizedBorn, Builder), 12/12 Phase-9-Tests grün. |
