@@ -2,7 +2,7 @@
 
 > Diese Datei wird am Ende **jeder** Arbeitssitzung aktualisiert (AGENTS.md §2.4).
 
-**Aktive Phase:** 10 – MD ↔ FEM-Kopplung (Branch `phase-10/md-fem`, lokal), 10.0–10.4 umgesetzt, Abnahme ausstehend; offen 9.4 (Hairpin-Lauf (b)) und 9.6 (Schlussmessung). Phasen 9.5 und 9.7 abgenommen 2026-11-06.
+**Aktive Phase:** 10 – MD ↔ FEM-Kopplung (Branch `phase-10/md-fem`, lokal), 10.0–10.4 abgenommen 2026-11-06, als Nächstes 10.5 (3D-hp-FEM-Adapter); offen 9.4 (Hairpin-Lauf (b)) und 9.6 (Schlussmessung). Phasen 9.5 und 9.7 abgenommen 2026-11-06.
 Alle PRs #1–#6, #9–#14 am 2026-11-05 nach `main` gemergt (Merge-Commits, Reihenfolge des Stapels).
 **Phase 9.3 (GB-neck2) abgenommen** am 2026-11-05, ADR 0012 und Abnahmekriterien bestätigt.
 **Phase 9.2 (Replica Exchange) abgenommen** am 2026-11-05, ADR 0011 und Abnahmekriterien bestätigt.
@@ -26,7 +26,7 @@ Alle PRs #1–#6, #9–#14 am 2026-11-05 nach `main` gemergt (Merge-Commits, Rei
 - Phase 5 (PR #5): HMR, SHAKE/RATTLE auf H-Bindungen, N_dof. Abgenommen 2026-11-03; Nacharbeit nach
   Review siehe unten.
 
-## Phase 10 – MD ↔ FEM-Kopplung: ADR 0016 (Accepted 2026-11-06), Branch `phase-10/md-fem`
+## Phase 10 – MD ↔ FEM-Kopplung: abgenommen 2026-11-06 (ADR 0016), Branch `phase-10/md-fem`
 - ADR 0016: Mean-Field-Fixpunktiteration mit Dämpfung, 3D-ε-Observer, `VoxelGridForce3D::set_values`,
   Solver als Python-Protokoll (TMM-Referenz, hp-FEM-Adapter im selben Prozess, npz-Rückfall);
   Voraussetzungen Lokalfeldtest und dn/dc-Kalibrierung an Literaturwerten (Phase 10.0).
@@ -315,7 +315,7 @@ ADR 0007 → **0009** (Mixed Precision), unsere OQ-08…11 → **OQ-11…14**.
 ## Nächster konkreter Schritt
 1. Hairpin-Lauf (OQ-15 b) auswerten, PR #15 aktualisieren, Phase 9.4 zur Abnahme; danach
    Schlussmessung 9.6 auf freier GPU (OQ-19).
-2. Abnahme Phase 10 (Projektinhaber); offen bleiben 3D-hp-FEM-Adapter und REMD im Treiber.
+2. Phase 10.5: 3D-hp-FEM-Adapter (`Scattering3D`); danach REMD im Treiber.
 3. Nachholen: Kontrolllauf auf der RTX 6000 Ada; Nsight Compute (Counter-Freigabe).
 
 ## Sitzungslog
@@ -354,6 +354,7 @@ ADR 0007 → **0009** (Mixed Precision), unsere OQ-08…11 → **OQ-11…14**.
 | 2026-11-06 | Projektinhaber | OQ-22 (b): Lorentz-Lokalfeldfaktor als Default in `optical_scale`; Kalibrierung zunächst klassenweise (v auf v̄, α′ an dn/dc) statt ProtOr/NucProt. |
 | 2026-11-06 | Claude Opus 5.5 | Review Phase 10.0 umgesetzt: DNA-Bezugsmasse Na-Salz und v̄ als OQ-23, Ionenvolumina nach Shannon, Kalibrierung aller kovalenten Elemente, Elementprüfung, Test Profiler ↔ Kraft. |
 | 2026-11-06 | Projektinhaber | Gauß-Fenster ±4σ (ADR 0016 Punkt 2) bestätigt; OQ-24 (d) Warnung, (b) später; OQ-25 Ersatzkriterium SPR angenommen. |
+| 2026-11-06 | Projektinhaber | Phase 10 (10.0–10.4) abgenommen; 3D-hp-FEM-Adapter als nächster Schritt (10.5), nicht Teil der Abnahme. |
 | 2026-11-05 | Claude Opus 5.5 | Phase 9.2 Replica Exchange implementiert (ADR 0011 Proposed), 113/113 Tests grün. |
 | 2026-11-05 | Claude Opus 5.5 | Phase 9.1 GB-OBC2 implementiert (ADR 0010 Proposed, gb_ref, TiledGeneralizedBorn, Builder), 12/12 Phase-9-Tests grün. |
 | 2026-11-05 | Claude Opus 5.5 | Phase 8: Benchmark vs. OpenMM (32×2k Faktor 3.5), Tile-Vorauswahl, M-SHAKE/RATTLE; Review umgesetzt, 94/94 Tests grün. |
