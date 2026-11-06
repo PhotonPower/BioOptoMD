@@ -233,8 +233,13 @@ def test_refractive_index_dn_dc(cls):
     """Kalibrierung α′/v an dn/dc (OQ-01/02, ADR 0016 Punkt 7b): Homogene Lösung der
     Referenzzusammensetzung mit c = 10 mg/mL (Atome gleichverteilt in einer Schicht, Punktatome, eine
     Profilerschicht über die ganze Lösung) → n = n_w + c·dn/dc innerhalb der Literaturtoleranz
-    (Protein 0.190 ± 0.003 mL/g bei 589 nm, DNA 0.170 ± 0.005 mL/g bei 633 nm). Zusätzlich:
-    v-Skalierung ergibt Σv/M = v̄, und ohne Kalibrierung liegt dn/dc weit außerhalb (≈ 0.06–0.07)."""
+    (Protein 0.190 ± 0.003 mL/g bei 589 nm, DNA 0.170 ± 0.005 mL/g bei 633 nm, c bezogen auf das
+    Na-Salz, OQ-23).
+
+    Die Übereinstimmung von Modell und Ziel gilt per Konstruktion; geprüft werden (a) GPU-Profiler
+    gegen :func:`dn_dc_model` (rel. 2e-3, unabhängige Implementierung), (b) Σv/M = v̄, (c) die
+    Skalierungsfaktoren bleiben physikalisch plausibel (|s_α − 1| < 0.1, 0.5 < s_v < 1: Überlappung
+    verkleinert Bondi-Volumina), (d) ohne Kalibrierung liegt dn/dc weit außerhalb (≈ 0.06–0.07)."""
     from biooptomd import builder
 
     target = builder.OPTICS_TARGETS[cls]
@@ -244,8 +249,11 @@ def test_refractive_index_dn_dc(cls):
     v_sum = sum(k * table[e][1] for e, k in comp.items())
     assert v_sum / (mass * builder.AMU_ML_NM3) == pytest.approx(target["v_bar"], rel=1e-12)
     n_w = target["n_water"]
-    assert builder.dn_dc_model(comp, table, n_w) == pytest.approx(target["dn_dc"], rel=1e-12)
-    raw = builder.dn_dc_model(comp, builder.ELEMENT_OPTICS, n_w)
+    extra = builder.counterion_mass(cls, comp)
+    assert builder.dn_dc_model(comp, table, n_w, extra) == pytest.approx(target["dn_dc"], rel=1e-12)
+    assert abs(factors["s_alpha"] - 1.0) < 0.1
+    assert 0.5 < factors["s_volume"] < 1.0
+    raw = builder.dn_dc_model(comp, builder.ELEMENT_OPTICS, n_w, extra)
     assert abs(raw - target["dn_dc"]) > 0.05
     print(f"{cls}: s_alpha {factors['s_alpha']:.4f}, s_volume {factors['s_volume']:.4f}, "
           f"dn/dc unkalibriert {raw:.4f}")  # fmt: skip
@@ -255,7 +263,9 @@ def test_refractive_index_dn_dc(cls):
     counts = {e: round(k * n_units) for e, k in comp.items()}
     elements = sorted(counts)
     el_types = np.concatenate([np.full(counts[e], i, np.int32) for i, e in enumerate(elements)])
+    exact = {e: float(counts[e]) for e in elements}
     m_total = sum(counts[e] * builder.ELEMENT_MASS[e] for e in elements)
+    m_total += builder.counterion_mass(cls, exact)  # Bezugsmasse (Gegenionen implizit)
     c = 0.010  # g/mL
     box = 12.0
     height = m_total * builder.AMU_ML_NM3 / (c * box * box)  # Volumen der Lösung [nm³] / Fläche
@@ -282,8 +292,72 @@ def test_refractive_index_dn_dc(cls):
     )
     assert abs(dn_dc - target["dn_dc"]) < target["tol"]
     # Modell und GPU-Profiler stimmen bis auf die Nichtlinearität in c und float32 überein.
-    exact = {e: float(counts[e]) for e in elements}
-    assert dn_dc == pytest.approx(builder.dn_dc_model(exact, table, n_w), rel=2e-3)
+    model = builder.dn_dc_model(exact, table, n_w, builder.counterion_mass(cls, exact))
+    assert dn_dc == pytest.approx(model, rel=2e-3)
+    with pytest.raises(ValueError):
+        builder.calibrate_optics(cls, composition={**comp, "Na": 1.0})  # Ionen nicht kalibrieren
+    with pytest.raises(ValueError):
+        builder.dn_dc_model({"X": 1.0}, table, n_w)  # unbekanntes Element
+
+
+def test_optical_force_dilute_solution():
+    """Verbindet Profiler (dn/dc) und Kraft (OQ-22): Eine verdünnte, an dn/dc kalibrierte
+    Proteinschicht im linearen |E₀|²-Gradienten W = W0 + g z erfährt mit ``optical_scale``
+    (Default ``local_field=True``) die Kontinuumskraft eines Volumens V mit Permittivitätsüberschuss
+    Δε = n² − n_w² (n aus dem GPU-Profiler): F_z = ¼ ε₀ Δε V g, d. h. in Modelleinheiten
+    F_z = k Δε V/(4π) g mit k = FARADAY²/(4 ONE_4PI_EPS0). Grund: dε/dL = (n_w² + 2)²/3, also
+    Δε V/(4π) = λ_L Σ α′_eff bis auf O(c). Ohne Lokalfeldfaktor fehlt genau λ_L ≈ 1.585."""
+    from biooptomd import builder, units
+    from biooptomd.voxel import optical_scale
+
+    target = builder.OPTICS_TARGETS["protein"]
+    n_w = target["n_water"]
+    table, _ = builder.calibrate_optics("protein")
+    comp = builder.class_composition("protein")
+    counts = {e: round(k * 400) for e, k in comp.items()}
+    elements = sorted(counts)
+    el_types = np.concatenate([np.full(counts[e], i, np.int32) for i, e in enumerate(elements)])
+    m_total = sum(counts[e] * builder.ELEMENT_MASS[e] for e in elements)
+    c, box = 0.010, 12.0
+    height = m_total * builder.AMU_ML_NM3 / (c * box * box)
+    rng = np.random.default_rng(11)
+    n = len(el_types)
+    pos = np.empty((n, 3))
+    pos[:, :2] = rng.uniform(0.0, box, (n, 2))
+    pos[:, 2] = rng.uniform(1.0, 1.0 + height, n)
+    alpha = np.array([table[e][0] for e in elements], np.float32)
+    vol = np.array([table[e][1] for e in elements], np.float32)
+    types = np.zeros((1, n, 2), np.int32)
+    types[0, :, 1] = el_types
+
+    ctx = _ctx(1, n, box)
+    ctx.set_positions(pos.astype(np.float32)[None])
+    ctx.set_types(types)
+    prof = ctx.add_refractive_index_profiler(
+        height, 3, alpha, vol, z_min=1.0 - height, n_water=n_w, smearing="point"
+    )
+    ctx.observe_now()
+    n_sol = float(prof.result()["n"][0, 1])
+
+    g, spacing = 5.0, 0.5
+    nxy, nz = round(box / spacing) + 1, int(np.ceil((height + 2.0) / spacing)) + 1
+    zz = spacing * np.arange(nz)
+    w_field = np.broadcast_to((40.0 + g * zz)[:, None, None], (nz, nxy, nxy))
+    values = values_from_potential(w_field, (spacing,) * 3)
+    k = units.FARADAY**2 / (4.0 * units.ONE_4PI_EPS0)
+    f_cont = k * (n_sol**2 - n_w**2) * box * box * height / (4.0 * np.pi) * g
+    forces = {}
+    for lf in (True, False):
+        scale = optical_scale(alpha, vol, n_w, amplitude="peak", local_field=lf)
+        ctx = _ctx(1, n, box)
+        ctx.set_positions(pos.astype(np.float32)[None])
+        ctx.set_types(types)
+        ctx.add_voxel_grid(values, (0.0, 0.0, 0.0), (spacing,) * 3, scale)
+        ctx.compute_forces()
+        forces[lf] = ctx.forces()[0, :n, 2].astype(np.float64).sum()
+    print(f"F_z GPU {forces[True]:.5f}, Kontinuum {f_cont:.5f}, ohne λ_L {forces[False]:.5f}")
+    assert forces[True] == pytest.approx(f_cont, rel=2e-3)
+    assert forces[True] / forces[False] == pytest.approx(((n_w**2 + 2) / 3) ** 2, rel=1e-5)
 
 
 def test_refractive_index_smearing():
@@ -630,14 +704,17 @@ def test_voxel_optical_sphere_consistency():
     (1) Der Profiler ergibt für eine voll gefüllte Schicht desselben Gitters n = n_p (Abbildung
         α′, v ↔ n_p).
     (2) Die GPU-Gesamtkraft ist die Summe der additiven Überschusskräfte, F = −Σ s_i g (rel. 1e-5).
+    (3), (4) sind analytische Dokumentation (mit (2) algebraisch identisch, kein eigener GPU-Lauf);
+        die Kopplung von Profiler und Kraft prüft ``test_optical_force_dilute_solution``.
     (3) Vergleich mit der Dipolkraft einer dielektrischen Kugel (Clausius-Mossotti im Medium):
         α′_CM = a³ ε_w (ε_p − ε_w)/(ε_p + 2 ε_w) mit a³ = 3 N d³/(4π). Das additive Modell ergibt
         a³ (L_p − L_w); das Verhältnis CM/additiv ist analytisch ε_w (ε_w + 2)(ε_p + 2)/(3(ε_p + 2 ε_w))
         und geht für kleinen Kontrast gegen den Lorentz-Faktor ((n_w² + 2)/3)². In Vakuum (n_w = 1)
-        ist es exakt 1. Ergebnis (n_w = 1.333, n_p = 1.5): Das additive Modell unterschätzt die
-        Kraft um den Faktor ≈ 1.64.
-    (4) Mit dem Lorentz-Faktor (Default von ``optical_scale``, OQ-22) liegt die Kraft höchstens 5 %
-        unter Clausius-Mossotti."""
+        ist es exakt 1 (nur für die Kugel: Depolarisation und Lorentz-Hohlraumfeld heben sich auf).
+        Ergebnis (n_w = 1.333, n_p = 1.5): Das additive Modell unterschätzt die Kraft um den
+        Faktor ≈ 1.64.
+    (4) Mit dem Lorentz-Faktor (Default von ``optical_scale``, OQ-22) liegt die Kraft bis n_p = 1.6
+        etwa 5 % (n_p = 1.5: 3 %) unter Clausius-Mossotti."""
     from biooptomd import units
     from biooptomd.voxel import optical_scale
 
@@ -708,4 +785,4 @@ def test_voxel_optical_sphere_consistency():
             )
         # (4) Default mit Lokalfeldfaktor
         s_lf = optical_scale(np.array([alpha]), np.array([vol]), n_w, amplitude="peak")
-        assert 1.0 - 2e-5 <= f_cm / (f_gpu * s_lf[0] / scale[0]) < 1.05
+        assert 1.0 - 2e-5 <= f_cm / (f_gpu * s_lf[0] / scale[0]) < 1.04  # n_p = 1.5

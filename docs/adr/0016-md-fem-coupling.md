@@ -117,7 +117,9 @@ Randbedingungen:
      Messwerte gibt es noch nicht (Projektinhaber 2026-11-06). Kalibriert wird an Literaturwerten,
      deren Unsicherheit als Toleranz dient: Proteine 0.190 ± 0.003 mL/g bei 589 nm (Zhao et al.
      2011), DNA ≈ 0.17 mL/g bei 633 nm (Handbuchwert, Salzabhängigkeit offen). Eigene Messungen
-     ersetzen die Werte später.
+     ersetzen die Werte später. *Umgesetzt 2026-11-06* als klassenweise Skalierung
+     (`builder.calibrate_optics`). Annahmen für DNA (OQ-23): Bezugsmasse Na-Salz, Toleranz ± 0.005,
+     v̄ = 0.58 mL/g (NucProt, nicht verifiziert).
 
    Ohne beides ist die Rückkopplung quantitativ nicht belastbar. Kräfte und ε hängen direkt an α′_eff.
 

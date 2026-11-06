@@ -291,7 +291,8 @@ Abnahmetests (revidierte Fassung vom Projektinhaber bestätigt 2026-11-06):
 0. Voraussetzungen: `test_voxel_optical_sphere_consistency` (Lokalfeldfaktor, OQ-04; *umgesetzt
    2026-11-06*, Ergebnis Faktor ≈ 1.6, OQ-22 (b): Lorentz-Faktor in `optical_scale`) und Kalibrierung
    α′/v an dn/dc (`test_refractive_index_dn_dc`, OQ-01/02; *umgesetzt 2026-11-06*, klassenweise
-   Skalierung `builder.calibrate_optics`). Ohne eigene Messwerte: Literaturwerte, deren Unsicherheit
+   Skalierung `builder.calibrate_optics`; Kopplung Profiler ↔ Kraft: `test_optical_force_dilute_solution`).
+   Ohne eigene Messwerte: Literaturwerte, deren Unsicherheit
    als Toleranz dient (ADR 0016 Punkt 7).
 1. `PolarizabilityGridObserver` (3D-ε-Karte, Gauß-Verschmierung, Lorentz-Lorenz).
 2. `VoxelGridForce3D::set_values` (Laufzeit-Update).

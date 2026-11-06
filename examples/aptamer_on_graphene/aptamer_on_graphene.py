@@ -30,6 +30,7 @@ PDB = ROOT / "tests" / "reference" / "inputs" / "dna_duplex_ions.pdb"
 FORCEFIELD = ("amber14/DNA.OL15.xml",)
 BOX_NM = (6.0, 6.0)  # Bedeckung Γ = 1/L² ≈ 2.8·10¹² cm⁻² (OQ-09); L < 2 r_c ⇒ Bildsumme
 IONIC_STRENGTH = 0.15  # mol/L
+N_WATER = builder.OPTICS_TARGETS["dna"]["n_water"]  # Wasser bei der Kalibrierwellenlänge 632.8 nm
 ANCHOR_HEIGHT = 0.35  # nm über der Graphenebene (ASSUMPTION(OQ-07))
 R0_NM = 5.0  # Förster-Radius (Platzhalter)
 DT_PS = 0.004  # mit HMR + H-Constraints
@@ -88,7 +89,7 @@ def build(n_replicas: int = 8, t_min: float = 300.0, t_max: float = 340.0, seed:
     spec, anchor, donor, acceptor, anchor_z = load_strand()
     temps = np.geomspace(t_min, t_max, n_replicas)
     # α′/v klassenweise an dn/dc der DNA kalibriert (OQ-01/02, ADR 0016 Punkt 7b).
-    dna_optics, _ = builder.calibrate_optics("dna")
+    dna_optics, _ = builder.calibrate_optics("dna")  # skaliert auch Anker-S, Ionen nicht
     types, alpha, volume, names = builder.optical_tables(
         spec, anchor_atoms=[anchor], table=dna_optics
     )
@@ -121,7 +122,9 @@ def build(n_replicas: int = 8, t_min: float = 300.0, t_max: float = 340.0, seed:
             stride=stride,
             capacity=capacity,
         ),
-        "nz": ctx.add_refractive_index_profiler(0.05, 200, alpha, volume, z_min=0.0, stride=stride),
+        "nz": ctx.add_refractive_index_profiler(
+            0.05, 200, alpha, volume, z_min=0.0, n_water=N_WATER, stride=stride
+        ),
         "energy": ctx.add_energy_tracker(stride, capacity),
     }
     meta = {
@@ -131,7 +134,7 @@ def build(n_replicas: int = 8, t_min: float = 300.0, t_max: float = 340.0, seed:
     return ctx, obs, meta
 
 
-def summarize(obs, meta, n_water: float = 1.333):
+def summarize(obs, meta, n_water: float = N_WATER):
     """Kennzahlen je Replica aus den Observer-Zeitreihen."""
     fret = obs["fret"].result()
     dip = obs["dipole"].result()["frames"]

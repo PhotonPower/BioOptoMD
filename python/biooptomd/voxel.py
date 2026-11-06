@@ -52,7 +52,7 @@ def optical_scale(
 
     Lokalfeldfaktor (OQ-22, Projektinhaber 2026-11-06): λ_L = ((n_w² + 2)/3)². Das additive Modell
     unterschätzt die Kraft im Medium gegenüber Clausius-Mossotti (Kontinuumsbild des FEM-Solvers);
-    λ_L ist für kleinen Kontrast exakt und weicht bis n_p = 1.6 um höchstens 5 % ab
+    λ_L ist für kleinen Kontrast exakt und weicht bis n_p = 1.6 um etwa 5 % ab
     (``test_voxel_optical_sphere_consistency``). ``local_field=False`` ergibt λ_L = 1 (bisheriges
     Verhalten; in Vakuum ist λ_L ohnehin 1).
 

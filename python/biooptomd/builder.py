@@ -23,6 +23,7 @@ import numpy as np
 
 from . import constraints as _constraints
 from . import nonbonded as _nonbonded
+from . import units
 
 BONDED_KEYS = (
     "bonds", "bond_k", "bond_r0", "angles", "angle_k", "angle_theta0", "torsions", "torsion_k",
@@ -559,10 +560,12 @@ def dipole_probe(groups, axis):
     return offsets, atoms, ax[:, 0].copy(), ax[:, 1].copy()
 
 
-# ASSUMPTION(OQ-01/02): Platzhalter je Element, nicht kalibriert (Entscheidung: Typtabelle nach
-# Miller mit Skalierungsfaktor, kalibriert an dn/dc; Volumina aus ProtOr/NucProt). Hier: α′ grob nach
-# Miller (1990, J. Am. Chem. Soc. 112, 8533), v aus Bondi-Radien (Überlappung ignoriert), beide
-# unverifiziert. Einheiten nm³.
+# ASSUMPTION(OQ-01/02): Ausgangstabelle je Element, NICHT kalibriert: α′ grob nach Miller (1990,
+# J. Am. Chem. Soc. 112, 8533), v kovalenter Elemente aus Bondi-Radien (Überlappung ignoriert, dn/dc
+# damit etwa um den Faktor 3 zu klein). Für Simulationen die an dn/dc kalibrierte Tabelle aus
+# :func:`calibrate_optics` verwenden. Ionen (:data:`OPTICS_IONS`): v aus dem Ionenradius nach Shannon
+# (1976, Koordinationszahl 6: Na⁺ 0.102 nm, Mg²⁺ 0.072 nm), α′ Ionenwerte; sie werden nicht
+# kalibriert. Einheiten nm³.
 ELEMENT_OPTICS = {
     "H": (0.387e-3, 4.0 / 3.0 * np.pi * 0.120**3),
     "C": (1.20e-3, 4.0 / 3.0 * np.pi * 0.170**3),
@@ -570,9 +573,10 @@ ELEMENT_OPTICS = {
     "O": (0.64e-3, 4.0 / 3.0 * np.pi * 0.152**3),
     "P": (3.0e-3, 4.0 / 3.0 * np.pi * 0.180**3),
     "S": (3.0e-3, 4.0 / 3.0 * np.pi * 0.180**3),
-    "Na": (0.15e-3, 4.0 / 3.0 * np.pi * 0.227**3),
-    "Mg": (0.08e-3, 4.0 / 3.0 * np.pi * 0.173**3),
+    "Na": (0.15e-3, 4.0 / 3.0 * np.pi * 0.102**3),
+    "Mg": (0.08e-3, 4.0 / 3.0 * np.pi * 0.072**3),
 }
+OPTICS_IONS = frozenset({"Na", "Mg"})
 
 
 def optical_tables(spec: SystemSpec, anchor_atoms=(), table=None):
@@ -580,6 +584,9 @@ def optical_tables(spec: SystemSpec, anchor_atoms=(), table=None):
 
     Typ 0 ist das Ankeratom-Element (keine Wand, ADR 0007); alle Anker müssen dasselbe Element
     haben. Typen ≥ 1 entsprechen den übrigen Elementen in der Reihenfolge des ersten Auftretens.
+    Default-Tabelle ist die unkalibrierte :data:`ELEMENT_OPTICS`; für n(z) und optische Kräfte
+    ``table=calibrate_optics(...)[0]`` übergeben. Eine Tabelle gilt für das ganze System: gemischte
+    Protein-DNA-Systeme lassen sich so nur mit einer Klasse kalibrieren (Grenze, OQ-01/02).
 
     Returns:
         (types int32 (n,), alpha float32 (T,) [nm³], volume float32 (T,) [nm³], names (T,)).
@@ -612,9 +619,12 @@ ELEMENT_MASS = {"H": 1.008, "C": 12.011, "N": 14.007, "O": 15.999, "P": 30.974, 
 # Literaturziele der Kalibrierung (OQ-01/02, ADR 0016 Punkt 7b): dn/dc [mL/g] ± Toleranz, Wellenlänge
 # [nm], n_w des Wassers dort, partielles spezifisches Volumen v̄ [mL/g].
 # - Protein: dn/dc 0.190 ± 0.003 bei 589 nm (Zhao et al., Biophys. J. 2011); v̄ = 0.73 mL/g.
-# - DNA: dn/dc ≈ 0.17 bei 632.8 nm (Theisen et al., Handbuchwert, Salzabhängigkeit offen).
-#   ASSUMPTION(OQ-02): Toleranz ± 0.005 (Spanne der Handbuchwerte); v̄ = 0.58 mL/g ist das
-#   Voronoi-Packungsvolumen nach NucProt (Voss & Gerstein 2005), nicht das experimentelle v̄ der Salze.
+# - DNA: dn/dc ≈ 0.17 bei 632.8 nm in wässrigem Puffer (Theisen et al., Handbuchwert; Puffer und
+#   Salzform nicht angegeben). ASSUMPTION(OQ-23): Toleranz ± 0.005 (Spanne der Handbuchwerte);
+#   Bezugsmasse ist das Na-Salz (``counterion``: Masse des Gegenions je Phosphat zählt zu c, sein
+#   optischer Beitrag fehlt, da Ionen implizit sind; mit Shannon-Radius < 1 % von dn/dc);
+#   v̄ = 0.58 mL/g als Voronoi-Packungsvolumen nach NucProt (Voss & Gerstein 2005), Zahlenwert an der
+#   Quelle nicht verifiziert, nicht das experimentelle v̄ der Salze.
 OPTICS_TARGETS = {
     "protein": {
         "dn_dc": 0.190,
@@ -622,15 +632,23 @@ OPTICS_TARGETS = {
         "wavelength_nm": 589.3,
         "n_water": 1.3330,
         "v_bar": 0.73,
+        "counterion": None,
     },
-    "dna": {"dn_dc": 0.170, "tol": 0.005, "wavelength_nm": 632.8, "n_water": 1.3317, "v_bar": 0.58},
+    "dna": {
+        "dn_dc": 0.170,
+        "tol": 0.005,
+        "wavelength_nm": 632.8,
+        "n_water": 1.3317,
+        "v_bar": 0.58,
+        "counterion": "Na",
+    },
 }
 
 # Referenzzusammensetzungen der Klassen (Elementzahlen je Einheit).
 # Protein: Residuen im Peptid (Aminosäure − H₂O), gewichtet mit der mittleren Häufigkeit in
 # UniProtKB/Swiss-Prot [%]. ASSUMPTION: Häufigkeiten gerundet aus der Release-Statistik, Endgruppen
-# vernachlässigt. DNA: Nukleotid im Strang mit deprotoniertem Phosphat (wie im Kraftfeld, ohne
-# Gegenion), A/C/G/T gleich häufig.
+# vernachlässigt, alle Residuen neutral (Protonierung ändert dn/dc vernachlässigbar). DNA: Nukleotid
+# im Strang mit deprotoniertem Phosphat (wie im Kraftfeld, ohne Gegenion), A/C/G/T gleich häufig.
 _RESIDUES = {
     "ALA": ("C3H5NO", 8.25), "ARG": ("C6H12N4O", 5.53), "ASN": ("C4H6N2O2", 4.06),
     "ASP": ("C4H5NO3", 5.45), "CYS": ("C3H5NOS", 1.37), "GLN": ("C5H8N2O2", 3.93),
@@ -666,17 +684,31 @@ def class_composition(cls: str) -> dict:
 
 
 # 1 amu in g mal 1 nm³ in mL⁻¹: (N/V)[nm⁻³] = c[g/mL] / (M[amu] · AMU_ML_NM3).
-AMU_ML_NM3 = 1.66053907e-3
+AMU_ML_NM3 = 1e21 / units.AVOGADRO
 
 
-def dn_dc_model(composition, table, n_water: float) -> float:
+def _check_elements(composition, table, where: str) -> None:
+    missing = sorted(e for e in composition if e not in ELEMENT_MASS or e not in table)
+    if missing:
+        raise ValueError(f"{where}: keine Masse/Optik-Parameter für {missing}")
+
+
+def counterion_mass(cls: str, composition) -> float:
+    """Masse der Gegenionen [amu] in der Bezugsmasse von dn/dc (je Phosphat ein Ion, OQ-23)."""
+    ion = OPTICS_TARGETS[cls]["counterion"]
+    return 0.0 if ion is None else composition.get("P", 0.0) * ELEMENT_MASS[ion]
+
+
+def dn_dc_model(composition, table, n_water: float, extra_mass: float = 0.0) -> float:
     """dn/dc [mL/g] der verdünnten Lösung im Lorentz-Lorenz-Modell des Profilers (PHYSICS_MODEL §6.3).
 
     L(c) = L_w + c (4π/3 Σα′ − L_w Σv)/(M · AMU_ML_NM3), n = √((1 + 2L)/(1 − L));
     dn/dc = dn/dL|_{L_w} · (4π/3 Σα′ − L_w Σv)/(M · AMU_ML_NM3) mit dn/dL = 3/(2 n (1 − L)²).
+    M = Masse der Zusammensetzung + ``extra_mass`` (z. B. implizite Gegenionen, :func:`counterion_mass`).
     """
+    _check_elements(composition, table, "dn_dc_model")
     l_w = (n_water**2 - 1.0) / (n_water**2 + 2.0)
-    mass = sum(k * ELEMENT_MASS[e] for e, k in composition.items())
+    mass = sum(k * ELEMENT_MASS[e] for e, k in composition.items()) + extra_mass
     s_a = sum(k * table[e][0] for e, k in composition.items())
     s_v = sum(k * table[e][1] for e, k in composition.items())
     dn_dl = 3.0 / (2.0 * n_water * (1.0 - l_w) ** 2)
@@ -687,16 +719,21 @@ def calibrate_optics(cls: str, composition=None, table=None):
     """Klassenweise Kalibrierung der Element-Tabelle an dn/dc (ADR 0016 Punkt 7b, OQ-01/02).
 
     Erster Schritt (Projektinhaber 2026-11-06) statt ProtOr/NucProt je Atomtyp:
-    1. Alle Volumina werden mit einem Faktor s_v skaliert, sodass Σ v_i / M = v̄ der Klasse.
-    2. Alle α′ werden mit einem Faktor s_α skaliert, sodass :func:`dn_dc_model` = Ziel-dn/dc bei der
-       Kalibrierwellenlänge. Dispersion (Cauchy-Term) ist nicht enthalten: An anderen Wellenlängen
-       ist die Tabelle eine Näherung.
+    1. Die Volumina werden mit einem Faktor s_v skaliert, sodass Σ v_i / M = v̄ der Klasse
+       (M ohne Gegenionen).
+    2. Die α′ werden mit einem Faktor s_α skaliert, sodass :func:`dn_dc_model` (Bezugsmasse inkl.
+       Gegenionen, :func:`counterion_mass`) = Ziel-dn/dc bei der Kalibrierwellenlänge. Dispersion
+       (Cauchy-Term) ist nicht enthalten: An anderen Wellenlängen ist die Tabelle eine Näherung.
 
-    Skaliert werden nur Elemente der Zusammensetzung; andere Einträge (z. B. Ionen) bleiben.
+    Skaliert werden alle kovalenten Elemente der Tabelle (die Faktoren beschreiben Überlappung und
+    Bindungspolarisierbarkeit, z. B. auch Anker-S); Ionen (:data:`OPTICS_IONS`) bleiben unverändert.
+    s_v hängt direkt an v̄ und damit auch s_α; dass s_α nahe 1 liegt, bestätigt die Miller-Werte nur
+    im Rahmen dieser Wahl von v̄.
 
     Args:
         cls: ``"protein"`` oder ``"dna"`` (Ziel aus :data:`OPTICS_TARGETS`).
-        composition: {Element: Anzahl} des Moleküls; Default ist die Referenzzusammensetzung.
+        composition: {Element: Anzahl} nur des Makromoleküls (ohne Ionen, Anker, Farbstoffe);
+            Default ist die Referenzzusammensetzung.
         table: Ausgangstabelle {Element: (α′, v)} [nm³]; Default :data:`ELEMENT_OPTICS`.
 
     Returns:
@@ -705,17 +742,23 @@ def calibrate_optics(cls: str, composition=None, table=None):
     target = OPTICS_TARGETS[cls]
     comp = class_composition(cls) if composition is None else composition
     base = ELEMENT_OPTICS if table is None else table
+    _check_elements(comp, base, "calibrate_optics")
+    ions = sorted(set(comp) & OPTICS_IONS)
+    if ions:
+        raise ValueError(f"calibrate_optics: Ionen {ions} gehören nicht in die Zusammensetzung")
     mass = sum(k * ELEMENT_MASS[e] for e, k in comp.items())
+    extra = counterion_mass(cls, comp)
     s_v = target["v_bar"] * mass * AMU_ML_NM3 / sum(k * base[e][1] for e, k in comp.items())
     vol_only = {e: (0.0, base[e][1] * s_v) for e in comp}
     alpha_one = {e: (base[e][0], 0.0) for e in comp}
     # dn_dc_model ist linear in α′ und v: Ziel = s_α · d(α′) + d(v).
-    d_v = dn_dc_model(comp, vol_only, target["n_water"])
-    d_a = dn_dc_model(comp, alpha_one, target["n_water"])
+    d_v = dn_dc_model(comp, vol_only, target["n_water"], extra)
+    d_a = dn_dc_model(comp, alpha_one, target["n_water"], extra)
     s_a = (target["dn_dc"] - d_v) / d_a
     out = dict(base)
-    for e in comp:
-        out[e] = (base[e][0] * s_a, base[e][1] * s_v)
+    for e in base:
+        if e not in OPTICS_IONS:
+            out[e] = (base[e][0] * s_a, base[e][1] * s_v)
     return out, {"s_alpha": s_a, "s_volume": s_v}
 
 
