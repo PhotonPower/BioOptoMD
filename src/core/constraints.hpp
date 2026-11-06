@@ -57,6 +57,7 @@ class ConstraintSet {
 
   ConstraintParams params_;
   int max_clusters_ = 0;
+  int block_ = 128;  // Threads je Block (initialize, nach Auslastung)
   std::vector<int> counts_;
   DeviceBuffer<int4> d_clusters_;
   DeviceBuffer<float4> d_distances_;

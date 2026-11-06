@@ -15,7 +15,6 @@ namespace bomd {
 namespace {
 
 /// Ein Thread pro Cluster; wenig Arbeit pro Thread, daher kleine Blöcke für viele Replicas.
-constexpr int kClusterBlock = 128;
 constexpr int kMaxH = 3;
 
 struct Cluster {
@@ -322,15 +321,29 @@ ConstraintSet::ConstraintSet(ConstraintParams params, const SimulationContext& c
   d_range_.upload_async(range.data(), st);
   d_in_cluster_.upload_async(in_cluster.data(), st);
   BOMD_CUDA_CHECK(cudaStreamSynchronize(st));  // Host-Vektoren leben bis hier
+  // Blockgröße: ein Thread je Cluster, FP64-latenzgebunden. Größte Blockgröße aus {128, 64, 32},
+  // mit der mindestens zwei Blöcke je SM entstehen (ein einzelnes großes System soll alle SMs
+  // nutzen); sonst 32. Ergebnis unabhängig von der Blockgröße (ein Cluster je Thread).
+  int device = 0, n_sm = 1;
+  BOMD_CUDA_CHECK(cudaGetDevice(&device));
+  BOMD_CUDA_CHECK(cudaDeviceGetAttribute(&n_sm, cudaDevAttrMultiProcessorCount, device));
+  block_ = 32;
+  for (int b : {128, 64}) {
+    const long long blocks = static_cast<long long>((max_clusters_ + b - 1) / b) * n_rep;
+    if (blocks >= 2LL * n_sm) {
+      block_ = b;
+      break;
+    }
+  }
 }
 
 void ConstraintSet::launch_shake(const DeviceState& s, double half_dt, bool drift,
                                  cudaStream_t stream) const {
   if (max_clusters_ == 0) return;
-  const dim3 grid((max_clusters_ + kClusterBlock - 1) / kClusterBlock, s.n_replicas);
-  k_shake<<<grid, kClusterBlock, 0, stream>>>(s, d_clusters_.data(), d_distances_.data(),
-                                              d_range_.data(), half_dt, drift ? 1 : 0,
-                                              params_.tolerance, params_.max_iterations);
+  const dim3 grid((max_clusters_ + block_ - 1) / block_, s.n_replicas);
+  k_shake<<<grid, block_, 0, stream>>>(s, d_clusters_.data(), d_distances_.data(), d_range_.data(),
+                                       half_dt, drift ? 1 : 0, params_.tolerance,
+                                       params_.max_iterations);
   BOMD_LAUNCH_CHECK();
 }
 
@@ -345,10 +358,9 @@ void ConstraintSet::project_positions(const DeviceState& s, cudaStream_t stream)
 
 void ConstraintSet::rattle(const DeviceState& s, cudaStream_t stream) const {
   if (max_clusters_ == 0) return;
-  const dim3 grid((max_clusters_ + kClusterBlock - 1) / kClusterBlock, s.n_replicas);
-  k_rattle<<<grid, kClusterBlock, 0, stream>>>(s, d_clusters_.data(), d_distances_.data(),
-                                               d_range_.data(), params_.velocity_tolerance,
-                                               params_.max_iterations);
+  const dim3 grid((max_clusters_ + block_ - 1) / block_, s.n_replicas);
+  k_rattle<<<grid, block_, 0, stream>>>(s, d_clusters_.data(), d_distances_.data(), d_range_.data(),
+                                        params_.velocity_tolerance, params_.max_iterations);
   BOMD_LAUNCH_CHECK();
 }
 
