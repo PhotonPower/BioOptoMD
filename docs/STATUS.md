@@ -27,8 +27,10 @@ Alle PRs #1–#6, #9–#14 am 2026-11-05 nach `main` gemergt (Merge-Commits, Rei
   Review siehe unten.
 
 ## Phase 10.5 – 3D-hp-FEM-Adapter: umgesetzt, Abnahme ausstehend, Branch `phase-10/hpfem-3d`
-- `HpFemSolver3D`: gegen TMM p 1.3e-4 / s 1.9e-6, gegen 2.5D 3.9e-3 (Grad 2, Default). Aufwand
-  ROADMAP 10.5: 2 nm lateral ≈ 10 s, 1 nm ≈ 5.5 min je Lösung mit dem einfädigen Wheel (OQ-26).
+- `HpFemSolver3D`: planar gegen TMM p 1.3e-4 / s 1.9e-6 (Grad 2, Default); lateral strukturiert
+  Grad 3 (gegen 2.5D 3.8e-3, gedrehte y-Struktur 7.2e-3). Aufwand ROADMAP 10.5: 2 nm lateral ≈ 10 s
+  und 2.8 GB, 1 nm ≈ 5.5 min und 23 GB je Lösung (Wheel einfädig, SparseLU). Review umgesetzt.
+  OQ-26: eigener hp-FEM-Build (OpenMP, MUMPS/METIS, ggf. cuDSS) vom Projektinhaber freigegeben.
 
 ## Phase 10 – MD ↔ FEM-Kopplung: abgenommen 2026-11-06 (ADR 0016), Branch `phase-10/md-fem`
 - ADR 0016: Mean-Field-Fixpunktiteration mit Dämpfung, 3D-ε-Observer, `VoxelGridForce3D::set_values`,

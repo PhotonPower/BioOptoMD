@@ -702,6 +702,16 @@ class HpFemSolver3D:
     Mittel der angrenzenden Zellen (bis zu 8). Koordinaten und Amplitude wie
     :class:`HpFemGratingSolver` (hp-FEM-z = z_first − z, einfallende Welle 1 V/m, Einfallsebene x–z).
 
+    Parameter: ``wavelength_nm`` [nm], ``angle_deg`` [°] (Einfallsebene x–z), ``pol`` 's'/'p',
+    ``intensity_w_m2`` [W/m²] im Einfallsmedium, ``z_surface`` [nm]; Netz: ``h_far`` [nm] in Prisma und
+    Wasser, ``h_layer`` [nm] in den Substratschichten, ``pml_nm`` [nm] (Default 1.25 λ/min(n), dort
+    Zellhöhe ``h_far``/2; bei Speicherdruck der einfachste Hebel), ``water_nm`` und ``prism_nm`` [nm]
+    Abstand zur PML.
+
+    Genauigkeit (ROADMAP 10.5): planar ist Grad 2 ausreichend (gegen TMM 1e-4); bei lateral
+    strukturiertem ε liegt Grad 2 an Knoten nahe ε-Kanten bei ≈ 1 %, Grad 3 bei ≈ 0.5 % – für
+    Hotspots Grad 3 verwenden. Es gibt keine Leistungsbilanz-Prüfung wie im 2.5D-Adapter.
+
     Aufwand: strukturiertes Tetraedernetz (6 je Quader) mit allen ε-Spalten über die ganze Höhe;
     Polynomgrad ``order`` (Nédélec 3D, <= 4), im Molekülbereich optional ``order_region`` (kleine
     Zellen, dort genügt ein niedrigerer Grad). Die Unbekannten wachsen etwa mit
@@ -732,6 +742,11 @@ class HpFemSolver3D:
         import hpfem
 
         nm = 1e-9
+        if self.pol not in ("s", "p"):
+            raise ValueError("HpFemSolver3D: pol 's' oder 'p'")
+        for o in (self.order, self.order_region):
+            if o is not None and not 1 <= int(o) <= 4:
+                raise ValueError("HpFemSolver3D: order, order_region in 1 … 4")
         if not grid.periodic_xy:
             raise ValueError("HpFemSolver3D: Kraftgitter periodisch in x/y (Periode = Box)")
         nz_e, ny_e, nx_e = eps.eps.shape

@@ -726,53 +726,90 @@ def _quiet(fn, *args):
 
 def test_hpfem3d_planar():
     """3D-Adapter (ROADMAP 10.5): planare Schicht (ε-Profil über 5 Zellen) im Kretschmann-Aufbau gegen
-    den TMM-Referenzsolver an allen Knoten, rel. < 1 %, p und s. Nur mit hp-FEM."""
+    den TMM-Referenzsolver an allen Knoten, rel. < 1 %, p und s. Geprüft wird zusätzlich die Änderung
+    durch die Schicht W − W_Wasser gegen dieselbe Änderung im TMM (rel. < 1 % ihres Maximums), damit
+    auch s (Schichteffekt nur ≈ 1e-3) nicht trivial besteht. Box 4 nm (gutes Seitenverhältnis der
+    Zellen); eine konjugierte Bloch-Phase fällt über den Schichteffekt auf. Nur mit hp-FEM."""
     pytest.importorskip("hpfem")
     from biooptomd.coupling import EpsGrid, ForceGrid, HpFemSolver3D, TmmSolver
 
     grid = ForceGrid((2, 2, 13), (0.0, 0.0, 0.0), (2.0, 2.0, 0.25), periodic_xy=True)
     profile = EPS_W633 + np.array([0.05, 0.3, 0.2, 0.1, 0.0])
-    layer = EpsGrid(np.broadcast_to(profile[:, None, None], (5, 1, 1)).copy(), (0.0, 0.0, 0.5),
-                    (4.0, 4.0, 0.4), 1.3317)  # fmt: skip
+
+    def grid_of(values):
+        return EpsGrid(np.broadcast_to(values[:, None, None], (5, 1, 1)).copy(), (0.0, 0.0, 0.5),
+                       (4.0, 4.0, 0.4), 1.3317)  # fmt: skip
+
+    layer, water = grid_of(profile), grid_of(np.full(5, EPS_W633))
     for pol in ("p", "s"):
         kw = {"substrate": [(EPS_AU, 50.0)], "intensity_w_m2": 1e10}
-        w_ref = TmmSolver(LAM, 72.6, pol, N_PRISM, **kw).solve(layer, grid)
+        tmm_s = TmmSolver(LAM, 72.6, pol, N_PRISM, **kw)
         solver = HpFemSolver3D(LAM, 72.6, pol, N_PRISM, **kw)
-        w = solver.solve(layer, grid)
+        w_ref, w0_ref = tmm_s.solve(layer, grid), tmm_s.solve(water, grid)
+        w, w0 = solver.solve(layer, grid), solver.solve(water, grid)
         rel = np.abs(w - w_ref).max() / w_ref.max()
-        print(f"{pol}: 3D gegen TMM {rel:.2e}, {solver.last_unknowns} Unbekannte")
+        d_ref = w_ref - w0_ref
+        rel_d = np.abs((w - w0) - d_ref).max() / np.abs(d_ref).max()
+        print(
+            f"{pol}: 3D gegen TMM {rel:.2e}, Schichteffekt {rel_d:.2e}, {solver.last_unknowns} Unbek."
+        )
         np.testing.assert_allclose(w, w_ref, rtol=1e-2)
+        assert rel_d < 1e-2
 
 
 @pytest.mark.slow
 def test_hpfem3d_vs_grating():
-    """3D-Adapter gegen den 2.5D-Adapter an einer in y invarianten Struktur mit lateralem Kontrast in
-    x (ADR 0016 Punkt 4b, ROADMAP 10.5): rel. < 1 % an allen Knoten (p); zusätzlich ist W in y
-    konstant (rel. 1e-6). Verschiebt man die Struktur in y um eine Zelle, verschiebt sich W
-    entsprechend (y-Variante, rel. 1e-6). Nur mit hp-FEM."""
+    """3D-Adapter gegen den 2.5D-Adapter (ADR 0016 Punkt 4b, ROADMAP 10.5):
+    (1) in y invariante Struktur mit asymmetrischem lateralem Kontrast in x, Kretschmann p: rel.
+        < 1 % an allen Knoten; W in y konstant (rel. 1e-6).
+    (2) Variation in y mit physikalischer Referenz: bei senkrechtem Einfall ist dieselbe Struktur in y
+        mit s-Polarisation (E_y) das um z gedrehte Problem der Struktur in x mit p (E_x) im
+        2.5D-Adapter: rel. < 1 %. Knoten in den Zellmitten (keine ε-Kanten).
+    (3) Verschiebung der y-Struktur um eine Zelle verschiebt W entsprechend (rel. 1e-6); Schicht- und
+        Wasserzeile unterscheiden sich in W um > 5 % (Zellmitten, keine Kanten).
+    Lateral strukturierte Fälle mit Grad 3 (Grad 2 liegt dort bei ≈ 1 %, ROADMAP 10.5). Nur mit
+    hp-FEM."""
     pytest.importorskip("hpfem")
     from biooptomd.coupling import EpsGrid, ForceGrid, HpFemGratingSolver, HpFemSolver3D
 
     prof = np.array([0.1, 0.4, 0.3, 0.2, 0.05])
-    cols = np.array([1.0, 0.0, 0.5, 0.0])
-    eps_x = EPS_W633 + prof[:, None, None] * cols[None, None, :]  # (5, 1, 4), in y invariant
-    grid = ForceGrid((4, 2, 13), (0.0, 0.0, 0.0), (1.0, 2.0, 0.25), periodic_xy=True)
+    cols = np.array([1.0, 0.5, 0.0, 0.0])  # asymmetrisch in x
+    eps_x = EPS_W633 + prof[:, None, None] * cols[None, None, :]  # (5, 1, 4)
     kw = {"substrate": [(EPS_AU, 50.0)], "intensity_w_m2": 1e10}
+
+    # (1)
+    grid = ForceGrid((4, 2, 13), (0.0, 0.0, 0.0), (1.0, 2.0, 0.25), periodic_xy=True)
     eps2 = EpsGrid(eps_x, (0.0, 0.0, 0.5), (1.0, 4.0, 0.4), 1.3317)
     w_2d = _quiet(HpFemGratingSolver(LAM, 72.6, "p", N_PRISM, **kw).solve, eps2, grid)
     eps3 = EpsGrid(np.repeat(eps_x, 2, axis=1), (0.0, 0.0, 0.5), (1.0, 2.0, 0.4), 1.3317)
-    solver = HpFemSolver3D(LAM, 72.6, "p", N_PRISM, **kw)
+    solver = HpFemSolver3D(LAM, 72.6, "p", N_PRISM, order=3, **kw)
     w_3d = _quiet(solver.solve, eps3, grid)
     rel = np.abs(w_3d - w_2d).max() / w_2d.max()
-    print(f"3D gegen 2.5D: {rel:.2e}, {solver.last_unknowns} Unbekannte")
+    print(f"3D gegen 2.5D (x-Struktur): {rel:.2e}, {solver.last_unknowns} Unbekannte")
     np.testing.assert_allclose(w_3d, w_2d, rtol=1e-2)
     np.testing.assert_allclose(w_3d[:, 1, :], w_3d[:, 0, :], rtol=1e-6)
 
-    # Struktur, die in y variiert: Zeilen mit/ohne Schicht; Verschiebung um eine Zelle in y.
-    eps_y = np.full((5, 2, 4), EPS_W633)
-    eps_y[:, 0, :] = eps_x[:, 0, :]
-    w_a = _quiet(solver.solve, EpsGrid(eps_y, (0.0, 0.0, 0.5), (1.0, 2.0, 0.4), 1.3317), grid)
-    w_b = _quiet(solver.solve, EpsGrid(np.roll(eps_y, 1, axis=1), (0.0, 0.0, 0.5), (1.0, 2.0, 0.4),
-                                       1.3317), grid)  # fmt: skip
-    np.testing.assert_allclose(w_b, np.roll(w_a, 1, axis=1), rtol=0, atol=1e-6 * w_a.max())
-    assert np.abs(w_a[:, 0, :] - w_a[:, 1, :]).max() > 1e-3 * w_a.max()  # y-Struktur wirkt
+    # (2) senkrechter Einfall: Struktur in y + s (3D) ≙ Struktur in x + p (2.5D); Zellmitten
+    grid_x = ForceGrid((4, 1, 13), (0.5, 0.0, 0.0), (1.0, 4.0, 0.25), periodic_xy=True)
+    grid_y = ForceGrid((1, 4, 13), (0.0, 0.5, 0.0), (4.0, 1.0, 0.25), periodic_xy=True)
+    w_px = _quiet(HpFemGratingSolver(LAM, 0.0, "p", N_PRISM, **kw).solve,
+                  EpsGrid(eps_x, (0.0, 0.0, 0.5), (1.0, 4.0, 0.4), 1.3317), grid_x)  # fmt: skip
+    eps_y = np.transpose(eps_x, (0, 2, 1))  # (5, 4, 1)
+    w_sy = _quiet(HpFemSolver3D(LAM, 0.0, "s", N_PRISM, order=3, **kw).solve,
+                  EpsGrid(eps_y, (0.0, 0.0, 0.5), (4.0, 1.0, 0.4), 1.3317), grid_y)  # fmt: skip
+    rel_y = np.abs(w_sy[:, :, 0] - w_px[:, 0, :]).max() / w_px.max()
+    print(f"3D (y, s) gegen 2.5D (x, p) bei 0°: {rel_y:.2e}")
+    np.testing.assert_allclose(w_sy[:, :, 0], w_px[:, 0, :], rtol=1e-2)
+
+    # (3) y-Struktur aus zwei Zeilen, Knoten in den Zellmitten
+    grid_c = ForceGrid((4, 4, 13), (0.0, 0.0, 0.0), (1.0, 1.0, 0.25), periodic_xy=True)
+    eps_rows = np.full((5, 2, 4), EPS_W633)
+    eps_rows[:, 0, :] = eps_x[:, 0, :]
+    w_a = _quiet(solver.solve, EpsGrid(eps_rows, (0.0, 0.0, 0.5), (1.0, 2.0, 0.4), 1.3317), grid_c)
+    w_b = _quiet(solver.solve, EpsGrid(np.roll(eps_rows, 1, axis=1), (0.0, 0.0, 0.5),
+                                       (1.0, 2.0, 0.4), 1.3317), grid_c)  # fmt: skip
+    np.testing.assert_allclose(w_b, np.roll(w_a, 2, axis=1), rtol=0, atol=1e-6 * w_a.max())
+    k_layer = 4  # z = 1.0 nm, in der Schicht
+    contrast = np.abs(w_a[k_layer, 1, :] - w_a[k_layer, 3, :]).max() / w_a[k_layer].max()
+    print(f"Zeile mit/ohne Schicht (Zellmitten): {contrast:.3f}")
+    assert contrast > 0.05

@@ -304,8 +304,8 @@ Abnahmetests (revidierte Fassung vom Projektinhaber bestätigt 2026-11-06):
    `test_coupling_scaling`, `test_coupling_resume`). hp-FEM-Adapter `HpFemGratingSolver` (in x
    periodisch, in y invariant; `test_hpfem_adapter_planar`, rel. 3e-5 gegen TMM;
    `test_hpfem_adapter_lateral`) und
-   `NpzFileSolver` (`test_npz_file_solver`). Offen: allgemeiner 3D-Adapter (`Scattering3D` mit
-   `LayerStack3D`), Treiber mit Replica Exchange (Zielzustand über die Slots, ADR 0016 Punkt 5).
+   `NpzFileSolver` (`test_npz_file_solver`). Offen: Treiber mit Replica Exchange (Zielzustand über
+   die Slots, ADR 0016 Punkt 5); der 3D-Adapter folgt in Punkt 5.
 4. Beispiel: Aptamerschicht über Gold im Kretschmann-Aufbau mit dem TMM-Adapter. *Umgesetzt
    2026-11-06* (`examples/aptamer_spr_gold`, `test_example_aptamer_spr_gold`).
 5. *Nächster Schritt (Projektinhaber 2026-11-06):* 3D-hp-FEM-Adapter (`Scattering3D` mit
@@ -316,22 +316,29 @@ Abnahmetests (revidierte Fassung vom Projektinhaber bestätigt 2026-11-06):
    Offen daneben: Replica Exchange im Treiber.
    *Umgesetzt 2026-11-06:* `HpFemSolver3D` (Streufeld auf `LayerStack3D`, Bloch-Paare in x und y,
    PML oben/unten, ε je Tetraeder zellkonstant, Mittel an Netzlinien). Tests: `test_hpfem3d_planar`
-   (gegen TMM: p 1.3e-4, s 1.9e-6), `test_hpfem3d_vs_grating` (gegen 2.5D: 3.9e-3; Verschiebung in y,
-   slow). Aufwand (Box 6 × 6 nm, Bereich 8 nm, Kretschmann p, hp-FEM-0.4.0-Wheel einfädig, SparseLU;
-   Speicher nicht gemessen):
+   (gegen TMM p 1.3e-4, s 1.9e-6; Schichteffekt W − W_Wasser 6.6e-4 bzw. 1.5e-3),
+   `test_hpfem3d_vs_grating` (slow, Grad 3: x-Struktur gegen 2.5D 3.8e-3; y-Struktur mit s bei 0°
+   gegen x-Struktur mit p im 2.5D-Adapter 7.2e-3; Verschiebung in y; Zeilenkontrast 15 %).
+   Aufwand (Box 6 × 6 nm, Bereich 8 nm, Kretschmann p, hp-FEM-0.4.0-Wheel einfädig, SparseLU; Zeiten
+   mit parallelem MD-Hintergrundlauf, einzelne Messung inkl. Python-Zellschleife; Unbekannte vor der
+   statischen Kondensation, bei Grad 3 faktorisiert der Löser ≈ 15 % weniger; Speicher der
+   Faktoren nach `hpfem.estimate_memory`, ±35 %):
 
-   | ε-Zelle lateral × Δz | Grad (außen/Bereich) | Unbekannte | Zeit je Lösung |
-   |---|---|---|---|
-   | 2.0 nm × 0.5 nm | 2 | 42 522 | 11.5 s |
-   | 2.0 nm × 0.25 nm | 2 | 48 986 | 7.8 s |
-   | 2.0 nm × 0.5 nm | 3 | 118 647 | 44 s |
-   | 2.0 nm × 0.5 nm | 3 / 1 | 101 737 | 59 s |
-   | 1.0 nm × 0.5 nm | 2 | 156 834 | 328 s |
-   | 1.0 nm × 0.5 nm | 3 | 447 147 | 1433 s |
+   | ε-Zelle lateral × Δz | Grad (außen/Bereich) | Unbekannte | Zeit je Lösung | Speicher |
+   |---|---|---|---|---|
+   | 2.0 nm × 0.5 nm | 2 | 42 522 | 11.5 s | 2.8 GB |
+   | 2.0 nm × 0.25 nm | 2 | 48 986 | 7.8 s | 3.5 GB |
+   | 2.0 nm × 0.5 nm | 3 | 118 647 | 44 s | 21 GB |
+   | 2.0 nm × 0.5 nm | 3 / 1 | 101 737 | 59 s | 17 GB |
+   | 1.0 nm × 0.5 nm | 2 | 156 834 | 328 s | 23 GB |
+   | 1.0 nm × 0.5 nm | 3 | 447 147 | 1433 s | ≈ 179 GB |
+   | 0.5 nm × 0.5 nm | 2 | 601 458 | – | ≈ 207 GB |
 
-   Genauigkeit über dem Grad (planar gegen TMM, p): Grad 3 5e-5, Grad 2 1.3e-4, Grad 1 im Bereich
-   1.5e-3 → Default Grad 2. Laterale ε-Zellen ≤ 1 nm brauchen einen hp-FEM-Build mit OpenMP und
-   MUMPS bzw. cuDSS (OQ-26).
+   Genauigkeit über dem Grad: planar gegen TMM (p) Grad 3 5e-5, Grad 2 1.3e-4, Grad 1 im Bereich
+   1.5e-3 → Default Grad 2; lateral strukturiert an ε-Kanten Grad 2 ≈ 1 %, Grad 3 ≈ 0.5 % (Hotspots:
+   Grad 3). Grenze ist vor allem der Speicher der SparseLU-Faktoren (Auffüllung); ein Build mit
+   OpenMP und MUMPS (METIS-Sortierung) bzw. cuDSS soll das verbessern (OQ-26). Die PML (600 nm je
+   Seite, ≈ 60 % der z-Zeilen) ist der einfachste weitere Hebel.
 
 Abnahmetests (Vorschlag): siehe ADR 0016, Konsequenzen (`test_polarizability_grid_vs_numpy`,
 `test_voxel_set_values`, `test_tmm_reference`, `test_coupling_fixed_point`, `test_coupling_scaling`,
