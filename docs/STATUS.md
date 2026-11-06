@@ -2,7 +2,7 @@
 
 > Diese Datei wird am Ende **jeder** Arbeitssitzung aktualisiert (AGENTS.md §2.4).
 
-**Aktive Phase:** 11 – Coarse-Grained (ADR 0017, Branch `phase-11/cg-adr`, lokal), 11.1–11.3 umgesetzt, Abweichungen der 11.3-Tests vom Projektinhaber am 2026-11-06 bestätigt. Phase 10 vollständig abgenommen; Phasen 9.4–9.7 abgenommen 2026-11-06 (9.6 mit gesenktem Kriterium ≥ 1.10×, OQ-19).
+**Aktive Phase:** 11 – Coarse-Grained (ADR 0017, Branch `phase-11/cg-adr`, lokal), 11.1–11.3 abgenommen 2026-11-06, 11.4 (IgG über Gold, REMD) in Arbeit. Phase 10 vollständig abgenommen; Phasen 9.4–9.7 abgenommen 2026-11-06 (9.6 mit gesenktem Kriterium ≥ 1.10×, OQ-19).
 Alle PRs #1–#6, #9–#14 am 2026-11-05 nach `main` gemergt (Merge-Commits, Reihenfolge des Stapels).
 **Phase 9.3 (GB-neck2) abgenommen** am 2026-11-05, ADR 0012 und Abnahmekriterien bestätigt.
 **Phase 9.2 (Replica Exchange) abgenommen** am 2026-11-05, ADR 0011 und Abnahmekriterien bestätigt.
@@ -373,11 +373,10 @@ ADR 0007 → **0009** (Mixed Precision), unsere OQ-08…11 → **OQ-11…14**.
   Structs unterschiedlich aus. Vor dem Push mit beiden prüfen oder Kommentare über die Member setzen.
 
 ## Nächster konkreter Schritt
-1. Abnahme Phase 11.3 durch den Projektinhaber.
-2. Phase 11.4: Beispiel IgG über Gold mit REMD, Durchsatz.
-3. Abnahme-Commits 9.4/9.6 sind lokal per Merge durch den Stapel übernommen (#15 → … → #21 →
-   `phase-11/cg-adr`); Push der Branches #15–#21 nur auf Anfrage.
-4. Nachholen: Kontrolllauf auf der RTX 6000 Ada; Nsight Compute (Counter-Freigabe).
+1. Phase 11.4: Beispiel IgG über Gold mit REMD, Durchsatz.
+2. Abnahme-Commits 9.4/9.6 sind lokal per Merge durch den Stapel übernommen (#15 → … → #21 →
+   `phase-11/cg-adr`) und am 2026-11-06 gepusht.
+3. Nachholen: Kontrolllauf auf der RTX 6000 Ada; Nsight Compute (Counter-Freigabe).
 
 ## Sitzungslog
 | Datum | Agent/Person | Zusammenfassung |
@@ -422,6 +421,7 @@ ADR 0007 → **0009** (Mixed Precision), unsere OQ-08…11 → **OQ-11…14**.
 | 2026-11-06 | Projektinhaber | ADR 0017 (Coarse-Grained) angenommen; OQ-27 (3SPN.2C prüfen, Aptamere vorerst atomistisch), OQ-28 (Lorentz-Berthelot), OQ-29 (Wand-λ aus eigenen atomistischen Läufen). |
 | 2026-11-06 | Projektinhaber | Phase 9.6: Kriterium nach der Endmessung bei freier GPU gesenkt (1 × 20 k ≥ 1.10×, gemessen 1.12×), Phase 9.6 abgenommen (OQ-19). |
 | 2026-11-06 | Projektinhaber | Phase 11.3: Abweichungen bestätigt – ENM-gegen-ANM-Test bei 30 K auf dem Ubiquitin-Kern 1–72, NVE-Drift über 1 ns bestimmt (Toleranzen unverändert). |
+| 2026-11-06 | Projektinhaber | Phase 11.3 abgenommen; Branches pushen, weiter mit 11.4. |
 | 2026-11-05 | Claude Opus 5.5 | Phase 9.2 Replica Exchange implementiert (ADR 0011 Proposed), 113/113 Tests grün. |
 | 2026-11-05 | Claude Opus 5.5 | Phase 9.1 GB-OBC2 implementiert (ADR 0010 Proposed, gb_ref, TiledGeneralizedBorn, Builder), 12/12 Phase-9-Tests grün. |
 | 2026-11-05 | Claude Opus 5.5 | Phase 8: Benchmark vs. OpenMM (32×2k Faktor 3.5), Tile-Vorauswahl, M-SHAKE/RATTLE; Review umgesetzt, 94/94 Tests grün. |
