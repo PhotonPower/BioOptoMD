@@ -114,13 +114,16 @@ Abgeschirmte Bildladungen an einer leitfähigen Ebene z = z_im (Dirichlet-Rand d
 Poisson-Boltzmann-Problems; im Debye-Hückel-Modell für f = 1 exakt):
 ```
 U = −f [ Σ_{i<j} q_i q_j φ(s_ij) + ½ Σ_i q_i² φ(2ζ_i) ],   φ(s) = k_e e^{−κs}/(ε_r s) · S(s)
-s_ij = |(Δx_ij, Δy_ij, ζ_i + ζ_j)|,   ζ_i = max(z_i − z_im, ζ_c)
+s_ij = |(Δx_ij, Δy_ij, ζ_i + ζ_j)|,   ζ_i = smax(z_i − z_im)  (C¹-glattes max(·, ζ_c))
+smax(u) = u (u ≥ ζ_c + h),  ζ_c + (u − ζ_c + h)²/(4h) (|u − ζ_c| < h),  ζ_c (u ≤ ζ_c − h),  h = ζ_c/2
 ```
 Alle Paare ohne Exclusions, Eigenbild mit ½; Δx, Δy mit Minimum Image bzw. Bildsumme (L < 2 r_c,
 auch für das Eigenbild, dessen Gitterbilder hier eine z-Kraft liefern); r_s, r_c, S(r), κ_r, ε_r wie
 die Nonbonded-Strategie (bei GB ε_out, Näherung nach OQ-16). Die z-Kräfte eines Paars zeigen in dieselbe
-Richtung (externe Wand, kein Impulserhalt in z). Für ζ < ζ_c = 0.1 nm wird geclampt (Energie stetig,
-z-Kraft 0, Zähler `clamp_count`); H-Atome an Gold erreichen das regelmäßig. Bildfaktor f ∈ [−1, 1]:
+Richtung (externe Wand, kein Impulserhalt in z). Unter ζ_c − h wird geclampt (ζ = ζ_c, z-Kraft 0),
+zwischen ζ_c ± h geht ζ C¹-glatt in z − z_im über (Energie und Kraft stetig, OQ-18 d, Phase 9.7);
+ζ_c = 0.1 nm, h = 0.05 nm; der Zähler `clamp_count` zählt Atome unter ζ_c + h. H-Atome an Gold
+erreichen das regelmäßig. Bildfaktor f ∈ [−1, 1]:
 1 = idealer Leiter (Gold), f < 1 Näherung für dielektrische Wände, für Graphen ohne Default (OQ-18).
 Bildebene z_im = z0 + z_top + d_im, ASSUMPTION(OQ-18): d_im = 0 und ζ_c = 0.1 nm (an Gold ein
 Modellparameter, weil H-Atome ζ < ζ_c erreichen). Gouy-Chapman hat seinen Ursprung bei z0, nicht bei

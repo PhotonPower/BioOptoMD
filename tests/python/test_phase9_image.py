@@ -2,7 +2,7 @@
 
 import numpy as np
 import pytest
-from image_charge_ref import green, image_charges, potential
+from image_charge_ref import green, image_charges, potential, smooth_zeta
 
 from biooptomd import builder
 
@@ -16,7 +16,7 @@ def _system(rng, n=70, box=5.0, z_max=2.6):
     """Zufällige Ladungen über der Bildebene (einige unter z_im + ζ_c, einige ungeladen)."""
     pos = np.column_stack([rng.uniform(0, box, n), rng.uniform(0, box, n),
                            Z_IM + rng.uniform(0.15, z_max, n)])  # fmt: skip
-    pos[:3, 2] = Z_IM + np.array([0.05, -0.1, 0.12])  # zwei geclampt, eins knapp darüber
+    pos[:3, 2] = Z_IM + np.array([0.04, -0.1, 0.12])  # zwei geclampt, eins im C¹-Übergang
     q = rng.uniform(-1.0, 1.0, n)
     q[5] = 0.0
     return pos, q
@@ -192,13 +192,13 @@ def test_image_far_atoms_zero(core, box):
 
 @pytest.mark.gpu
 def test_image_clamp(core):
-    """ζ < ζ_c: Energie konstant in z und gleich der FP64-Referenz bei ζ = ζ_c (rel. 1e-5, Stetigkeit),
+    """ζ_raw ≤ ζ_c − h: Energie konstant in z und gleich der FP64-Referenz bei ζ = ζ_c (rel. 1e-5),
     z-Kraft null, Zähler zählt geladene Atome je Replica und Auswertung (ungeladene nicht);
     reset_counters setzt zurück."""
-    pos = np.array([[1.0, 1.0, Z_IM + 0.05], [2.5, 1.0, Z_IM + 0.6], [1.0, 3.0, Z_IM - 0.2]])
+    pos = np.array([[1.0, 1.0, Z_IM + 0.04], [2.5, 1.0, Z_IM + 0.6], [1.0, 3.0, Z_IM - 0.2]])
     q = np.array([1.0, -0.7, 0.0])
     energies = []
-    for z in (Z_IM + 0.05, Z_IM - 0.3):
+    for z in (Z_IM + 0.04, Z_IM - 0.3):
         pos[0, 2] = z
         ctx, plugin = _ctx(core, pos, q, 5.0)
         ctx.compute_forces()
@@ -211,12 +211,60 @@ def test_image_clamp(core):
         assert plugin.clamp_count() == 0
     np.testing.assert_allclose(energies[0], energies[1], rtol=0, atol=0)
     at_clamp = pos.copy()
-    at_clamp[0, 2] = Z_IM + 0.1
+    at_clamp[0, 2] = Z_IM  # tief im geclampten Bereich: ζ = ζ_c
     x = ctx.positions_precise()[:, :3, :3].astype(np.float64)
     for r in range(2):
         at_clamp[1:, :] = x[r, 1:]
         e_ref, _ = image_charges(at_clamp, q, (5.0, 5.0), Z_IM, 1.0, KAPPA[r], EPS[r], R_S, R_C)
         assert energies[0][r] == pytest.approx(e_ref, rel=1e-5)
+
+
+def test_image_smooth_clamp_reference():
+    """C¹-Clamping (OQ-18 d) in der Referenz: smax stetig mit stetiger Ableitung an ζ_c ± h,
+    ζ ≥ max(ζ_raw, ζ_c); Kraft = −dU/dz (finite Differenzen, rel. 1e-6) für ein Atom an mehreren
+    Höhen im Übergang und knapp außerhalb; z-Kraft stetig über ζ_c + h und null unter ζ_c − h."""
+    zc = 0.1
+    h = 0.5 * zc
+    u = np.linspace(-0.2, 0.4, 6001)
+    z, dz = smooth_zeta(u, zc)
+    assert np.all(z >= np.maximum(u, zc) - 1e-15)
+    for edge in (zc - h, zc + h):
+        zz, dd = smooth_zeta(np.array([edge - 1e-9, edge + 1e-9]), zc)
+        assert abs(zz[1] - zz[0]) < 1e-8 and abs(dd[1] - dd[0]) < 1e-7
+    np.testing.assert_allclose(np.gradient(z, u)[1:-1], dz[1:-1], atol=2e-3)
+    q = np.array([1.0, -0.6])
+    args = ((5.0, 5.0), Z_IM, 1.0, 1.1, 70.0, R_S, R_C)
+    fz = []
+    for zeta in (0.03, 0.06, 0.09, 0.1, 0.12, 0.1499, 0.1501, 0.2):
+        pos = np.array([[1.0, 1.0, Z_IM + zeta], [1.4, 1.2, Z_IM + 0.3]])
+        _, f = image_charges(pos, q, *args)
+        eps = 1e-7
+        pp, pm = pos.copy(), pos.copy()
+        pp[0, 2] += eps
+        pm[0, 2] -= eps
+        fd = -(image_charges(pp, q, *args)[0] - image_charges(pm, q, *args)[0]) / (2 * eps)
+        assert f[0, 2] == pytest.approx(fd, rel=1e-6, abs=1e-9)
+        fz.append(f[0, 2])
+    assert fz[0] == 0.0
+    assert abs(fz[5] - fz[6]) < 5e-3 * abs(fz[6])  # stetig über ζ_c + h (Abstand 2e-4 nm)
+
+
+@pytest.mark.gpu
+def test_image_smooth_clamp_gpu(core):
+    """GPU vs. NumPy im C¹-Übergang: ein geladenes Atom auf 9 Höhen ζ ∈ [ζ_c − h, ζ_c + h] und
+    knapp außerhalb, z-Kraft und Energie (rel. 1e-4 bzw. 1e-5); Zähler zählt nur Atome mit
+    ζ_raw < ζ_c + h."""
+    q = np.array([1.0, -0.7])
+    for zeta in (0.04, 0.05, 0.07, 0.09, 0.1, 0.11, 0.13, 0.145, 0.16):
+        pos = np.array([[1.0, 1.0, Z_IM + zeta], [1.5, 1.3, Z_IM + 0.4]])
+        ctx, plugin = _ctx(core, pos, q, 5.0)
+        ctx.compute_forces()
+        x = ctx.positions_precise()[:, :2, :3]
+        for r in range(2):
+            e_ref, f_ref = image_charges(x[r], q, (5.0, 5.0), Z_IM, 1.0, KAPPA[r], EPS[r], R_S, R_C)
+            assert ctx.energies()[r, _term(core)] == pytest.approx(e_ref, rel=1e-5)
+            assert ctx.forces()[r, 0, 2] == pytest.approx(f_ref[0, 2], rel=1e-4, abs=1e-3)
+        assert plugin.clamp_count() == (2 if x[0, 0, 2] - Z_IM < 0.15 else 0), zeta
 
 
 @pytest.mark.gpu

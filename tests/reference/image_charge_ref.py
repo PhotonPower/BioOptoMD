@@ -4,12 +4,13 @@ Abgeschirmte Bildladungen an einer leitfähigen Ebene z = z_im (Dirichlet-Rand d
 Poisson-Boltzmann-Problems im Halbraum z > z_im):
 
     G(s)   = C exp(−κ s) / (ε_r s),   C = ONE_4PI_EPS0,   φ(s) = G(s) S(s)  (Switching wie nonbonded_ref)
-    ζ_i    = max(z_i − z_im, ζ_c)                       (Clamping, ADR 0013 Punkt 6)
+    ζ_i    = smax(z_i − z_im; ζ_c, h)                    (C¹-Clamping, ADR 0013 Punkt 6, OQ-18 d)
+    smax(u) = u (u ≥ ζ_c + h), ζ_c (u ≤ ζ_c − h), sonst ζ_c + (u − ζ_c + h)²/(4h);  h = ζ_c/2
     s_ij,n = |(Δx_ij + n_x L_x, Δy_ij + n_y L_y, ζ_i + ζ_j)|   (Δ mit Minimum Image)
     U      = −f [ Σ_{i<j} Σ_n q_i q_j φ(s_ij,n) + ½ Σ_i Σ_n q_i² φ(s_ii,n) ]
 
 Alle Paare zählen (keine Exclusions), das Eigenbild (i = i, n = 0) eingeschlossen. Für L >= 2 r_c
-genügt n = 0 (Minimum Image). Kräfte F = −∂U/∂r analytisch; ∂ζ_i/∂z_i = 0 für geclampte Atome.
+genügt n = 0 (Minimum Image). Kräfte F = −∂U/∂r analytisch mit ∂ζ_i/∂z_i ∈ [0, 1].
 """
 
 from __future__ import annotations
@@ -22,6 +23,17 @@ def green(s, kappa, eps_r):
     """G(s) und dG/ds."""
     g = ONE_4PI_EPS0 * np.exp(-kappa * s) / (eps_r * s)
     return g, -g * (kappa + 1.0 / s)
+
+
+ZETA_SMOOTH_FRACTION = 0.5  # h = ζ_c/2, wie kZetaSmoothFraction (image_charge.hpp)
+
+
+def smooth_zeta(zeta_raw, zeta_clamp):
+    """C¹-glattes max(ζ_raw, ζ_c) und dζ/dζ_raw (OQ-18 d)."""
+    h = ZETA_SMOOTH_FRACTION * zeta_clamp
+    u = np.clip(np.asarray(zeta_raw, np.float64) - zeta_clamp + h, 0.0, 2.0 * h)
+    zeta = np.where(u >= 2.0 * h, zeta_raw, zeta_clamp + u * u / (4.0 * h))
+    return zeta, u / (2.0 * h)
 
 
 def image_charges(pos, charges, box, z_image, factor, kappa, eps_r, r_s, r_c, zeta_clamp=0.1,
@@ -40,8 +52,7 @@ def image_charges(pos, charges, box, z_image, factor, kappa, eps_r, r_s, r_c, ze
     if n_images is None:
         n_images = tuple(0 if L >= 2 * r_c else int(np.ceil(r_c / L + 0.5)) for L in (lx, ly))
     zeta_raw = pos[:, 2] - z_image
-    free = zeta_raw > zeta_clamp
-    zeta = np.where(free, zeta_raw, zeta_clamp)
+    zeta, dz = smooth_zeta(zeta_raw, zeta_clamp)
     n = len(q)
     energy = 0.0
     forces = np.zeros((n, 3))
@@ -71,17 +82,14 @@ def image_charges(pos, charges, box, z_image, factor, kappa, eps_r, r_s, r_c, ze
                     energy -= factor * weight * qq * phi
                     c = -factor * qq * dphi / s  # ∂U/∂s · (1/s) für das ganze Paar
                     if i == j:  # nur z: x/y-Abstand ist konstant; ½·(c s_z + c s_z)
-                        if free[i]:
-                            forces[i, 2] -= c * sz
+                        forces[i, 2] -= c * sz * dz[i]
                         continue
                     forces[i, 0] -= c * sx
                     forces[i, 1] -= c * sy
                     forces[j, 0] += c * sx
                     forces[j, 1] += c * sy
-                    if free[i]:
-                        forces[i, 2] -= c * sz
-                    if free[j]:
-                        forces[j, 2] -= c * sz
+                    forces[i, 2] -= c * sz * dz[i]
+                    forces[j, 2] -= c * sz * dz[j]
     return energy, forces
 
 

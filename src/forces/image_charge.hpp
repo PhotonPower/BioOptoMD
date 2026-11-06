@@ -14,6 +14,9 @@ namespace bomd {
 /// Untergrenze für ζ_c [nm]: s >= 2 ζ_c hält s² weit über EPS_R2 (AGENTS Regel 4) und die
 /// Eigenbildkraft unter k_e q²/(4 ε_r ζ_c²) ≈ 8.7·10⁴ q²/ε_r kJ/mol/nm < F_max (ADR 0008).
 inline constexpr float kMinZetaClamp = 0.02f;
+/// Breite des C¹-Übergangs am Clamping als Anteil von ζ_c: h = ζ_c/2 (OQ-18 d, Phase 9.7).
+/// ASSUMPTION(OQ-18): Modellparameter wie ζ_c.
+inline constexpr float kZetaSmoothFraction = 0.5f;
 
 struct ImageChargeParams {
   float z_image_nm = 0.0f;  ///< Bildebene z_im [nm] (ADR 0013 Punkt 3)
@@ -23,8 +26,9 @@ struct ImageChargeParams {
   std::vector<float> eps_r;         ///< ε_r (bei GB ε_out) je Replica, > 0
   float r_switch_nm = 1.8f;         ///< r_s wie die Nonbonded-Strategie, 0 < r_s < r_c
   float r_cutoff_nm = 2.0f;         ///< r_c wie die Nonbonded-Strategie (ADR 0006)
-  /// ζ_c >= kMinZetaClamp: ζ = max(z − z_im, ζ_c) (ADR 0013 Punkt 6). ASSUMPTION(OQ-18): 0.1 nm;
-  /// an Gold mit d_im = 0 erreichen H-Atome ζ < ζ_c regelmäßig, ζ_c ist dort ein Modellparameter.
+  /// ζ_c >= kMinZetaClamp: ζ = C¹-glattes max(z − z_im, ζ_c) mit Übergang ζ_c ± h, h = ζ_c/2
+  /// (ADR 0013 Punkt 6, OQ-18 d). ASSUMPTION(OQ-18): 0.1 nm; an Gold mit d_im = 0 erreichen
+  /// H-Atome ζ < ζ_c regelmäßig, ζ_c ist dort ein Modellparameter.
   float zeta_clamp_nm = 0.1f;
   bool always_image_sum = false;  ///< true ⇒ Bildsummenpfad auch für L >= 2 r_c (nur Tests)
 };
@@ -44,8 +48,8 @@ class ImageChargeForce final : public ForcePlugin {
   const ImageChargeParams& params() const { return params_; }
   /// true, wenn compute() über periodische Bilder summiert (eine Box < 2 r_c oder erzwungen).
   bool uses_image_sum() const;
-  /// Anzahl geladener Atome mit z − z_im <= ζ_c, summiert über Replicas und alle compute() seit
-  /// reset_counters() (synchronisiert).
+  /// Anzahl geladener Atome mit z − z_im < ζ_c + h (geglättet oder geclampt, dζ/dz < 1),
+  /// summiert über Replicas und alle compute() seit reset_counters() (synchronisiert).
   std::uint64_t clamp_count() const;
   void reset_counters();
 
@@ -56,7 +60,7 @@ class ImageChargeForce final : public ForcePlugin {
   DeviceBuffer<int2> d_tile_pairs_;             // (I, J), I ≤ J
   DeviceBuffer<float2> d_screening_;            // (κ, ε_r) je Replica
   DeviceBuffer<float4> d_tile_bounds_;          // (Mittelpunkt, Halbbreite) je (Replica, Tile)
-  DeviceBuffer<unsigned long long> d_counter_;  // geclampte Atome
+  DeviceBuffer<unsigned long long> d_counter_;  // Atome mit ζ_raw < ζ_c + h (geglättet/geclampt)
 };
 
 }  // namespace bomd

@@ -635,8 +635,8 @@ NB_MODULE(_core, m) {
       .def_prop_ro("uses_image_sum", &bomd::ImageChargeForce::uses_image_sum,
                    "True, wenn über periodische Bilder summiert wird (Box < 2 r_c).")
       .def("clamp_count", &bomd::ImageChargeForce::clamp_count,
-           "Anzahl geladener Atome mit z - z_image <= zeta_clamp, summiert über Replicas und\n"
-           "Kraftauswertungen.")
+           "Anzahl geladener Atome mit z - z_image < 1.5*zeta_clamp (C1-glattes Clamping,\n"
+           "Übergang zeta_clamp +- zeta_clamp/2), summiert über Replicas und Kraftauswertungen.")
       .def("reset_counters", &bomd::ImageChargeForce::reset_counters);
   cls.def(
       "add_image_charges",
@@ -663,7 +663,7 @@ NB_MODULE(_core, m) {
       "Bildladungen an der Ebene z_image [nm] (ADR 0013): U = -f [sum_{i<j} q_i q_j phi(s_ij)\n"
       "+ 1/2 sum_i q_i^2 phi(2 zeta_i)], phi = Debye-Hückel mit kappa [1/nm], eps_r je Replica\n"
       "(n_replicas,) und Switching r_switch..r_cutoff [nm] (Werte der Nonbonded-Strategie).\n"
-      "factor f: 1 = idealer Leiter, sonst Näherung (OQ-18). zeta = max(z - z_image,\n"
+      "factor f: 1 = idealer Leiter, sonst Näherung (OQ-18). zeta = C1-glattes max(z - z_image,\n"
       "zeta_clamp). image_sum=True erzwingt den Bildsummenpfad (Tests). Energie-Term 'image'.");
 
   nb::class_<bomd::HarmonicRestraintPullingForce>(
