@@ -97,8 +97,10 @@ Randbedingungen:
        - Umrechnung: nm ↔ m (Faktor 10⁻⁹), W[(V/nm)²] = Σ_c |E_c[V/m]|² · 10⁻¹⁸.
        - Die Eingangsamplitude folgt aus der Intensität: I = ½ n c ε₀ |E₀|².
      - (c) **Datei-Adapter** (npz auf regulärem Gitter) als Rückfall, falls hp-FEM nicht im selben
-       Interpreter läuft (unter Windows baut hp-FEM mit MSYS2, BioOptoMD mit MSVC). Ob ein
-       gemeinsamer Interpreter möglich ist, klärt Phase 10.
+       Interpreter läuft. *Geprüft 2026-11-06:* Das Release-Wheel hp-FEM 0.4.0 (cp311-win_amd64, für
+       python.org-CPython) importiert zusammen mit BioOptoMD im selben Interpreter, mit
+       `Scattering3D`, `MaterialMap.set_cell` und `LayerStack3D`. Der Rückfall ist damit unter
+       Windows nicht nötig, bleibt aber für entfernte Rechner.
 5. **Treiber `SelfConsistentOptics`.**
    - Hält Iterationszähler, Mischparameter und Verlauf (ε- und W-Änderung, Observablen je Iteration).
    - Ein Checkpoint je Iteration (Kontext über `io.save_checkpoint` plus W, ⟨ε⟩, Verlauf), damit

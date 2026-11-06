@@ -30,8 +30,9 @@ Alle PRs #1–#6, #9–#14 am 2026-11-05 nach `main` gemergt (Merge-Commits, Rei
 - ADR 0016: Mean-Field-Fixpunktiteration mit Dämpfung, 3D-ε-Observer, `VoxelGridForce3D::set_values`,
   Solver als Python-Protokoll (TMM-Referenz, hp-FEM-Adapter im selben Prozess, npz-Rückfall);
   Voraussetzungen Lokalfeldtest und dn/dc-Kalibrierung an Literaturwerten (Phase 10.0).
-- OQ-20 entschieden (hp-FEM); offen: OQ-21 (Mean-Field), ob hp-FEM und BioOptoMD unter Windows im
-  selben Interpreter laufen.
+- OQ-20 entschieden (hp-FEM). hp-FEM 0.4.0 (Release-Wheel cp311-win_amd64) und BioOptoMD laufen im
+  selben Interpreter (geprüft in einem getrennten Verzeichnis, venv unverändert). Offen: OQ-21
+  (Mean-Field).
 
 ## Phase 9.7 – Folgearbeiten OQ-14 / OQ-18 (d): abgenommen 2026-11-06 (Branch `phase-9/followups`, PR #18)
 - C¹-glattes ζ-Clamping in `ImageChargeForce` (h = ζ_c/2): Referenz `smooth_zeta`, neue Tests
