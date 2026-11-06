@@ -2,7 +2,7 @@
 
 > Diese Datei wird am Ende **jeder** Arbeitssitzung aktualisiert (AGENTS.md §2.4).
 
-**Aktive Phase:** 10 – MD ↔ FEM-Kopplung (Branch `phase-10/md-fem`, lokal), 10.0–10.4 abgenommen 2026-11-06, 10.5 (3D-hp-FEM-Adapter) abgenommen 2026-11-06, 10.6 (REMD im Treiber) umgesetzt, Abnahme ausstehend; offen 9.4 (Hairpin-Lauf (b)) und 9.6 (Schlussmessung). Phasen 9.5 und 9.7 abgenommen 2026-11-06.
+**Aktive Phase:** 10 – MD ↔ FEM-Kopplung (Branch `phase-10/md-fem`, lokal), 10.0–10.4 abgenommen 2026-11-06, 10.5 (3D-hp-FEM-Adapter) abgenommen 2026-11-06, 10.6 (REMD im Treiber) abgenommen 2026-11-06, Phase 10 vollständig; offen 9.4 (Hairpin-Lauf (b)) und 9.6 (Schlussmessung). Phasen 9.5 und 9.7 abgenommen 2026-11-06.
 Alle PRs #1–#6, #9–#14 am 2026-11-05 nach `main` gemergt (Merge-Commits, Reihenfolge des Stapels).
 **Phase 9.3 (GB-neck2) abgenommen** am 2026-11-05, ADR 0012 und Abnahmekriterien bestätigt.
 **Phase 9.2 (Replica Exchange) abgenommen** am 2026-11-05, ADR 0011 und Abnahmekriterien bestätigt.
@@ -26,7 +26,7 @@ Alle PRs #1–#6, #9–#14 am 2026-11-05 nach `main` gemergt (Merge-Commits, Rei
 - Phase 5 (PR #5): HMR, SHAKE/RATTLE auf H-Bindungen, N_dof. Abgenommen 2026-11-03; Nacharbeit nach
   Review siehe unten.
 
-## Phase 10.6 – Replica Exchange im Treiber: umgesetzt, Abnahme ausstehend, Branch `phase-10/coupling-remd`
+## Phase 10.6 – Replica Exchange im Treiber: abgenommen 2026-11-06, Branch `phase-10/coupling-remd`
 - `SelfConsistentOptics(remd=..., exchange_steps=..., target_states=...)`: Zyklen mit Austausch,
   ⟨ε⟩ nur aus dem Zielzustand. Zielzustand 300 K: Breite 0.1695 nm = Theorie; Feld 0 bitgleich zu
   `remd.run`; Fortsetzen mit REMD-Zustand bitgleich.
@@ -331,7 +331,8 @@ ADR 0007 → **0009** (Mixed Precision), unsere OQ-08…11 → **OQ-11…14**.
 ## Nächster konkreter Schritt
 1. Hairpin-Lauf (OQ-15 b) auswerten, PR #15 aktualisieren, Phase 9.4 zur Abnahme; danach
    Schlussmessung 9.6 auf freier GPU (OQ-19).
-2. Phase 10.6: Replica Exchange im Treiber `SelfConsistentOptics` (ADR 0016 Punkt 5).
+2. Phase 10 vollständig (10.0–10.6 abgenommen); Branches `phase-10/md-fem` → `hpfem-3d` → `coupling-remd`
+   lokal, Push/PR auf Anfrage. Nächste große Phase nach ROADMAP (Coarse-Grained) – Entscheidung Projektinhaber.
 3. Nachholen: Kontrolllauf auf der RTX 6000 Ada; Nsight Compute (Counter-Freigabe).
 
 ## Sitzungslog
@@ -372,6 +373,7 @@ ADR 0007 → **0009** (Mixed Precision), unsere OQ-08…11 → **OQ-11…14**.
 | 2026-11-06 | Projektinhaber | Gauß-Fenster ±4σ (ADR 0016 Punkt 2) bestätigt; OQ-24 (d) Warnung, (b) später; OQ-25 Ersatzkriterium SPR angenommen. |
 | 2026-11-06 | Projektinhaber | Phase 10 (10.0–10.4) abgenommen; 3D-hp-FEM-Adapter als nächster Schritt (10.5), nicht Teil der Abnahme. |
 | 2026-11-06 | Projektinhaber | Phase 10.5 (3D-hp-FEM-Adapter, eigener hp-FEM-Build) abgenommen; weiter mit REMD im Treiber. |
+| 2026-11-06 | Projektinhaber | Phase 10.6 (REMD im Kopplungstreiber) abgenommen; Phase 10 vollständig. |
 | 2026-11-05 | Claude Opus 5.5 | Phase 9.2 Replica Exchange implementiert (ADR 0011 Proposed), 113/113 Tests grün. |
 | 2026-11-05 | Claude Opus 5.5 | Phase 9.1 GB-OBC2 implementiert (ADR 0010 Proposed, gb_ref, TiledGeneralizedBorn, Builder), 12/12 Phase-9-Tests grün. |
 | 2026-11-05 | Claude Opus 5.5 | Phase 8: Benchmark vs. OpenMM (32×2k Faktor 3.5), Tile-Vorauswahl, M-SHAKE/RATTLE; Review umgesetzt, 94/94 Tests grün. |

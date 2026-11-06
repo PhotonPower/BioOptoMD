@@ -338,7 +338,7 @@ Abnahmetests (revidierte Fassung vom Projektinhaber bestätigt 2026-11-06):
    1.5e-3 → Default Grad 2; lateral strukturiert an ε-Kanten Grad 2 ≈ 1 %, Grad 3 ≈ 0.5 % (Hotspots:
    Grad 3). Empfehlung: `backend="cudss"` (bzw. "auto", wählt ab 10 000 Unbekannten cuDSS), laterale
    ε-Zellen bis 0.5 nm; die PML (600 nm je Seite, ≈ 60 % der z-Zeilen) ist der nächste Hebel.
-6. Replica Exchange im Treiber (ADR 0016 Punkt 5): Austauschzyklen während der Segmente, ⟨ε⟩ nur aus
+6. *Abgenommen 2026-11-06:* Replica Exchange im Treiber (ADR 0016 Punkt 5): Austauschzyklen während der Segmente, ⟨ε⟩ nur aus
    dem Zielzustand (Slots über die Austauschpermutation verfolgt), REMD-Zustand im Checkpoint.
    *Umgesetzt 2026-11-06:* `SelfConsistentOptics(remd=..., exchange_steps=..., target_states=...)`;
    `test_coupling_remd` (Breite des Zielzustands 300 K gemessen 0.1695 nm = Theorie 0.1695 nm, 400 K
