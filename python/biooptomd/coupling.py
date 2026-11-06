@@ -288,6 +288,9 @@ class SelfConsistentOptics:
     Slots werden gemittelt. Das Feld ist für alle Replicas dasselbe (ein Gitter je Kontext); der
     Gitterterm ist zustandsunabhängig und geht so in die Austauschenergien ein. Checkpoints enthalten
     den Austauschzustand. Ohne ``remd`` sind ``replicas`` feste Slots, ``ctx.step`` tauscht nicht.
+    Grenzen: je Zyklus wird das ganze Beobachtergitter heruntergeladen (``observer.result()``) – bei
+    großen 3D-Gittern ``exchange_steps`` entsprechend groß wählen; ``eps_noise`` unterschätzt den
+    Fehler, wenn ein Block kürzer als ein Umlauf der Replicas durch die Leiter ist.
 
     W_0 ist die Lösung für reines Wasser (ungekoppeltes Feld). Mit ``checkpoint_dir`` wird nach jeder
     Iteration ``iter_{k:03d}.npz`` (Kontext, :func:`biooptomd.io.save_checkpoint`) und
@@ -327,6 +330,8 @@ class SelfConsistentOptics:
             raise ValueError("n_blocks >= 2, n_sample Vielfaches von n_blocks·stride, n_equil >= 0")
         self.remd = remd
         if remd is not None:
+            if remd.ctx is not ctx:
+                raise ValueError("remd gehört zu einem anderen Kontext")
             if replicas is not None:
                 raise ValueError("mit remd: target_states statt replicas")
             if (exchange_steps <= 0 or exchange_steps % stride != 0
@@ -338,7 +343,11 @@ class SelfConsistentOptics:
                 )
             if target_states is None:  # niedrigste Temperatur jeder Leiter
                 target_states = np.arange(remd.ladders) * remd.ladder_size
-            self.target_states = np.asarray(target_states, np.int64)
+            ts = np.asarray(target_states, np.int64)
+            if (ts.ndim != 1 or len(ts) == 0 or np.any(ts < 0) or np.any(ts >= ctx.n_replicas)
+                    or len(np.unique(ts)) != len(ts)):  # fmt: skip
+                raise ValueError("target_states: 1D, eindeutig, 0 <= k < n_replicas")
+            self.target_states = ts
             temps = remd.temperatures[self.target_states]
             if not np.allclose(temps, temps[0]):
                 raise ValueError(
