@@ -280,8 +280,17 @@ class SelfConsistentOptics:
     ``self_field`` = max |W_new − W_Wasser| / max W_Wasser; über ``self_field_warn`` (Default 0.05)
     warnt der Treiber einmal.
 
-    Ohne Replica Exchange: ``replicas`` sind feste Slots, ``ctx.step`` tauscht nicht; bei REMD müsste
-    der Zielzustand über die Slots verfolgt werden (offen, ROADMAP Phase 10).
+    Replica Exchange (ADR 0016 Punkt 5, ROADMAP 10.6): Mit ``remd`` (:class:`biooptomd.remd.
+    ReplicaExchange` desselben Kontexts) laufen Äquilibrierung und Messung in Zyklen aus
+    ``exchange_steps`` Schritten und einem Austauschversuch. ⟨ε⟩ stammt nur aus den Zielzuständen
+    ``target_states`` (Default: niedrigste Temperatur jeder Leiter): Je Zyklus liegt jeder Zustand
+    in einem festen Slot (``slot_of_state``), der Observer wird je Zyklus zurückgesetzt und nur diese
+    Slots werden gemittelt. Das Feld ist für alle Replicas dasselbe (ein Gitter je Kontext); der
+    Gitterterm ist zustandsunabhängig und geht so in die Austauschenergien ein. Checkpoints enthalten
+    den Austauschzustand. Ohne ``remd`` sind ``replicas`` feste Slots, ``ctx.step`` tauscht nicht.
+    Grenzen: je Zyklus wird das ganze Beobachtergitter heruntergeladen (``observer.result()``) – bei
+    großen 3D-Gittern ``exchange_steps`` entsprechend groß wählen; ``eps_noise`` unterschätzt den
+    Fehler, wenn ein Block kürzer als ein Umlauf der Replicas durch die Leiter ist.
 
     W_0 ist die Lösung für reines Wasser (ungekoppeltes Feld). Mit ``checkpoint_dir`` wird nach jeder
     Iteration ``iter_{k:03d}.npz`` (Kontext, :func:`biooptomd.io.save_checkpoint`) und
@@ -302,7 +311,9 @@ class SelfConsistentOptics:
         stride: Observer-Abstand [Schritte]. n_blocks: Blöcke für die Rauschabschätzung (>= 2).
         beta: Dämpfung in (0, 1]. tol, tol_w: Konvergenzgrenzen für Δε bzw. ΔW.
         self_field_warn: Schwelle der Selbstfeld-Warnung (OQ-24).
-        replicas: gemittelte Replica-Slots (Default alle; alle mit gleicher Frame-Zahl).
+        replicas: gemittelte Replica-Slots ohne REMD (Default alle; alle mit gleicher Frame-Zahl).
+        remd, exchange_steps, target_states: Replica Exchange (s. o.); ``exchange_steps`` [Schritte]
+            Vielfaches von ``stride``, Teiler von ``n_equil`` und ``n_sample/n_blocks``.
         smearing: ``"gauss"`` oder ``"point"``. checkpoint_dir: Verzeichnis oder None.
     """
 
@@ -311,11 +322,40 @@ class SelfConsistentOptics:
                  n_equil: int, n_sample: int, stride: int = 100, n_blocks: int = 4,
                  beta: float = 0.5, tol: float = 1e-2, tol_w: float | None = None,
                  self_field_warn: float = 0.05, replicas=None, smearing: str = "gauss",
-                 checkpoint_dir=None):  # fmt: skip
+                 checkpoint_dir=None, remd=None, exchange_steps: int = 0,
+                 target_states=None):  # fmt: skip
         if not 0.0 < beta <= 1.0:
             raise ValueError("beta in (0, 1]")
         if n_blocks < 2 or n_sample % (n_blocks * stride) != 0 or n_equil < 0:
             raise ValueError("n_blocks >= 2, n_sample Vielfaches von n_blocks·stride, n_equil >= 0")
+        self.remd = remd
+        if remd is not None:
+            if remd.ctx is not ctx:
+                raise ValueError("remd gehört zu einem anderen Kontext")
+            if replicas is not None:
+                raise ValueError("mit remd: target_states statt replicas")
+            if (exchange_steps <= 0 or exchange_steps % stride != 0
+                    or n_sample % (n_blocks * exchange_steps) != 0
+                    or n_equil % exchange_steps != 0):  # fmt: skip
+                raise ValueError(
+                    "mit remd: exchange_steps > 0 und Vielfaches von stride; n_sample Vielfaches "
+                    "von n_blocks·exchange_steps, n_equil Vielfaches von exchange_steps"
+                )
+            if target_states is None:  # niedrigste Temperatur jeder Leiter
+                target_states = np.arange(remd.ladders) * remd.ladder_size
+            ts = np.asarray(target_states, np.int64)
+            if (ts.ndim != 1 or len(ts) == 0 or np.any(ts < 0) or np.any(ts >= ctx.n_replicas)
+                    or len(np.unique(ts)) != len(ts)):  # fmt: skip
+                raise ValueError("target_states: 1D, eindeutig, 0 <= k < n_replicas")
+            self.target_states = ts
+            temps = remd.temperatures[self.target_states]
+            if not np.allclose(temps, temps[0]):
+                raise ValueError(
+                    "target_states: alle im selben thermodynamischen Zustand (gleiches T)"
+                )
+        elif target_states is not None:
+            raise ValueError("target_states nur mit remd")
+        self.exchange_steps = int(exchange_steps)
         self.ctx, self.solver, self.grid = ctx, solver, force_grid
         self.beta, self.tol = float(beta), float(tol)
         self.tol_w = self.tol if tol_w is None else float(tol_w)
@@ -360,11 +400,37 @@ class SelfConsistentOptics:
     def iteration(self) -> int:
         return len(self.history)
 
+    def _sample_block_remd(self, n_steps):
+        """Mit Replica Exchange: Zyklen aus ``exchange_steps`` Schritten und einem Austauschversuch;
+        je Zyklus ist die Zuordnung Zustand → Slot fest, gemessen werden nur die Slots der
+        Zielzustände (Observer je Zyklus zurückgesetzt)."""
+        acc_a = acc_v = 0.0
+        frames = 0
+        for _ in range(n_steps // self.exchange_steps):
+            slots = self.remd.slot_of_state[self.target_states]
+            self.observer.reset()
+            self.ctx.step(self.exchange_steps)
+            res = self.observer.result()
+            n = int(res["n_frames"][0])
+            acc_a = acc_a + n * res["s_alpha_mean"][slots].mean(axis=0)
+            acc_v = acc_v + n * res["s_volume_mean"][slots].mean(axis=0)
+            frames += n
+            self.remd.attempt()
+        return acc_a / frames, acc_v / frames
+
     def _sample_eps(self):
-        self.ctx.step(self.n_equil)
+        if self.remd is None:
+            self.ctx.step(self.n_equil)
+        else:
+            self.remd.run(self.n_equil // self.exchange_steps, self.exchange_steps)
         vk = float(np.prod(self.eps_spacing))
         blocks_a, blocks_v = [], []
         for _ in range(self.n_blocks):
+            if self.remd is not None:
+                a, v = self._sample_block_remd(self.n_sample // self.n_blocks)
+                blocks_a.append(a)
+                blocks_v.append(v)
+                continue
             self.observer.reset()
             self.ctx.step(self.n_sample // self.n_blocks)
             res = self.observer.result()
@@ -448,7 +514,7 @@ class SelfConsistentOptics:
     def _checkpoint(self) -> None:
         k = self.iteration
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
-        _io.save_checkpoint(self.ctx, self.checkpoint_dir / f"iter_{k:03d}.tmp")
+        _io.save_checkpoint(self.ctx, self.checkpoint_dir / f"iter_{k:03d}.tmp", remd=self.remd)
         os.replace(
             self.checkpoint_dir / f"iter_{k:03d}.tmp", self.checkpoint_dir / f"iter_{k:03d}.npz"
         )
@@ -467,7 +533,9 @@ class SelfConsistentOptics:
             w = np.array(d["w"])
             eps = np.array(d["eps"])
             history = json.loads(str(d["history"]))
-        step = _io.load_checkpoint(self.ctx, self.checkpoint_dir / f"iter_{iteration:03d}.npz")
+        step = _io.load_checkpoint(
+            self.ctx, self.checkpoint_dir / f"iter_{iteration:03d}.npz", remd=self.remd
+        )
         if len(history) != iteration or history[-1]["md_step"] != step:
             raise ValueError("resume: coupling- und iter-Checkpoint passen nicht zusammen")
         self.w, self.eps, self.history = w, eps, history

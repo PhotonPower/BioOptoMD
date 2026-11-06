@@ -409,7 +409,7 @@ C_ALPHA, C_VOL = np.array([1e-3]), np.array([0.01])
 C_FG = ((8, 8, 13), (0.0, 0.0, 0.0), (0.5, 0.5, 0.25))
 
 
-def _layer(n_rep=4, n=64, box=4.0, seed=1, k=100.0):
+def _layer(n_rep=4, n=64, box=4.0, seed=1, k=100.0, noise_seed=7):
     ctx = _ctx(n_rep, n, box=(box, box))
     rng = np.random.default_rng(seed)
     pos = np.empty((n_rep, n, 3), np.float32)
@@ -424,7 +424,7 @@ def _layer(n_rep=4, n=64, box=4.0, seed=1, k=100.0):
         ref, np.full(n_rep * n, k, np.float32), dims=(False, False, True),
     )  # fmt: skip
     ctx.set_temperatures(np.full(n_rep, 300.0, np.float32))
-    ctx.set_integrator(0.002, 5.0, 7)
+    ctx.set_integrator(0.002, 5.0, noise_seed)
     return ctx
 
 
@@ -438,6 +438,8 @@ def _driver(
     eps_nz=20,
     pol="p",
     tol_w=None,
+    n_sample=4000,
+    **extra,
 ):
     from biooptomd.coupling import ForceGrid, SelfConsistentOptics, TmmSolver
     from biooptomd.voxel import optical_scale
@@ -448,7 +450,8 @@ def _driver(
     return SelfConsistentOptics(
         ctx, solver, grid, scale, eps_shape=(1, 1, eps_nz), eps_origin=(0.0, 0.0, 0.0),
         eps_spacing=(4.0, 4.0, eps_dz), alpha=C_ALPHA, volume=C_VOL, n_water=1.3317, n_equil=1000,
-        n_sample=4000, stride=20, beta=beta, tol=tol, tol_w=tol_w, checkpoint_dir=checkpoint_dir,
+        n_sample=n_sample, stride=20, beta=beta, tol=tol, tol_w=tol_w,
+        checkpoint_dir=checkpoint_dir, **extra,
     )  # fmt: skip
 
 
@@ -813,3 +816,105 @@ def test_hpfem3d_vs_grating():
     contrast = np.abs(w_a[k_layer, 1, :] - w_a[k_layer, 3, :]).max() / w_a[k_layer].max()
     print(f"Zeile mit/ohne Schicht (Zellmitten): {contrast:.3f}")
     assert contrast > 0.05
+
+
+# --- 10.6 Treiber mit Replica Exchange ----------------------------------------------------------
+
+REMD_T = np.array([300.0, 400.0, 530.0, 700.0])
+
+
+def _remd_driver(intensity, *, n=16, seed=1, checkpoint_dir=None, remd_seed=5, n_sample=4000,
+                 ladders=1, target_states=None, noise_seed=7):  # fmt: skip
+    from biooptomd.remd import ReplicaExchange
+
+    n_rep = 4 * ladders
+    ctx = _layer(n_rep=n_rep, n=n, seed=seed, noise_seed=noise_seed)
+    ctx.set_temperatures(np.tile(REMD_T, ladders).astype(np.float32))
+    remd = ReplicaExchange(ctx, REMD_T, seed=remd_seed, ladders=ladders)
+    drv = _driver(ctx, intensity, checkpoint_dir=checkpoint_dir, eps_dz=0.05, eps_nz=40,
+                  n_sample=n_sample, remd=remd, exchange_steps=100,
+                  target_states=target_states)  # fmt: skip
+    return ctx, remd, drv
+
+
+def _width(eps_profile, z):
+    """Breite des Profils in L = (ε − 1)/(ε + 2), das linear in der Atomdichte ist (ε selbst ist in L
+    konvex und ließe dichte Schichten schmaler erscheinen)."""
+    lw = (EPS_W633 - 1) / (EPS_W633 + 2)
+    c = np.clip((eps_profile - 1) / (eps_profile + 2) - lw, 0.0, None)
+    m = (c * z).sum() / c.sum()
+    return float(np.sqrt((c * (z - m) ** 2).sum() / c.sum()))
+
+
+def test_coupling_remd():
+    """Treiber mit Replica Exchange (ADR 0016 Punkt 5, ROADMAP 10.6): Testschicht (24 unabhängige
+    Atome je Replica, z-Restraint k = 100 kJ/mol/nm²), zwei Leitern 300/400/530/700 K (8 Replicas,
+    Default-Zielzustände 0 und 4). (1) Es wird getauscht (Akzeptanz > 0 in allen Paaren). (2) Die
+    Breite von L(⟨ε⟩) − L_w der Zielzustände entspricht 300 K: σ² = k_BT/k + σ_R² + Δz²/12 (σ_R = R/√5
+    der Verschmierung), rel. 4 % (Streuung über 10 unabhängige Thermostat-Seeds 1.15 %, Mittel
+    0.999); der nächste Zustand (400 K) läge 14 %
+    höher. (3) Bei Feldstärke 0 bitgleich zu ``remd.run`` ohne Treiber (gleiche Zyklen, eine Leiter).
+    (4) Ungültige Parameter werfen."""
+    from biooptomd import units
+    from biooptomd.remd import ReplicaExchange
+
+    _, remd, drv = _remd_driver(5e16, n=24, n_sample=16000, ladders=2)
+    np.testing.assert_array_equal(drv.target_states, [0, 4])
+    drv.run(max_iter=2)
+    pairs = np.arange(7) != 3  # Paar (3, 4) liegt über der Leitergrenze
+    assert np.all(remd.accepted[pairs] > 0), remd.acceptance_ratio()
+    z = drv.observer.result()["z"]
+    w_remd = _width(drv.eps[:, 0, 0], z)
+    sigma_r2 = (np.cbrt(3 * C_VOL[0] / (4 * np.pi)) / np.sqrt(5)) ** 2
+
+    def theory(t):
+        return np.sqrt(units.KB * t / 100.0 + sigma_r2 + 0.05**2 / 12)
+
+    print(f"Breite REMD(300 K) {w_remd:.4f} nm, Theorie 300 K {theory(300):.4f}, "
+          f"400 K {theory(400):.4f}; Akzeptanz {remd.acceptance_ratio()}")  # fmt: skip
+    assert w_remd == pytest.approx(theory(300.0), rel=0.04)
+    assert w_remd < 0.96 * theory(400.0)
+
+    # (4) Parameterprüfungen
+    from biooptomd.coupling import SelfConsistentOptics  # noqa: F401
+
+    for kwargs in ({"exchange_steps": 30}, {"exchange_steps": 0}, {"target_states": [0, 1]},
+                   {"target_states": [0, 0]}, {"target_states": [9]}):  # fmt: skip
+        with pytest.raises(ValueError):
+            ctx_e = _layer(n_rep=4, n=4)
+            ctx_e.set_temperatures(REMD_T.astype(np.float32))
+            r = ReplicaExchange(ctx_e, REMD_T)
+            _driver(ctx_e, 0.0, **{"remd": r, "exchange_steps": 100, **kwargs})
+    with pytest.raises(ValueError):  # REMD eines anderen Kontexts
+        _driver(_layer(n_rep=4, n=4), 0.0, remd=remd, exchange_steps=100)
+    with pytest.raises(ValueError):  # target_states ohne REMD
+        _driver(_layer(n_rep=4, n=4), 0.0, target_states=[0])
+
+    # (3) Feld 0: Treiber + REMD gegen remd.run allein
+    ctx_a, _, drv0 = _remd_driver(0.0)
+    drv0.run(max_iter=1)
+    ctx_b = _layer(n_rep=4, n=16, seed=1)
+    ctx_b.set_temperatures(REMD_T.astype(np.float32))
+    remd_b = ReplicaExchange(ctx_b, REMD_T, seed=5)
+    remd_b.run((1000 + 4000) // 100, 100)
+    np.testing.assert_array_equal(ctx_a.positions(), ctx_b.positions())
+    np.testing.assert_array_equal(drv0.remd.state, remd_b.state)
+
+
+def test_coupling_remd_resume(tmp_path):
+    """Fortsetzen mit Replica Exchange: Checkpoint enthält den Austauschzustand; Abbruch nach zwei
+    Iterationen und Fortsetzen ist bitgleich zum durchgehenden Lauf (Verlauf, W, Positionen,
+    Zustände, Zähler)."""
+    _, remd_full, full = _remd_driver(5e16, checkpoint_dir=tmp_path / "full")
+    for _ in range(3):
+        full.step()
+    _, remd_part, part = _remd_driver(5e16, checkpoint_dir=tmp_path / "full")
+    part.resume(2)
+    part.checkpoint_dir = tmp_path / "part"
+    part.step()
+    assert part.history == full.history
+    np.testing.assert_array_equal(part.w, full.w)
+    np.testing.assert_array_equal(part.ctx.positions(), full.ctx.positions())
+    np.testing.assert_array_equal(remd_part.state, remd_full.state)
+    np.testing.assert_array_equal(remd_part.accepted, remd_full.accepted)
+    assert remd_part.n_cycles == remd_full.n_cycles
