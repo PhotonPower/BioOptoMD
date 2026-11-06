@@ -34,8 +34,12 @@ Alle PRs #1–#6, #9–#14 am 2026-11-05 nach `main` gemergt (Merge-Commits, Rei
   84 % (Endpaare dauerhaft offen). Tabelle und Einschränkungen in OPEN_QUESTIONS §OQ-15.
 - (b) Hairpin-Faltung, Projektinhaber 2026-11-05: d(GCGAAGC), PDB 1PQT (NMR, sequenzidentisch;
   per PDB geprüft). `examples/gb_validation/hairpin_folding.py`: 4 unabhängige REMD-Leitern × 8 T
-  (300–370 K), 2 aus NMR-, 2 aus gestreckter Struktur, 1 µs je Replica (≈ 22 h), gestartet 2026-11-05.
+  (300–370 K), 2 aus NMR-, 2 aus gestreckter Struktur, 1 µs je Replica (24.4 h).
   Dafür neu: `ReplicaExchange(ladders=L)` (Test `test_remd_multiple_ladders`).
+  **Bestanden (2026-11-06):** beide gestreckten Leitern falten (erstmals nach 1.5/2.4 ns bei 300 K),
+  Anteil gefaltet bei 300 K in der zweiten Hälfte 0.995/0.993/0.994/0.991 (Blockfehler ≤ 0.002),
+  Median-RMSD 0.10–0.12 nm. Oberhalb ≈ 340 K nicht konvergiert (370 K: 0.96–0.67 je Leiter, einzelne
+  lange Entfaltungsepisoden). Tabelle in OPEN_QUESTIONS §OQ-15.
 
 ## Phase 9.3 – GB-neck2: abgenommen 2026-11-05 (Branch `phase-9/gbn2`)
 - ADR 0012 (Accepted 2026-11-05): Modell wie OpenMM `implicit/gbn2.xml`, Parameter und interpolierte Neck-Tabellen
