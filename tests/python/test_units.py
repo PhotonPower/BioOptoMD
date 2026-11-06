@@ -51,3 +51,10 @@ def test_compiled_constants_identical():
     # EPS_R2 ist in C++ ein float.
     assert core.units.EPS_R2 == float(np.float32(units.EPS_R2))
     assert core.units.EPS_CROSS2 == float(np.float32(units.EPS_CROSS2))
+
+
+def test_si_optics_constants_consistent():
+    """EPS0_SI passt zu ONE_4PI_EPS0: e² N_A / (4π ε₀ · 1 nm) in kJ/mol (rel. 1e-6)."""
+    e = 1.602176634e-19  # C (exakt, SI 2019)
+    value = e**2 * units.AVOGADRO / (4 * np.pi * units.EPS0_SI * 1e-9) / 1e3
+    assert value == pytest.approx(units.ONE_4PI_EPS0, rel=1e-6)

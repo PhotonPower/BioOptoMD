@@ -72,7 +72,7 @@ Randbedingungen:
    - ε = n² je Voxel nach derselben Lorentz-Lorenz-Mischung mit Wasser-Hintergrund (§6.3).
    - Atome werden gaußförmig verschmiert (σ = R_i/√5, separabel je Achse, Fenster ±4σ wie im
      1D-Profiler, damit die x/y-Summe dessen Gauß-Profil exakt reproduziert; umgesetzt 2026-11-06
-     statt der ursprünglich vorgeschlagenen 3σ). Ein exakter
+     statt der ursprünglich vorgeschlagenen 3σ; vom Projektinhaber am 2026-11-06 bestätigt). Ein exakter
      Kugel-Voxel-Schnitt in 3D wäre teuer.
    - Das Gitter ist unabhängig vom Kraftgitter. Voxelgröße ≥ 0.2 nm wird empfohlen (kleinere Voxel
      verstärken den Bias durch max(0, ·), siehe OQ-02).
@@ -161,7 +161,8 @@ Randbedingungen:
   - **TMM-Referenz:** `test_tmm_reference`.
     - Fresnel-Koeffizienten einer Grenzfläche analytisch (rel. 1e-12).
     - SPR-Minimum für Gold/Wasser bei 633 nm am Literaturwinkel (Toleranz 0.5°, Literaturwert per
-      Websuche verifizieren).
+      Websuche verifizieren). *Ersetzt (OQ-25, Projektinhaber 2026-11-06):* exakte Airy-Formel
+      (rel. 1e-12) und SPR-Minimum innerhalb 1° der Plasmonen-Dispersion.
     - Energieerhaltung |r|² + |t|²·(Faktor) = 1 ohne Absorption.
   - **Fixpunkt:** `test_coupling_fixed_point`. Planare Schicht über Gold mit dem TMM-Adapter.
     - Konvergenz in ≤ 10 Iterationen.

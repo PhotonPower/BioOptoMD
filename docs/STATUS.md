@@ -37,17 +37,19 @@ Alle PRs #1–#6, #9–#14 am 2026-11-05 nach `main` gemergt (Merge-Commits, Rei
 - Phase 10.3 (Teil): `biooptomd.coupling` mit TMM-Referenz und Treiber `SelfConsistentOptics`. Tests:
   TMM gegen Fresnel und Airy (rel. 1e-12), R + T = 1, evaneszenter Abfall, SPR-Minimum 72.24° gegen
   Plasmonen-Dispersion 72.75° (OQ-25: Literaturwinkel nicht konsistent belegt); Fixpunkt konvergiert
-  in 5 Iterationen (β = 0.5), W-Profile für β = 0.3/0.5/1.0 innerhalb 0.5 %, Feld 0 bitgleich zur
+  in 6 Iterationen (β = 0.5), W-Profile für β = 0.3/0.5/1.0 innerhalb 0.5 %, Feld 0 bitgleich zur
   ungekoppelten MD; ⟨z⟩-Verschiebung linear (Verhältnis 2.0000) und = F/k; Fortsetzen bitgleich.
-  Befund OQ-24 (Selbstfeld dichter Schichten bei p-Polarisation). Offen: `HpFemSolver` (hp-FEM ohne
+  Befund OQ-24 (Selbstfeld dichter Schichten bei p-Polarisation).
+  Review 10.3 umgesetzt: stabile TMM-Rückwärtsrekursion (dicke Metallschichten), p-Feld gegen
+  Fresnel-t_E, Rauschen aus Blockmitteln (ADR Punkt 1), NaN-/W-Prüfung, atomare Checkpoints,
+  Konstanten C_LIGHT/EPS0_SI in units, `test_coupling_fixed_point` als slow; Treiber noch ohne REMD. Offen: `HpFemSolver` (hp-FEM ohne
   gmsh: Einheitszellennetz selbst bauen), npz-Adapter, Beispiel 10.4.
 - Phase 10.1/10.2: `PolarizabilityGridObserver` (`ctx.add_polarizability_grid`) und
   `VoxelGridForce3D.set_values`. `test_phase10.py` (7 Tests) grün: Histogramme/Varianz/ε gegen NumPy
   (rel. 1e-6, periodisch und nicht, Gauß und Punkt), x/y-Summe = 1D-Profiler (rel. 1e-5),
   deterministisch, `set_values` bitgleich zu neu angelegtem Gitter (Kräfte, Energien, Trajektorie).
   Review umgesetzt (int-Grenze, Fensterreserve, Box-Prüfung nur bei Änderung, Padding-/Typ-Test).
-  **Zur Bestätigung (Projektinhaber):** Gauß-Fenster ±4σ statt der im ADR 0016 vorgeschlagenen 3σ,
-  damit die x/y-Summe den 1D-Profiler exakt reproduziert.
+  Gauß-Fenster ±4σ statt 3σ vom Projektinhaber bestätigt (2026-11-06).
 - Phase 10.0 (b): `test_phase6.py::test_refractive_index_dn_dc[protein|dna]` grün (GPU-Profiler,
   c = 10 mg/mL: dn/dc 0.1901 bzw. 0.1701 mL/g). `builder.calibrate_optics`: s_α = 0.983 / 1.002,
   s_v = 0.666 / 0.654; unkalibriert 0.064 / 0.065. DNA bezogen auf das Na-Salz (OQ-23); Ionen mit
@@ -342,6 +344,7 @@ ADR 0007 → **0009** (Mixed Precision), unsere OQ-08…11 → **OQ-11…14**.
 | 2026-11-06 | Projektinhaber | ADR 0016 (MD ↔ FEM) angenommen, Kriterien bestätigt; Solver hp-FEM (OQ-20); keine eigenen dn/dc-Messwerte, Kalibrierung an Literaturwerten (OQ-01/02). |
 | 2026-11-06 | Projektinhaber | OQ-22 (b): Lorentz-Lokalfeldfaktor als Default in `optical_scale`; Kalibrierung zunächst klassenweise (v auf v̄, α′ an dn/dc) statt ProtOr/NucProt. |
 | 2026-11-06 | Claude Opus 5.5 | Review Phase 10.0 umgesetzt: DNA-Bezugsmasse Na-Salz und v̄ als OQ-23, Ionenvolumina nach Shannon, Kalibrierung aller kovalenten Elemente, Elementprüfung, Test Profiler ↔ Kraft. |
+| 2026-11-06 | Projektinhaber | Gauß-Fenster ±4σ (ADR 0016 Punkt 2) bestätigt; OQ-24 (d) Warnung, (b) später; OQ-25 Ersatzkriterium SPR angenommen. |
 | 2026-11-05 | Claude Opus 5.5 | Phase 9.2 Replica Exchange implementiert (ADR 0011 Proposed), 113/113 Tests grün. |
 | 2026-11-05 | Claude Opus 5.5 | Phase 9.1 GB-OBC2 implementiert (ADR 0010 Proposed, gb_ref, TiledGeneralizedBorn, Builder), 12/12 Phase-9-Tests grün. |
 | 2026-11-05 | Claude Opus 5.5 | Phase 8: Benchmark vs. OpenMM (32×2k Faktor 3.5), Tile-Vorauswahl, M-SHAKE/RATTLE; Review umgesetzt, 94/94 Tests grün. |

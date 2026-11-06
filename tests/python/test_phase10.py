@@ -265,7 +265,7 @@ def test_polarizability_grid_padding_and_unknown_type():
 LAM = 632.8  # nm
 N_PRISM = 1.515  # BK7
 EPS_W633 = 1.3317**2
-# ASSUMPTION: ε_Au(633 nm) = −11.6 + 1.2i (gängiger Tabellenwert, Größenordnung Johnson & Christy);
+# ASSUMPTION(OQ-25): ε_Au(633 nm) = −11.6 + 1.2i (gängiger Tabellenwert, Größenordnung Johnson & Christy);
 # für die Tests nur als typisches Metall, nicht als Materialreferenz.
 EPS_AU = -11.6 + 1.2j
 
@@ -331,6 +331,37 @@ def test_tmm_reference():
         lo, hi = res_s.intensity(np.array([zb - 1e-9, zb + 1e-9]))
         assert lo == pytest.approx(hi, rel=1e-6)
 
+    # (4b) p-Feld in der Halbebene 2 gegen den Fresnel-Transmissionskoeffizienten des E-Feldes
+    n2 = np.sqrt(EPS_W633)
+    for deg in (0.0, 30.0, 50.0):
+        th = np.deg2rad(deg)
+        c1 = np.cos(th)
+        c2 = np.sqrt(1 - (N_PRISM * np.sin(th) / n2) ** 2)
+        t_e = 2 * N_PRISM * c1 / (n2 * c1 + N_PRISM * c2)
+        res = tmm([N_PRISM**2, EPS_W633], [], LAM, th, "p")
+        assert res.intensity(np.array([0.0 + 1e-6]))[0] == pytest.approx(abs(t_e) ** 2, rel=1e-9)
+        # Einfallsmedium: stehende Welle aus einfallender und reflektierter E-Welle (s-Fall)
+        res_s = tmm([N_PRISM**2, EPS_W633], [], LAM, th, "s")
+        z = -37.0
+        kz0 = 2 * np.pi / LAM * N_PRISM * c1
+        ref = abs(np.exp(1j * kz0 * z) + res_s.r * np.exp(-1j * kz0 * z)) ** 2
+        assert res_s.intensity(np.array([z]))[0] == pytest.approx(ref, rel=1e-12)
+
+    # (4c) Stabilität bei dicken Metallschichten: |E|² direkt über dem Metall fällt wie
+    # exp(−2 Im k_z d); 500 nm → 1500 nm ändern es um exp(−2 Im k_z · 1000 nm) (rel. 1e-6).
+    th = np.deg2rad(72.0)
+    kx = k0 * N_PRISM * np.sin(th)
+    vals = {}
+    for d in (500.0, 1500.0):
+        res = tmm([N_PRISM**2, EPS_AU, EPS_W633], [d], LAM, th, "p")
+        vals[d] = res.intensity(np.array([d + 1.0]))[0]
+        assert np.isfinite(vals[d]) and res.R == pytest.approx(
+            abs(r_if(N_PRISM**2, EPS_AU, kx, "p")) ** 2, rel=1e-9
+        )
+    assert vals[1500.0] / vals[500.0] == pytest.approx(
+        np.exp(-2 * kz(EPS_AU, kx).imag * 1000.0), rel=1e-6
+    )
+
     # (5) SPR-Minimum
     degs = np.linspace(65.0, 80.0, 3001)
     r_curve = [tmm([N_PRISM**2, EPS_AU, EPS_W633], [50.0], LAM, np.deg2rad(a), "p").R for a in degs]
@@ -363,9 +394,8 @@ def test_tmm_solver_grid():
     plain = TmmSolver(LAM, 0.0, "s", 1.3317, [], intensity_w_m2=1e10)
     w0 = plain.solve(water, grid)
     np.testing.assert_allclose(w0, field_amplitude_sq(1e10, 1.3317), rtol=1e-12)
-    assert field_amplitude_sq(1e10, 1.0) == pytest.approx(
-        2e10 / (299792458.0 * 8.8541878128e-12) * 1e-18, rel=1e-15
-    )
+    # unabhängiger Wert: I = 1 W/m² in Vakuum ⇒ |E₀|² = 2 Z₀ I mit Z₀ = 376.730313668 Ω
+    assert field_amplitude_sq(1.0, 1.0) == pytest.approx(2 * 376.730313668 * 1e-18, rel=1e-9)
 
 
 # --- 10.3 biooptomd.coupling: Fixpunkt-Treiber -------------------------------------------------
@@ -422,6 +452,7 @@ def _driver(
     )  # fmt: skip
 
 
+@pytest.mark.slow
 def test_coupling_fixed_point():
     """Fixpunkt (ADR 0016): (1) Konvergenz in <= 10 Iterationen (β = 0.5; Δε < 0.1 über dem
     ε-Rauschen von einigen Prozent, Residuum ΔW < 2e-3 über dem Rauschboden ≈ 1e-3); die Schicht senkt
@@ -438,12 +469,21 @@ def test_coupling_fixed_point():
             assert drv.converged(), hist
         drv.tol = drv.tol_w = 0.0  # β-Vergleich: feste Zahl von Iterationen
         hist = drv.run(max_iter=15)
-        print(beta, [(round(h["d_eps"], 4), round(h["d_w"], 5)) for h in hist])
+        print(beta, [(h["d_eps"], round(h["d_w"], 5), round(h["eps_noise"], 4)) for h in hist])
         results[beta] = drv.w[:, 0, 0]
+        base = w0[:, 0, 0]
+    # Die Schicht senkt W in ihrem Inneren lokal um ≈ 8 % (p, E_z ∝ 1/ε): Selbstfeld-Warnung (OQ-24).
+    assert max(h["self_field"] for h in hist) > 0.05
     i_z = 4  # Knoten z = 1 nm
     assert results[0.5][i_z] < 0.99 * w0[i_z, 0, 0]
     np.testing.assert_allclose(results[0.3], results[1.0], rtol=5e-3)
     np.testing.assert_allclose(results[0.5], results[1.0], rtol=5e-3)
+    # trennschärfer: der Effekt der Schicht W − W₀ selbst stimmt überein
+    effect = results[1.0] - base
+    for beta in (0.3, 0.5):
+        rel = np.linalg.norm((results[beta] - base) - effect) / np.linalg.norm(effect)
+        print(f"β = {beta}: ‖ΔW_β − ΔW_1‖/‖ΔW_1‖ = {rel:.4f}")
+        assert rel < 0.1
 
     ctx_a, ctx_b = _layer(), _layer()
     drv = _driver(ctx_a, 0.0)
@@ -494,3 +534,13 @@ def test_coupling_resume(tmp_path):
     assert part.history == full.history
     np.testing.assert_array_equal(part.w, full.w)
     np.testing.assert_array_equal(part.ctx.positions(), full.ctx.positions())
+
+
+def test_coupling_self_field_warning():
+    """OQ-24 (d): Verändert die Schicht W stärker als ``self_field_warn``, warnt der Treiber einmal
+    (RuntimeWarning); der Verlauf enthält ``self_field``."""
+    drv = _driver(_layer(), 5e16)
+    drv.self_field_warn = 1e-3  # Schicht senkt W um einige Prozent
+    with pytest.warns(RuntimeWarning, match="OQ-24"):
+        drv.step()
+    assert drv.history[-1]["self_field"] > 1e-3
