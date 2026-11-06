@@ -26,6 +26,12 @@ Alle PRs #1–#6, #9–#14 am 2026-11-05 nach `main` gemergt (Merge-Commits, Rei
 - Phase 5 (PR #5): HMR, SHAKE/RATTLE auf H-Bindungen, N_dof. Abgenommen 2026-11-03; Nacharbeit nach
   Review siehe unten.
 
+## Phase 11 – Coarse-Grained: ADR 0017 (Proposed), Branch `phase-11/cg-adr`
+- Vorschlag: CG-Rahmen auf den vorhandenen Kerneln; Stufe 1 Antikörper als Cα-ENM/Gō
+  (Debye-Hückel, Wand, Bildladungen, Optik per Summenregel), neu nur kosinus-harmonische Winkel
+  und wählbare Paarform; Stufe 2 CG-Aptamere nach OQ-27; kein explizites MARTINI. Offen:
+  OQ-27/28/29. Phase-10-PRs #19–#21 gepusht (gestapelt auf #18).
+
 ## Phase 10.6 – Replica Exchange im Treiber: abgenommen 2026-11-06, Branch `phase-10/coupling-remd`
 - `SelfConsistentOptics(remd=..., exchange_steps=..., target_states=...)`: Zyklen mit Austausch,
   ⟨ε⟩ nur aus dem Zielzustand. Zielzustand 300 K: Breite 0.1695 nm = Theorie; Feld 0 bitgleich zu
@@ -331,8 +337,7 @@ ADR 0007 → **0009** (Mixed Precision), unsere OQ-08…11 → **OQ-11…14**.
 ## Nächster konkreter Schritt
 1. Hairpin-Lauf (OQ-15 b) auswerten, PR #15 aktualisieren, Phase 9.4 zur Abnahme; danach
    Schlussmessung 9.6 auf freier GPU (OQ-19).
-2. Phase 10 vollständig (10.0–10.6 abgenommen); Branches `phase-10/md-fem` → `hpfem-3d` → `coupling-remd`
-   lokal, Push/PR auf Anfrage. Nächste große Phase nach ROADMAP (Coarse-Grained) – Entscheidung Projektinhaber.
+2. ADR 0017 (Coarse-Grained) und OQ-27/28/29 durch den Projektinhaber; danach Phase 11.
 3. Nachholen: Kontrolllauf auf der RTX 6000 Ada; Nsight Compute (Counter-Freigabe).
 
 ## Sitzungslog

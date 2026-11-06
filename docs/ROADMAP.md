@@ -348,6 +348,17 @@ Abnahmetests (Vorschlag): siehe ADR 0016, Konsequenzen (`test_polarizability_gri
 `test_voxel_set_values`, `test_tmm_reference`, `test_coupling_fixed_point`, `test_coupling_scaling`,
 `test_hpfem_adapter_planar`, `test_coupling_resume`); vom Projektinhaber am 2026-11-06 bestätigt.
 
+### Phase 11 – Coarse-Grained-Modelle (ADR 0017, Proposed 2026-11-06)
+1. Kosinus-harmonische Winkel im `BondedForce`; Paarliste mit wählbarer Form (12-6, optional 12-10).
+2. Builder: Cα-ENM/Gō aus PDB (`builder.cg_from_pdb`), Domänen und native Kontakte, Ladungen je
+   Residuum, Optiktabellen je Perle (Summenregel der kalibrierten Atomwerte).
+3. Wand und Bildladungen für Perlen (λ unkalibriert, OQ-29).
+4. Beispiel IgG über Gold mit REMD, Durchsatz.
+5. (Stufe 1b, optional) gemischte Auflösung (OQ-28); (Stufe 2) CG-Aptamere nach OQ-27.
+
+Abnahmetests (Vorschlag): ADR 0017, Konsequenzen (`test_cg_forces_vs_openmm`,
+`test_enm_fluctuations_vs_anm`, `test_cg_nve`, `test_cosine_angle`, `test_cg_optics_sum_rule`).
+
 - Generalized Born OBC2 (ADR 0004)
 - Replica-Exchange-Moves (Temperatur-Austausch auf Host-Seite)
 - `ImageChargeForce` für Metalloberflächen
