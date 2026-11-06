@@ -53,7 +53,9 @@ def test_kinetic_mid_free_particles(core):
 def test_kinetic_mid_constraints(core):
     """Pfad mit Constraints (2k, HMR, 4 fs, Langevin): Tracker-Frames gleich kinetic_energy_mid() im
     jeweils beobachteten Schritt (Lauf in Stücken der Länge stride), endlich, verschieden von E_kin
-    am vollen Schritt; deterministisch (zweiter Lauf bitgleich)."""
+    am vollen Schritt; deterministisch (zweiter Lauf bitgleich). Ein Lauf am Stück (step(30))
+    liefert dieselben Frames wie der Lauf in Stücken (prüft die Auswahl über den Observer-Stride
+    statt über den letzten Schritt); NaN nach set_velocities."""
     spec, pos, box, tp = _system_2k()
     out = []
     for _ in range(2):
@@ -72,6 +74,14 @@ def test_kinetic_mid_constraints(core):
         assert ctx.status() == 0
         out.append(res["kinetic_mid"])
     np.testing.assert_array_equal(out[0], out[1])
+    ctx, _ = builder.build_context(spec, 2, box, 300.0, tp.IONIC, positions=pos, hmr=True,
+                                   h_mass=tp.H_MASS, constraints=True)  # fmt: skip
+    ctx.set_integrator(0.004, 1.0, seed=3)
+    tracker = ctx.add_energy_tracker(stride=10, capacity=10)
+    ctx.step(30)
+    np.testing.assert_array_equal(tracker.result()["kinetic_mid"], out[0])
+    ctx.set_velocities(np.zeros((2, spec.n_atoms, 3)))
+    assert np.all(np.isnan(ctx.kinetic_energy_mid()))
 
 
 @pytest.mark.gpu

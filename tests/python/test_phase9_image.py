@@ -335,8 +335,8 @@ def test_image_builder():
 @pytest.mark.slow
 def test_image_nve():
     """NVE 10 ps, Δt = 0.5 fs: Ketten (Debye-Hückel, 0.15 M, L = 4 nm < 2 r_c ⇒ Bildsumme) über einer
-    9-3-Wand (Gold) mit Bildladungen, Drift < 1e-4 kJ/mol/ps/Atom, Fluktuation < 1e-3·⟨E_kin⟩
-    (Kriterien wie test_gb_nve)."""
+    9-3-Wand (Gold) mit Bildladungen, Drift < 3e-5 kJ/mol/ps/Atom (Phase 9.7: nicht schlechter als
+    9.5 mit 1–2e-5; test_gb_nve erlaubt 1e-4), Fluktuation < 1e-3·⟨E_kin⟩."""
     from biooptomd import surface
 
     rng = np.random.default_rng(7)
@@ -359,11 +359,11 @@ def test_image_nve():
     t_ps = res["steps"] * 0.0005
     drift = np.array([np.polyfit(t_ps, total[r], 1)[0] for r in range(2)]) / n
     fluct = total.std(axis=1) / en[:, :, 0].mean(axis=1)
-    assert np.all(np.abs(drift) < 1e-4), f"Drift {drift}"
+    assert np.all(np.abs(drift) < 3e-5), f"Drift {drift}"
     assert np.all(fluct < 1e-3), f"Fluktuation {fluct}"
     assert np.all(en[:, :, _term(builder_core())] != 0.0), "Bildterm soll aktiv sein"
-    # H-Atome erreichen die Goldwand bis ζ < ζ_c (σ_iw(H) ≈ 0.19 nm): Clamping tritt auf, die
-    # Energie bleibt stetig (Drift oben eingeschlossen).
+    # H-Atome erreichen die Goldwand bis in den C¹-Übergang (ζ_raw < ζ_c + h; σ_iw(H) ≈ 0.19 nm),
+    # die Energie bleibt stetig (Drift oben eingeschlossen).
     assert plugin.clamp_count() > 0
     print(f"Drift {drift} kJ/mol/ps/Atom, Fluktuation {fluct}, Clamping {plugin.clamp_count()}")
     assert ctx.status() == 0

@@ -525,7 +525,8 @@ NB_MODULE(_core, m) {
           },
           "float64 (n_replicas,) [kJ/mol]: E_kin der Geschwindigkeiten nach dem O-Schritt "
           "(+RATTLE)\n"
-          "des letzten step(); NaN vor dem ersten Schritt. Bei großem dt unverzerrt, anders als\n"
+          "des letzten step(); NaN vor dem ersten Schritt und nach set_velocities/restore_state;\n"
+          "observe_now() ändert ihn nicht. Bei großem dt unverzerrt, anders als\n"
           "E_kin am vollen Schritt (OQ-14, PHYSICS_MODEL §1). T = 2 E / (N_dof k_B).")
       .def(
           "positions_precise",

@@ -62,7 +62,7 @@ Antwort des Metalls auf das Molekül. PHYSICS_MODEL §3 führt `ImageChargeForce
    mit ζ < r_c bei; die Tile-Vorauswahl nutzt zusätzlich die untere Schranke ζ_min,i + ζ_min,j aus den
    Tile-Hüllen (`tile_common.cuh`).
 
-6. **Schutz bei ζ → 0 (ADR 0008).** ζ wird auf ζ_c = 0.1 nm geclampt (Energie stetig, Kraft in z dann 0),
+6. **Schutz bei ζ → 0 (ADR 0008).** ζ wird auf ζ_c = 0.1 nm geclampt (bis Phase 9.6: Energie stetig, Kraft in z dann 0),
    jedes Clamping zählt ein Device-Zähler wie bei der Wand; ζ_c >= 0.02 nm wird erzwungen.
    *Präzisierung nach der Implementierung (vom Projektinhaber am 2026-11-06 bestätigt):* An Gold
    mit d_im = 0 erreichen H-Atome ζ < ζ_c regelmäßig (σ_iw(H) ≈ 0.19 nm); ζ_c ist dort ein

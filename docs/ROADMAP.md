@@ -237,9 +237,11 @@ Dokumentation, Verzeichnisstruktur, Agenten-Anweisungen, Build-Entwürfe.
 - `::test_image_gpu_vs_numpy`, `::test_image_lateral_culling` – Energie rel. < 1e-5, Kräfte < 1e-4 RMS, mehrere Replicas mit
   verschiedenem κ/ε_r, Minimum-Image- und Bildsummenpfad, f = 1 und f = −0.5.
 - `::test_image_far_atoms_zero` – Atome mit ζ > r_c erhalten exakt null Bildkraft (Vorauswahl).
-- `::test_image_clamp` – ζ < ζ_c: Energie stetig, Kraft in z null, Zähler zählt.
+- `::test_image_clamp` – ζ < ζ_c: Energie stetig, Kraft in z null, Zähler zählt (seit Phase 9.7:
+  ζ_raw ≤ ζ_c − h, C¹-Übergang darüber, siehe 9.7).
 - `::test_image_set_screening` – nach `set_screening` gleich einem frischen Kontext (REMD).
-- `::test_image_nve` (`slow`) – DH + Wand + Bilder, NVE-Drift < 1e-4 kJ/mol/ps/Atom wie test_gb_nve.
+- `::test_image_nve` (`slow`) – DH + Wand + Bilder, NVE-Drift < 1e-4 kJ/mol/ps/Atom wie test_gb_nve
+  (seit Phase 9.7 < 3e-5).
 - `::test_image_determinism` – zwei Läufe bitidentisch.
 - Messung (kein Kriterium): Kosten des Passes für ein Aptamer auf Gold relativ zu Debye-Hückel.
 

@@ -99,9 +99,12 @@ __global__ void __launch_bounds__(kWarpsPerBlock * 32)
   const bool valid_i = i_local < s.n_atoms;
   const bool valid_j = j_local < s.n_atoms;
   const float4 pi = s.d_pos[base + i_local];
+  const float zeta_raw_i = pi.z - plane.z_image;
   float dz_i;
-  const float zeta_i = smooth_zeta(pi.z - plane.z_image, plane.zeta_clamp, dz_i);
-  if (diagonal && valid_i && pi.w != 0.0f && dz_i < 1.0f) atomicAdd(clamp_counter, 1ull);
+  const float zeta_i = smooth_zeta(zeta_raw_i, plane.zeta_clamp, dz_i);
+  if (diagonal && valid_i && pi.w != 0.0f &&
+      zeta_raw_i < (1.0f + kZetaSmoothFraction) * plane.zeta_clamp)
+    atomicAdd(clamp_counter, 1ull);
   if (image_tiles_out_of_range<!kImages>(tile_bounds, r, s.n_pad / 32, tp, s.d_box[r], sw.r_c,
                                          plane))
     return;

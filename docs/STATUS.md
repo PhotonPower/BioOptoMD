@@ -26,10 +26,13 @@ Alle PRs #1–#6, #9–#14 am 2026-11-05 nach `main` gemergt (Merge-Commits, Rei
 - Phase 5 (PR #5): HMR, SHAKE/RATTLE auf H-Bindungen, N_dof. Abgenommen 2026-11-03; Nacharbeit nach
   Review siehe unten.
 
-## Phase 9.7 – Folgearbeiten OQ-14 / OQ-18 (d), in Arbeit (Branch `phase-9/followups`)
+## Phase 9.7 – Folgearbeiten OQ-14 / OQ-18 (d), implementiert, Abnahme offen (Branch `phase-9/followups`)
 - C¹-glattes ζ-Clamping in `ImageChargeForce` (h = ζ_c/2): Referenz `smooth_zeta`, neue Tests
   `test_image_smooth_clamp_reference` (Stetigkeit, Kraft = −dU/dz) und `test_image_smooth_clamp_gpu`;
-  alle 17 Tests aus 9.5 + neu grün; NVE-Drift 0.7–1.1·10⁻⁵ kJ/mol/ps/Atom (vorher 1–2·10⁻⁵).
+  alle 17 Tests aus 9.5 + neu grün; NVE-Drift 0.7–1.1·10⁻⁵ kJ/mol/ps/Atom (vorher 1–2·10⁻⁵),
+  Testgrenze von 1e-4 auf 3e-5 verschärft. NaN-Positionen werden nicht mehr auf ζ_c maskiert,
+  sondern pflanzen sich fort (vorher `fmaxf(NaN, ζ_c)` = ζ_c).
+- Volle Suite 161/161 grün (vor den Review-Fixes), danach Phase 2, 9.2 (REMD), 9.5 (Image), 9.7: 59/59.
 - Zweite Temperatur (OQ-14): E_kin nach dem O-Schritt (+ RATTLE), `ctx.kinetic_energy_mid()` und
   `kinetic_mid` im EnergyTracker. Die Reduktion läuft nur in beobachteten Schritten und im letzten
   Schritt von `step(n)`.
@@ -37,6 +40,10 @@ Alle PRs #1–#6, #9–#14 am 2026-11-05 nach `main` gemergt (Merge-Commits, Rei
     am vollen Schritt 268.5 / 292.3 / 298.2 K (Bias ∝ Δt²).
   - Das Kriterium „bei 1 fs stimmen beide überein“ war falsch und ist revidiert (ROADMAP 9.7).
   - `tests/python/test_phase9_temperature.py`: 3 Tests grün.
+  - Review (unabhängiger Agent): kein kritischer Befund. Umgesetzt: NaN nach `set_velocities` und
+    `restore_state`, Test „am Stück vs. in Stücken“ (Stride-Auswahl), NVE-Grenze 3e-5, Zähler über
+    ζ_raw statt dζ < 1, Doku. Nicht umgesetzt: Reduktion im letzten Schritt von `step(n)` lazy machen
+    (eine kleine Reduktion je `step()`-Aufruf, vernachlässigbar).
 
 ## Phase 9.6 – Tile-Paarliste (ADR 0014 inkl. Rev. 1 Accepted), implementiert; Abnahme später (OQ-19)
 - Vorab-Messung 1 × 20 k: räumliche Sortierung bringt nichts (Atomreihenfolge 13.3 % lebende

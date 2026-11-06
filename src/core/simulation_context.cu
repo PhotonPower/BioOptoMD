@@ -64,11 +64,6 @@ SimulationContext::SimulationContext(int n_replicas, int n_atoms, int device) : 
   temperature_.zero_async(stream_.get());
   image_.zero_async(stream_.get());
   status_.zero_async(stream_.get());
-  {
-    const std::vector<double> nan(n_replicas, std::numeric_limits<double>::quiet_NaN());
-    ekin_mid_.upload_async(nan.data(), stream_.get());
-    BOMD_CUDA_CHECK(cudaStreamSynchronize(stream_.get()));  // Host-Vektor lebt bis hier
-  }
 
   state_.n_replicas = n_replicas;
   state_.n_atoms = n_atoms;
@@ -85,6 +80,7 @@ SimulationContext::SimulationContext(int n_replicas, int n_atoms, int device) : 
   state_.d_image = image_.data();
   state_.d_status = status_.data();
   state_.d_ekin_mid = ekin_mid_.data();
+  invalidate_ekin_mid();
 
   synchronize();
 }
@@ -187,6 +183,14 @@ void SimulationContext::scatter_vel_w(const double* src) {
 void SimulationContext::set_velocities(const double* v_nm_ps) {
   scatter_vel_xyz(v_nm_ps);
   constraints_dirty_ = true;
+  invalidate_ekin_mid();
+}
+
+void SimulationContext::invalidate_ekin_mid() {
+  activate();
+  const std::vector<double> nan(ekin_mid_.size(), std::numeric_limits<double>::quiet_NaN());
+  ekin_mid_.upload_async(nan.data(), stream_.get());
+  synchronize();  // Host-Vektor lebt bis hier
 }
 
 void SimulationContext::set_constraints(ConstraintParams params) {
@@ -369,6 +373,7 @@ void SimulationContext::restore_dynamic_state(const DynamicState& state) {
   vel_.upload_async(state.vel.data(), stream_.get());
   image_.upload_async(state.image.data(), stream_.get());
   synchronize();
+  invalidate_ekin_mid();  // E_kin nach O gehört zur verworfenen Trajektorie
   step_ = state.step;
   time_ps_ = state.time_ps;
   previous_time_ps_ = state.previous_time_ps;
