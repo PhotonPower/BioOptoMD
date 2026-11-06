@@ -34,6 +34,13 @@ Alle PRs #1–#6, #9–#14 am 2026-11-05 nach `main` gemergt (Merge-Commits, Rei
   α′, v auf n_p ab; die GPU-Kraft ist die additive Summe (rel. 1e-5); das Verhältnis CM/additiv ist
   analytisch 1.638 bei n_p = 1.5 in Wasser und exakt 1 in Vakuum. OQ-22 (b): `optical_scale`
   multipliziert per Default mit ((n_w² + 2)/3)² (`local_field=False` für das additive Modell).
+- Phase 10.3 (Teil): `biooptomd.coupling` mit TMM-Referenz und Treiber `SelfConsistentOptics`. Tests:
+  TMM gegen Fresnel und Airy (rel. 1e-12), R + T = 1, evaneszenter Abfall, SPR-Minimum 72.24° gegen
+  Plasmonen-Dispersion 72.75° (OQ-25: Literaturwinkel nicht konsistent belegt); Fixpunkt konvergiert
+  in 5 Iterationen (β = 0.5), W-Profile für β = 0.3/0.5/1.0 innerhalb 0.5 %, Feld 0 bitgleich zur
+  ungekoppelten MD; ⟨z⟩-Verschiebung linear (Verhältnis 2.0000) und = F/k; Fortsetzen bitgleich.
+  Befund OQ-24 (Selbstfeld dichter Schichten bei p-Polarisation). Offen: `HpFemSolver` (hp-FEM ohne
+  gmsh: Einheitszellennetz selbst bauen), npz-Adapter, Beispiel 10.4.
 - Phase 10.1/10.2: `PolarizabilityGridObserver` (`ctx.add_polarizability_grid`) und
   `VoxelGridForce3D.set_values`. `test_phase10.py` (7 Tests) grün: Histogramme/Varianz/ε gegen NumPy
   (rel. 1e-6, periodisch und nicht, Gauß und Punkt), x/y-Summe = 1D-Profiler (rel. 1e-5),

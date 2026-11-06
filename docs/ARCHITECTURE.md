@@ -119,6 +119,17 @@ Ein DLPack-Export markiert die Kräfte als veraltet (`invalidate_forces`), weil 
 Setter (`set_positions`, `set_charges`, `set_masses`, …) nehmen nur echte Atome (`(n_replicas, n_atoms, …)`) und
 lassen Padding-Atome unverändert. Test-Hooks ohne Produktionsphysik liegen in `biooptomd._core.testing`.
 
+### 3.6 Kopplung MD ↔ Optik (Phase 10, ADR 0016)
+
+- `biooptomd.coupling`: `EpsGrid` (⟨ε⟩ je Zelle), `ForceGrid` (Knoten des Kraftgitters),
+  Protokoll `OpticalSolver.solve(eps, grid) -> W` [(V/nm)², Spitzenamplitude].
+- `tmm(eps, d, λ, θ, pol)`: 1D-Transfermatrix (s: E_y, p: H_y; Amplituden je Schicht) mit
+  Feldprofil `intensity(z)`; `TmmSolver`: Prisma | Substratschichten | Wasserspalt | lateral
+  gemitteltes ⟨ε⟩(z) | Wasser.
+- `SelfConsistentOptics`: legt `PolarizabilityGridObserver` und `VoxelGridForce3D` an, iteriert
+  MD-Segment → ⟨ε⟩ → Solver → gedämpftes W → `set_values`; Konvergenz über Δε (relativ zum Kontrast)
+  und das Residuum ΔW; Checkpoint je Iteration (`resume`).
+
 ## 4. Module
 
 | Verzeichnis | Inhalt | Phase |

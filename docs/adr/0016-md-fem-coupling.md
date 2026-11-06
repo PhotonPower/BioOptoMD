@@ -81,7 +81,9 @@ Randbedingungen:
    - Gleiche Shape, Herkunft und Abstände; neue Werte werden in das bestehende Array hochgeladen,
      stream-geordnet und ohne Neuinitialisierung.
    - `forces_valid` wird zurückgesetzt. Die Energie ist nur innerhalb eines Segments erhalten.
-4. **Solver als Python-Protokoll** `solve(eps_grid: EpsGrid) -> FieldGrid` (`biooptomd.coupling`):
+4. **Solver als Python-Protokoll** `solve(eps_grid: EpsGrid) -> FieldGrid` (`biooptomd.coupling`;
+   umgesetzt als `solve(eps: EpsGrid, grid: ForceGrid) -> W` (nz, ny, nx): das Kraftgitter wird
+   übergeben statt im Ergebnis zurückgegeben, damit der Treiber die Geometrie festlegt):
    - Eingang: ε auf dem Beobachtergitter mit Herkunft, Abständen und Wellenlänge.
    - Ausgang: W = |E₀|² (Spitzenamplitude) auf dem Kraftgitter; der Gradient wird in BioOptoMD
      berechnet (`values_from_potential`).

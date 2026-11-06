@@ -258,3 +258,239 @@ def test_polarizability_grid_padding_and_unknown_type():
     )  # fmt: skip
     np.testing.assert_allclose(obs2.result()["s_alpha_mean"][0], ref_a2, rtol=1e-6,
                                atol=1e-6 * ref_a2.max())  # fmt: skip
+
+
+# --- 10.3 biooptomd.coupling: TMM-Referenz -------------------------------------------------------
+
+LAM = 632.8  # nm
+N_PRISM = 1.515  # BK7
+EPS_W633 = 1.3317**2
+# ASSUMPTION: ε_Au(633 nm) = −11.6 + 1.2i (gängiger Tabellenwert, Größenordnung Johnson & Christy);
+# für die Tests nur als typisches Metall, nicht als Materialreferenz.
+EPS_AU = -11.6 + 1.2j
+
+
+def test_tmm_reference():
+    """TMM-Referenz (ADR 0016): (1) Fresnel-Koeffizienten einer Grenzfläche analytisch (rel. 1e-12),
+    s und p; (2) Drei-Schicht-Airy-Formel r = (r₁₂ + r₂₃ e^{2iβ})/(1 + r₁₂ r₂₃ e^{2iβ}) für
+    Prisma | Gold 50 nm | Wasser (rel. 1e-12, inkl. Resonanz); (3) ohne Absorption R + T = 1
+    (Vielschicht, beide Polarisationen, auch Totalreflexion); (4) Feld im Wasser klingt evaneszent
+    mit exp(−2 Im k_z Δz) ab, |E|² für s stetig an Grenzflächen; (5) SPR-Minimum (p) innerhalb 1° der
+    Dispersion des Oberflächenplasmons der dicken Schicht, Tiefe R < 0.05."""
+    from biooptomd.coupling import tmm
+
+    k0 = 2 * np.pi / LAM
+
+    def kz(e, kx):
+        v = np.sqrt(k0**2 * complex(e) - kx**2 + 0j)
+        return -v if v.imag < 0 or (v.imag == 0 and v.real < 0) else v
+
+    def r_if(e1, e2, kx, pol):
+        k1, k2 = kz(e1, kx), kz(e2, kx)
+        if pol == "s":
+            return (k1 - k2) / (k1 + k2)
+        return (e2 * k1 - e1 * k2) / (e2 * k1 + e1 * k2)
+
+    for pol in ("s", "p"):
+        for deg in (0.0, 20.0, 45.0, 70.0):
+            th = np.deg2rad(deg)
+            kx = k0 * N_PRISM * np.sin(th)
+            res = tmm([N_PRISM**2, EPS_W633], [], LAM, th, pol)
+            ref = r_if(N_PRISM**2, EPS_W633, kx, pol)
+            assert abs(res.r - ref) <= 1e-12 * max(abs(ref), 1e-3), (pol, deg)
+            assert res.R + res.T == pytest.approx(1.0, abs=1e-12) or deg == 70.0
+        for deg in np.linspace(40.0, 80.0, 41):
+            th = np.deg2rad(deg)
+            kx = k0 * N_PRISM * np.sin(th)
+            d = 50.0
+            beta = kz(EPS_AU, kx) * d
+            r12, r23 = r_if(N_PRISM**2, EPS_AU, kx, pol), r_if(EPS_AU, EPS_W633, kx, pol)
+            airy = (r12 + r23 * np.exp(2j * beta)) / (1 + r12 * r23 * np.exp(2j * beta))
+            res = tmm([N_PRISM**2, EPS_AU, EPS_W633], [d], LAM, th, pol)
+            assert abs(res.r - airy) <= 1e-12 * abs(airy), (pol, deg)
+
+    # (3) verlustfreie Vielschicht
+    eps = [N_PRISM**2, 2.1, 1.9, 2.4, 1.5, EPS_W633]
+    thick = [80.0, 35.0, 120.0, 10.0]
+    for pol in ("s", "p"):
+        for deg in (0.0, 30.0, 55.0, 75.0):
+            res = tmm(eps, thick, LAM, np.deg2rad(deg), pol)
+            assert res.R + res.T == pytest.approx(1.0, abs=1e-12), (pol, deg)
+            if deg == 75.0:  # Totalreflexion ins Wasser
+                assert res.R == pytest.approx(1.0, abs=1e-12)
+
+    # (4) evaneszentes Feld und Stetigkeit
+    th = np.deg2rad(72.0)
+    res = tmm([N_PRISM**2, EPS_AU, EPS_W633], [50.0], LAM, th, "p")
+    im_kz = kz(EPS_W633, k0 * N_PRISM * np.sin(th)).imag
+    z = np.array([55.0, 65.0])
+    i1, i2 = res.intensity(z)
+    assert i2 / i1 == pytest.approx(np.exp(-2 * im_kz * 10.0), rel=1e-10)
+    res_s = tmm(eps, thick, LAM, np.deg2rad(30.0), "s")
+    for zb in np.cumsum(thick):
+        lo, hi = res_s.intensity(np.array([zb - 1e-9, zb + 1e-9]))
+        assert lo == pytest.approx(hi, rel=1e-6)
+
+    # (5) SPR-Minimum
+    degs = np.linspace(65.0, 80.0, 3001)
+    r_curve = [tmm([N_PRISM**2, EPS_AU, EPS_W633], [50.0], LAM, np.deg2rad(a), "p").R for a in degs]
+    i_min = int(np.argmin(r_curve))
+    n_sp = np.sqrt(EPS_AU.real * EPS_W633 / (EPS_AU.real + EPS_W633))
+    theta_sp = np.rad2deg(np.arcsin(n_sp / N_PRISM))
+    print(
+        f"SPR-Minimum {degs[i_min]:.2f}°, R = {r_curve[i_min]:.4f}; SP-Dispersion {theta_sp:.2f}°"
+    )
+    assert abs(degs[i_min] - theta_sp) < 1.0
+    assert r_curve[i_min] < 0.05
+
+
+def test_tmm_solver_grid():
+    """``TmmSolver``: reines Wasser im Beobachtergitter entspricht dem Stapel ohne Gitterschichten;
+    W hängt nur von z ab, Einheiten über I = ½ n c ε₀ |E₀|² (bei 0° ohne Schichten und mit
+    n_incident = n_w ist W = |E₀|²)."""
+    from biooptomd.coupling import EpsGrid, ForceGrid, TmmSolver, field_amplitude_sq, tmm
+
+    grid = ForceGrid((5, 4, 9), (0.0, 0.0, 0.0), (1.0, 1.0, 0.5))
+    water = EpsGrid(np.full((6, 2, 2), EPS_W633), (0.0, 0.0, 0.5), (2.0, 2.0, 0.4), 1.3317)
+    solver = TmmSolver(LAM, 72.0, "p", N_PRISM, [(EPS_AU, 50.0)], intensity_w_m2=1e10)
+    w = solver.solve(water, grid)
+    assert w.shape == (9, 4, 5)
+    assert np.all(w == w[:, :1, :1])
+    res = tmm([N_PRISM**2, EPS_AU, EPS_W633], [50.0], LAM, np.deg2rad(72.0), "p")
+    ref = field_amplitude_sq(1e10, N_PRISM) * res.intensity(grid.nodes(2) + 50.0)
+    np.testing.assert_allclose(w[:, 0, 0], ref, rtol=1e-12)
+
+    plain = TmmSolver(LAM, 0.0, "s", 1.3317, [], intensity_w_m2=1e10)
+    w0 = plain.solve(water, grid)
+    np.testing.assert_allclose(w0, field_amplitude_sq(1e10, 1.3317), rtol=1e-12)
+    assert field_amplitude_sq(1e10, 1.0) == pytest.approx(
+        2e10 / (299792458.0 * 8.8541878128e-12) * 1e-18, rel=1e-15
+    )
+
+
+# --- 10.3 biooptomd.coupling: Fixpunkt-Treiber -------------------------------------------------
+# Testschicht: unabhängige Atome (64 je Replica, 4 Replicas), in z harmonisch bei z = 1 nm gehalten
+# (k = 100 kJ/mol/nm²), lateral frei (periodisch, Box 4 nm), über Gold 50 nm im Kretschmann-Aufbau
+# (p, 72.6°, nahe SPR). α′ = 1e-3 nm³, v = 0.01 nm³. Das ε-Gitter ist lateral eine Zelle (der
+# TMM-Solver nutzt nur das laterale Mittel), Δz = 0.1 nm. Intensitäten sind künstlich hoch, damit
+# die Kraft messbar ist (Größenordnung ADR 0016).
+
+C_ALPHA, C_VOL = np.array([1e-3]), np.array([0.01])
+C_FG = ((8, 8, 13), (0.0, 0.0, 0.0), (0.5, 0.5, 0.25))
+
+
+def _layer(n_rep=4, n=64, box=4.0, seed=1, k=100.0):
+    ctx = _ctx(n_rep, n, box=(box, box))
+    rng = np.random.default_rng(seed)
+    pos = np.empty((n_rep, n, 3), np.float32)
+    pos[..., :2] = rng.uniform(0, box, (n_rep, n, 2))
+    pos[..., 2] = 1.0 + 0.1 * rng.standard_normal((n_rep, n))
+    ctx.set_positions(pos)
+    ctx.set_types(np.zeros((n_rep, n, 2), np.int32))
+    ref = np.zeros((n_rep * n, 3), np.float32)
+    ref[:, 2] = 1.0
+    ctx.add_position_restraints(
+        np.repeat(np.arange(n_rep), n).astype(np.int32), np.tile(np.arange(n), n_rep).astype(np.int32),
+        ref, np.full(n_rep * n, k, np.float32), dims=(False, False, True),
+    )  # fmt: skip
+    ctx.set_temperatures(np.full(n_rep, 300.0, np.float32))
+    ctx.set_integrator(0.002, 5.0, 7)
+    return ctx
+
+
+def _driver(
+    ctx,
+    intensity,
+    beta=0.5,
+    tol=0.1,
+    checkpoint_dir=None,
+    eps_dz=0.1,
+    eps_nz=20,
+    pol="p",
+    tol_w=None,
+):
+    from biooptomd.coupling import ForceGrid, SelfConsistentOptics, TmmSolver
+    from biooptomd.voxel import optical_scale
+
+    solver = TmmSolver(LAM, 72.6, pol, N_PRISM, [(EPS_AU, 50.0)], intensity_w_m2=intensity)
+    grid = ForceGrid(*C_FG, periodic_xy=True)
+    scale = optical_scale(C_ALPHA, C_VOL, 1.3317, amplitude="peak")
+    return SelfConsistentOptics(
+        ctx, solver, grid, scale, eps_shape=(1, 1, eps_nz), eps_origin=(0.0, 0.0, 0.0),
+        eps_spacing=(4.0, 4.0, eps_dz), alpha=C_ALPHA, volume=C_VOL, n_water=1.3317, n_equil=1000,
+        n_sample=4000, stride=20, beta=beta, tol=tol, tol_w=tol_w, checkpoint_dir=checkpoint_dir,
+    )  # fmt: skip
+
+
+def test_coupling_fixed_point():
+    """Fixpunkt (ADR 0016): (1) Konvergenz in <= 10 Iterationen (β = 0.5; Δε < 0.1 über dem
+    ε-Rauschen von einigen Prozent, Residuum ΔW < 2e-3 über dem Rauschboden ≈ 1e-3); die Schicht senkt
+    W bei z = 1 nm messbar (> 1 %). (2) Das Ergebnis hängt nicht von β ab: Nach je 15 Iterationen
+    (β = 0.3: Kontraktion 0.7¹⁵ ≈ 5e-3) stimmen die W-Profile für β = 0.3, 0.5 und 1.0 innerhalb von
+    0.5 % überein. (3) Feldstärke 0 ist bitgleich zur ungekoppelten MD (kein Gitter, kein Observer)."""
+    intensity = 5e16
+    results = {}
+    for beta in (0.5, 0.3, 1.0):
+        drv = _driver(_layer(), intensity, beta=beta, tol_w=2e-3)
+        w0 = drv.w.copy()
+        if beta == 0.5:
+            hist = drv.run(max_iter=10)
+            assert drv.converged(), hist
+        drv.tol = drv.tol_w = 0.0  # β-Vergleich: feste Zahl von Iterationen
+        hist = drv.run(max_iter=15)
+        print(beta, [(round(h["d_eps"], 4), round(h["d_w"], 5)) for h in hist])
+        results[beta] = drv.w[:, 0, 0]
+    i_z = 4  # Knoten z = 1 nm
+    assert results[0.5][i_z] < 0.99 * w0[i_z, 0, 0]
+    np.testing.assert_allclose(results[0.3], results[1.0], rtol=5e-3)
+    np.testing.assert_allclose(results[0.5], results[1.0], rtol=5e-3)
+
+    ctx_a, ctx_b = _layer(), _layer()
+    drv = _driver(ctx_a, 0.0)
+    drv.run(max_iter=2)
+    assert np.all(drv.w == 0.0)
+    ctx_b.step(2 * (1000 + 4000))
+    np.testing.assert_array_equal(ctx_a.positions(), ctx_b.positions())
+    np.testing.assert_array_equal(ctx_a.energies(), ctx_b.energies())
+
+
+def test_coupling_scaling():
+    """Im schwachen Feld skaliert die Verschiebung von ⟨z⟩ der Testschicht linear mit der Intensität
+    (s-Polarisation, evaneszentes Feld ohne Plasmon: die Schicht ändert W kaum, die Kraft ist der
+    äußere Gradient): Δz(2 I)/Δz(I) = 2 ± 0.05, und Δz stimmt mit F/k = −s W′(z₀)/k überein
+    (10 %). ⟨z⟩ aus dem ε-Beobachter (S_α-gewichtete Zellmitten) der letzten Iteration; gleiche
+    Zufallszahlen in allen Läufen, daher sind die Differenzen rauscharm."""
+    from biooptomd.voxel import optical_scale
+
+    shifts, w_prime = {}, {}
+    for intensity in (0.0, 1e20, 2e20):
+        drv = _driver(_layer(), intensity, beta=1.0, eps_dz=0.05, eps_nz=40, pol="s")
+        drv.run(max_iter=3)
+        res = drv.observer.result()
+        prof = res["s_alpha_mean"].sum(axis=(2, 3)).mean(axis=0)
+        shifts[intensity] = float((prof * res["z"]).sum() / prof.sum())
+        w_prime[intensity] = (drv.w[5, 0, 0] - drv.w[3, 0, 0]) / 0.5  # dW/dz bei z = 1 nm
+    d1 = shifts[1e20] - shifts[0.0]
+    d2 = shifts[2e20] - shifts[0.0]
+    s_scale = float(optical_scale(C_ALPHA, C_VOL, 1.3317, amplitude="peak")[0])
+    expected = -s_scale * w_prime[1e20] / 100.0
+    print(f"⟨z⟩-Verschiebung {d1:.3e} / {d2:.3e} nm, Verhältnis {d2 / d1:.4f}, F/k {expected:.3e}")
+    assert d2 / d1 == pytest.approx(2.0, abs=0.05)
+    assert d1 == pytest.approx(expected, rel=0.1)
+
+
+def test_coupling_resume(tmp_path):
+    """Abbruch nach Iteration k und Fortsetzen aus dem Checkpoint ergibt bitgleich denselben Verlauf,
+    dasselbe W und dieselben Positionen wie ein durchgehender Lauf (ADR 0016 Punkt 5)."""
+    full = _driver(_layer(), 5e16, checkpoint_dir=tmp_path / "full")
+    for _ in range(4):
+        full.step()
+    part = _driver(_layer(), 5e16, checkpoint_dir=tmp_path / "full")
+    part.resume(2)  # nach zwei abgeschlossenen Iterationen
+    assert part.iteration == 2
+    part.checkpoint_dir = tmp_path / "part"
+    for _ in range(2):
+        part.step()
+    assert part.history == full.history
+    np.testing.assert_array_equal(part.w, full.w)
+    np.testing.assert_array_equal(part.ctx.positions(), full.ctx.positions())

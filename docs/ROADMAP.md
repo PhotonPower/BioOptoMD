@@ -299,7 +299,9 @@ Abnahmetests (revidierte Fassung vom Projektinhaber bestätigt 2026-11-06):
 2. `VoxelGridForce3D::set_values` (Laufzeit-Update). *Umgesetzt 2026-11-06* (`test_voxel_set_values`).
 3. `biooptomd.coupling`: Solver-Protokoll, TMM-Referenzsolver (1D), hp-FEM-Adapter `HpFemSolver`
    (im selben Prozess; npz-Datei-Adapter als Rückfall), Treiber `SelfConsistentOptics` (Picard mit
-   Dämpfung β, Checkpoint je Iteration).
+   Dämpfung β, Checkpoint je Iteration). *Umgesetzt 2026-11-06:* Protokoll, `tmm`/`TmmSolver`,
+   `SelfConsistentOptics` (`test_tmm_reference`, `test_tmm_solver_grid`, `test_coupling_fixed_point`,
+   `test_coupling_scaling`, `test_coupling_resume`). Offen: `HpFemSolver`, npz-Adapter.
 4. Beispiel: Aptamerschicht über Gold im Kretschmann-Aufbau mit dem TMM-Adapter.
 
 Abnahmetests (Vorschlag): siehe ADR 0016, Konsequenzen (`test_polarizability_grid_vs_numpy`,
