@@ -77,6 +77,21 @@ Rauschen etwa ±4 %: „Liste immer“ und „Auto“ sind bei 20 k derselbe Cod
    62 %, SHAKE + RATTLE 27 %). Das Kriterium 1.25× ist mit der Liste allein voraussichtlich nicht
    erreichbar; die Constraint-Löser (FP64) sind der nächste Hebel.
 
+**Endmessung bei freier GPU (2026-11-06, RTX 3090):** Release-Wheels der Stände vor 9.6
+(`1b42287`) und nach 9.6 inkl. Constraint-Verbesserungen (`b666fdc`), `benchmarks/throughput.py`
+(nur BioOptoMD, 2000 Schritte nach 200 Aufwärmschritten), 5 Runden abwechselnd, ein Prozess je
+Messung. Median der Verhältnisse je Runde (Spanne):
+
+| Fall | vorher [ns/Tag] | nachher [ns/Tag] | Faktor |
+|---|---|---|---|
+| 1 × 20 k | 641 | 719 | **1.12×** (1.115–1.135) |
+| 32 × 2 k | 13 663 | 13 860 | 1.016× (1.013–1.018) |
+| 128 × 1 k | 41 112 | 41 102 | 1.000× (0.993–1.001) |
+
+Die Messung bei geteilter GPU (1.14–1.18×) war zu optimistisch. Kriterium 1.25× nicht erreicht;
+32 × 2 k und 128 × 1 k nicht langsamer (Toleranz 2 % eingehalten). Projektinhaber 2026-11-06:
+Kriterium auf ≥ 1.10× gesenkt, Phase 9.6 abgenommen (OQ-19).
+
 ## Alternativen
 - **Cell-List mit räumlicher Sortierung (OpenMM-artig, Hilbert-/Morton-Ordnung):** verschlechtert hier
   die Tile-Kompaktheit; braucht Permutationen, Exclusion-Prüfung über Atompaare statt Tile-Masken und
