@@ -50,7 +50,7 @@ verschlechtert Punkt 1.
 8. ~~Die Strategie ersetzt den bisherigen Minimum-Image-Pfad vollständig.~~ Siehe Revision 1:
    Auswahl `tile_list = "auto" | "on" | "off"`, Default `"auto"`.
 
-## Revision 1 (2026-11-06, nach der Implementierung; Bestätigung durch den Projektinhaber offen)
+## Revision 1 (2026-11-06, nach der Implementierung; vom Projektinhaber am 2026-11-06 bestätigt)
 Messung bei geteilter GPU (Produktionslauf parallel, nur Verhältnisse; Endmessung bei freier GPU).
 Rauschen etwa ±4 %: „Liste immer“ und „Auto“ sind bei 20 k derselbe Code (1.18× vs. 1.14×), bei
 32 × 2 k misst „Auto“ den alten Code gegen sich selbst (1.01×). Die 0.97× für „Liste immer“ bei
