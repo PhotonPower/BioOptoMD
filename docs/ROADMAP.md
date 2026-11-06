@@ -319,26 +319,26 @@ Abnahmetests (revidierte Fassung vom Projektinhaber bestätigt 2026-11-06):
    (gegen TMM p 1.3e-4, s 1.9e-6; Schichteffekt W − W_Wasser 6.6e-4 bzw. 1.5e-3),
    `test_hpfem3d_vs_grating` (slow, Grad 3: x-Struktur gegen 2.5D 3.8e-3; y-Struktur mit s bei 0°
    gegen x-Struktur mit p im 2.5D-Adapter 7.2e-3; Verschiebung in y; Zeilenkontrast 15 %).
-   Aufwand (Box 6 × 6 nm, Bereich 8 nm, Kretschmann p, hp-FEM-0.4.0-Wheel einfädig, SparseLU; Zeiten
-   mit parallelem MD-Hintergrundlauf, einzelne Messung inkl. Python-Zellschleife; Unbekannte vor der
-   statischen Kondensation, bei Grad 3 faktorisiert der Löser ≈ 15 % weniger; Speicher der
-   Faktoren nach `hpfem.estimate_memory`, ±35 %):
+   Aufwand je Lösung (Box 6 × 6 nm, Bereich 8 nm, Kretschmann p, RTX 3090 / 24 Kerne, paralleler
+   MD-Hintergrundlauf, Einzelmessung inkl. Python-Zellschleife; Unbekannte vor der statischen
+   Kondensation). Release-Wheel 0.4.0: einfädig, nur SparseLU. Eigener Build (OQ-26): OpenMP
+   16 Threads, MUMPS 5.9 (METIS), cuDSS 0.8 (CUDA 12.9). Speicher: Spitzen-Arbeitsspeicher des
+   Prozesses (eigener Build); `estimate_memory` (SparseLU) überschätzt ihn deutlich.
 
-   | ε-Zelle lateral × Δz | Grad (außen/Bereich) | Unbekannte | Zeit je Lösung | Speicher |
-   |---|---|---|---|---|
-   | 2.0 nm × 0.5 nm | 2 | 42 522 | 11.5 s | 2.8 GB |
-   | 2.0 nm × 0.25 nm | 2 | 48 986 | 7.8 s | 3.5 GB |
-   | 2.0 nm × 0.5 nm | 3 | 118 647 | 44 s | 21 GB |
-   | 2.0 nm × 0.5 nm | 3 / 1 | 101 737 | 59 s | 17 GB |
-   | 1.0 nm × 0.5 nm | 2 | 156 834 | 328 s | 23 GB |
-   | 1.0 nm × 0.5 nm | 3 | 447 147 | 1433 s | ≈ 179 GB |
-   | 0.5 nm × 0.5 nm | 2 | 601 458 | – | ≈ 207 GB |
+   | ε-Zelle lateral × Δz | Grad | Unbekannte | Wheel, SparseLU | Build, SparseLU | Build, MUMPS | Build, cuDSS |
+   |---|---|---|---|---|---|---|
+   | 2.0 nm × 0.5 nm | 2 | 42 522 | 11.5 s | 2.9 s / 0.6 GiB | 2.7 s / 0.4 GiB | 2.2 s / 0.5 GiB |
+   | 1.0 nm × 0.5 nm | 2 | 156 834 | 328 s | 273 s / 9.8 GiB | 24 s / 2.3 GiB | 9.2 s / 1.0 GiB |
+   | 1.0 nm × 0.5 nm | 3 | 447 147 | 1433 s | – | 125 s / 10.2 GiB | 61 s / 4.5 GiB |
+   | 0.5 nm × 0.5 nm | 2 | 601 458 | – | – | 185 s / 16.0 GiB | 78 s / 3.8 GiB |
+
+   Weitere Messungen mit dem Wheel: 2.0 nm × 0.25 nm Grad 2 7.8 s; 2.0 nm × 0.5 nm Grad 3 44 s,
+   Grad 3 / Bereich 1 59 s. Alle Backends liefern dasselbe W (rel. ≈ 1e-6).
 
    Genauigkeit über dem Grad: planar gegen TMM (p) Grad 3 5e-5, Grad 2 1.3e-4, Grad 1 im Bereich
    1.5e-3 → Default Grad 2; lateral strukturiert an ε-Kanten Grad 2 ≈ 1 %, Grad 3 ≈ 0.5 % (Hotspots:
-   Grad 3). Grenze ist vor allem der Speicher der SparseLU-Faktoren (Auffüllung); ein Build mit
-   OpenMP und MUMPS (METIS-Sortierung) bzw. cuDSS soll das verbessern (OQ-26). Die PML (600 nm je
-   Seite, ≈ 60 % der z-Zeilen) ist der einfachste weitere Hebel.
+   Grad 3). Empfehlung: `backend="cudss"` (bzw. "auto", wählt ab 10 000 Unbekannten cuDSS), laterale
+   ε-Zellen bis 0.5 nm; die PML (600 nm je Seite, ≈ 60 % der z-Zeilen) ist der nächste Hebel.
 
 Abnahmetests (Vorschlag): siehe ADR 0016, Konsequenzen (`test_polarizability_grid_vs_numpy`,
 `test_voxel_set_values`, `test_tmm_reference`, `test_coupling_fixed_point`, `test_coupling_scaling`,

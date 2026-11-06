@@ -53,8 +53,27 @@ Windows (ohne Conda; VS Build Tools 2022, CUDA Toolkit 12.x):
 ```bat
 python -m venv .venv
 .venv\Scripts\pip install numpy scipy pytest ruff nanobind scikit-build-core ninja cupy-cuda12x
-toolsuild_windows.bat
+tools\build_windows.bat
 .venv\Scripts\python -m pytest -m "not slow"
+```
+
+Optional für die optische Kopplung mit hp-FEM (Phase 10, `biooptomd.coupling.HpFemGratingSolver`,
+`HpFemSolver3D`): hp-FEM v0.4.0 (https://github.com/PhotonPower/hp-FEM) mit OpenMP, MUMPS und dem
+cuDSS-Lader selbst bauen (MSYS2 UCRT64 mit `gcc`, `cmake`, `ninja`, `mumps`, `metis`; kurzes
+Build-Verzeichnis wegen der Windows-Pfadgrenze), mit `delvewheel` die MSYS2-DLLs einpacken und
+installieren; die GPU-Bibliothek separat mit `tools\build_hpfem_gpu.bat` (Git Bash):
+
+```bash
+git clone --depth 1 --branch v0.4.0 https://github.com/PhotonPower/hp-FEM hpfem_src
+PATH="/c/msys64/ucrt64/bin:$PATH" CC=gcc CXX=g++ CMAKE_GENERATOR=Ninja \
+  .venv/Scripts/python -m pip wheel hpfem_src -w dist --no-deps \
+  --config-settings=cmake.define.HPFEM_ENABLE_MUMPS=ON --config-settings=cmake.define.HPFEM_ENABLE_CUDA=ON \
+  --config-settings=build-dir=C:/Users/<name>/hpb
+.venv/Scripts/python -m pip install delvewheel
+.venv/Scripts/python -m delvewheel repair --add-path C:/msys64/ucrt64/bin -w dist/repaired dist/hpfem-*.whl
+.venv/Scripts/python -m pip install --no-deps dist/repaired/hpfem-*.whl
+cmd //c "tools\build_hpfem_gpu.bat hpfem_src C:\Users\<name>\hpb\gpu"
+export HPFEM_GPU_DLL='C:\Users\<name>\hpb\gpu\bin\hpfem_gpu.dll'   # und cuDSS bin\12 auf PATH
 ```
 
 ## Lizenz

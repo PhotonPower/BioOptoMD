@@ -706,7 +706,9 @@ class HpFemSolver3D:
     ``intensity_w_m2`` [W/m²] im Einfallsmedium, ``z_surface`` [nm]; Netz: ``h_far`` [nm] in Prisma und
     Wasser, ``h_layer`` [nm] in den Substratschichten, ``pml_nm`` [nm] (Default 1.25 λ/min(n), dort
     Zellhöhe ``h_far``/2; bei Speicherdruck der einfachste Hebel), ``water_nm`` und ``prism_nm`` [nm]
-    Abstand zur PML.
+    Abstand zur PML. ``backend``: Direktlöser von hp-FEM ('auto', 'sparse_lu', 'mumps', 'cudss';
+    MUMPS und cuDSS nur in einem hp-FEM-Build mit diesen Backends, OQ-26), ``threads``: OpenMP-Threads
+    von hp-FEM (None: unverändert).
 
     Genauigkeit (ROADMAP 10.5): planar ist Grad 2 ausreichend (gegen TMM 1e-4); bei lateral
     strukturiertem ε liegt Grad 2 an Knoten nahe ε-Kanten bei ≈ 1 %, Grad 3 bei ≈ 0.5 % – für
@@ -735,6 +737,8 @@ class HpFemSolver3D:
     pml_nm: float | None = None
     water_nm: float = 400.0
     prism_nm: float = 300.0
+    backend: str = "auto"
+    threads: int | None = None
     last_problem: object = field(default=None, repr=False)
     last_unknowns: int = 0
 
@@ -744,6 +748,8 @@ class HpFemSolver3D:
         nm = 1e-9
         if self.pol not in ("s", "p"):
             raise ValueError("HpFemSolver3D: pol 's' oder 'p'")
+        if self.backend.lower() not in ("auto", "sparse_lu", "mumps", "cudss"):
+            raise ValueError("HpFemSolver3D: backend 'auto', 'sparse_lu', 'mumps' oder 'cudss'")
         for o in (self.order, self.order_region):
             if o is not None and not 1 <= int(o) <= 4:
                 raise ValueError("HpFemSolver3D: order, order_region in 1 … 4")
@@ -846,6 +852,9 @@ class HpFemSolver3D:
             ),
             hpfem.PeriodicPair3D(bt.Y_MIN, bt.Y_MAX, np.array([0.0, ly * nm, 0.0]), 1.0 + 0j),
         ]
+        setup.solver = getattr(hpfem.DirectSolverBackend, self.backend.upper())
+        if self.threads is not None:
+            hpfem.set_num_threads(int(self.threads))
         dofs = hpfem.NedelecDofMap3D(mesh, [int(o) for o in orders])
         problem = hpfem.Scattering3D(dofs, setup)
         solution = problem.solve()
