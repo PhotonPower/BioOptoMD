@@ -746,12 +746,14 @@ def _igg_example():
 
 def test_igg_example():
     """Beispiel 11.4 (examples/igg_on_gold): CG-IgG aus 1IGT – 1316 Perlen, 4 Ketten, Nettoladung 0
-    (His neutral), 17 Disulfide wie SSBOND (darunter 3 zwischen den schweren Ketten im Gelenk und 2
+    (His neutral), 17 Disulfide wie SSBOND in RCSB 1IGT (darunter 3 zwischen den schweren Ketten im Gelenk und 2
     zwischen leichter und schwerer Kette); 7 Domänen, das Gelenk ohne Domäne (2 × 19 Perlen) ist
     in Fab 1, Fab 2 und Fc nicht enthalten, die Gruppen sind disjunkt und decken alle übrigen
     Perlen ab. Kontext: Startorientierungen als echte Drehungen, unterste Perle 2 nm über Gold;
     Decke ½ k (z − h)² als Gitterpotential: Energie = lineare Interpolation der Knotenwerte
-    (rel. 1e-5; gegen die analytische Parabel Fehler ≤ k Δz²/8 je Perle); REMD-Lauf über 10 ps
+    (rel. 1e-5; gegen die analytische Parabel Fehler ≤ k Δz²/8 je Perle), Kraft = −k (z − h)₊ als
+    Differenz zu einem Kontext ohne Decke (das Plugin interpoliert ∇V linear, für die lineare
+    Kraft exakt; Toleranz 1e-6 · max |F| aus der FP32-Interpolation); REMD-Lauf über 10 ps
     ohne Statusbits; Messgrößen endlich; Orientierungsklassen nach der Definition im Skript."""
     from biooptomd import _core as core
 
@@ -792,6 +794,10 @@ def test_igg_example():
     pos[0, :, 2] += ex.CEILING_NM + 0.5 - pos[0, :, 2].max()
     ctx.set_positions(pos.astype(np.float32))
     ctx.compute_forces()
+    bare, _, _ = ex.build(n_ladders=1, seed=3, model=m, ceiling=False)
+    bare.set_positions(pos.astype(np.float32))
+    bare.compute_forces()
+    df = ctx.forces()[:, :n, :3].astype(np.float64) - bare.forces()[:, :n, :3]
     z = ctx.positions_precise()[0, :n, 2].astype(np.float64)
     above = np.clip(z - ex.CEILING_NM, 0.0, None)
     col = 1 + list(core.ENERGY_TERMS).index("external")
@@ -803,6 +809,11 @@ def test_igg_example():
     assert n_above > 3
     assert ctx.energies()[0, col] == pytest.approx(e_ref, rel=1e-5)
     assert 0.0 <= e_ref - e_parab <= n_above * ex.K_CEILING * spacing[2] ** 2 / 8 + 1e-9
+    f_ref = np.zeros((n, 3))
+    f_ref[:, 2] = -ex.K_CEILING * above
+    tol = 1e-6 * np.abs(ctx.forces()[0, :n, :3]).max()
+    np.testing.assert_allclose(df[0], f_ref, rtol=0, atol=tol)
+    assert np.all(df[1:] == 0.0)
     assert np.all(ctx.energies()[1:, col] == 0.0)
 
     remd.run(10, ex.EXCHANGE_STEPS)  # 10 ps
@@ -814,3 +825,52 @@ def test_igg_example():
     cases = np.array([[0, 0, 0], [0, 0, on], [on, 0, 0], [on, on, 0], [0, on, on], [on, on, on],
                       [on - 1, 0, on]])  # fmt: skip
     assert ex.classify(cases).tolist() == [0, 1, 2, 2, 3, 4, 1]
+
+
+def test_igg_example_analyse():
+    """``analyse`` des Beispiels 11.4 an synthetischen Zeitreihen (1 Leiter × 8 Zustände, 6 Frames):
+    300-K-Zustand je Frame über ``state == 0`` (wandert zwischen den Slots), zweite Hälfte;
+    Klassenanteile, ⟨cos⟩ nur über adsorbierte Frames, erste Adsorption (Klasse > 0, irgendein Slot)
+    und Desorptionsereignisse je Walker (Slot)."""
+    ex = _igg_example()
+    on = ex.GROUP_MIN_CONTACTS
+    n_frames, m = 6, 8
+    contacts = np.zeros((n_frames, m, 3), np.int64)
+    contacts[2:, 1] = [on, on, on]  # Slot 1 ab Frame 2 flach
+    contacts[3, 4, 2] = on  # Slot 4 nur in Frame 3 „Fc unten“ ⇒ eine Desorption
+    state = np.tile(np.arange(m), (n_frames, 1))
+    state[3:, [0, 1]] = state[3:, [1, 0]]  # ab Frame 3 liegt der 300-K-Zustand in Slot 1
+    height = np.arange(n_frames * m, dtype=float).reshape(n_frames, m)
+    cosines = np.full((n_frames, m, 3), 0.5)
+    cosines[:, 1] = -0.25
+    out = ex.analyse(height, contacts, cosines, state, m)["by_ladder"][0]
+    # zweite Hälfte = Frames 3–5, 300 K jeweils in Slot 1 (flach)
+    assert out["adsorbed_300K"] == 1.0
+    assert out["class_fractions_300K"] == [0.0, 0.0, 0.0, 0.0, 1.0]
+    assert out["height_300K_mean_nm"] == pytest.approx(height[3:, 1].mean())
+    assert out["cos_axis_300K_mean_adsorbed"] == [-0.25] * 3
+    assert out["first_adsorption_ns"] == pytest.approx(3 * ex.frame_ns())
+    assert out["desorption_events_by_walker"] == [0, 0, 0, 0, 1, 0, 0, 0]
+
+
+@pytest.mark.slow
+def test_igg_example_resume(tmp_path, monkeypatch):
+    """Fortsetzen des Beispiels 11.4 ist bitgleich: ``main`` mit kurzen Frames (2 Austauschzyklen
+    zu 50 Schritten, Checkpoint je Frame, 1 Leiter): 4 Frames am Stück gegen 2 Frames + Fortsetzung
+    auf 4 Frames; series.npz in allen Größen identisch, summary.json geschrieben."""
+    ex = _igg_example()
+    monkeypatch.setattr(ex, "FRAME_CYCLES", 2)
+    monkeypatch.setattr(ex, "CHUNK_FRAMES", 1)
+    ns = lambda k: k * ex.frame_ns()
+    args = ["--ladders", "1", "--seed", "5", "--out"]
+    ex.main(["--ns", str(ns(4)), *args, str(tmp_path / "full")])
+    ex.main(["--ns", str(ns(2)), *args, str(tmp_path / "part")])
+    ex.main(["--ns", str(ns(4)), *args, str(tmp_path / "part")])
+    with (
+        np.load(tmp_path / "full" / "series.npz") as a,
+        np.load(tmp_path / "part" / "series.npz") as b,
+    ):
+        assert a["height"].shape == (4, 8)
+        for key in ("height", "contacts", "cosines", "state", "time_ns"):
+            np.testing.assert_array_equal(a[key], b[key], err_msg=key)
+    assert (tmp_path / "part" / "summary.json").exists()

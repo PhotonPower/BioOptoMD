@@ -362,7 +362,8 @@ Abnahmetests (Vorschlag): siehe ADR 0016, Konsequenzen (`test_polarizability_gri
    `test_enm_fluctuations_vs_anm` (Ubiquitin-Kern 1–72, 30 K), `test_cg_nve` (10/20 fs, Drift über
    1 ns bestimmt), `test_cg_optics_sum_rule` (Summenregel + n(z))).
 4. Beispiel IgG über Gold mit REMD, Durchsatz. *In Arbeit 2026-11-06* (`examples/igg_on_gold`,
-   `test_igg_example`; Durchsatz 4.6 µs/Tag je Replica bei 32 Replicas, Lauf 4 × 8 × 2 µs).
+   `test_igg_example`, `test_igg_example_analyse`, `test_igg_example_resume`; Durchsatz 9.7 µs/Tag
+   je Replica bei 8, 4.6 µs/Tag bei 32 Replicas; Lauf 4 × 8 × 2 µs; Decke/Reibung OQ-31).
 5. (Stufe 1b, optional) gemischte Auflösung (OQ-28); (Stufe 2) CG-Aptamere nach OQ-27.
 
 Abnahmetests (Vorschlag): ADR 0017, Konsequenzen (`test_cg_forces_vs_openmm`,

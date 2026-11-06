@@ -65,8 +65,14 @@ Alle PRs #1–#6, #9–#14 am 2026-11-05 nach `main` gemergt (Merge-Commits, Rei
   Domäne, 17 Disulfide) über Gold mit λ je Residuum, Bildladungen, Decke bei 30 nm (halbharmonisch
   über `add_voxel_grid`), 4 REMD-Leitern × 8 T (300–370 K), Δt = 20 fs, fortsetzbar (bitgleich
   geprüft). Durchsatz 9.7 µs/Tag je Replica (8 Replicas) bzw. 4.6 µs/Tag (32 Replicas);
-  Austauschakzeptanz ≈ 0.3. `test_igg_example` (Modell, Startorientierungen, Decke, REMD-Lauf,
-  Klassen). Produktionslauf 4 × 8 × 2 µs gestartet 2026-11-06.
+  Austauschakzeptanz ≈ 0.3. Tests: `test_igg_example` (Modell, Startorientierungen, Decke Energie
+  und Kraft, REMD-Lauf, Klassen), `test_igg_example_analyse` (synthetisch), `test_igg_example_resume`
+  (Fortsetzen über `main` bitgleich). Produktionslauf 4 × 8 × 2 µs gestartet 2026-11-06.
+  Review (unabhängiger Agent): kein hoher Befund; umgesetzt: Hinweis auf irreversible Adsorption
+  bei λ = 1 (Klassenanteile kein Gleichgewicht) und Desorptionsereignisse je Walker in summary.json,
+  Kraft der Decke getestet, Fortsetzen und `analyse` getestet, OQ-31 (Decke, Reibung), erste
+  Adsorption nach Klassendefinition, ⟨cos⟩ auch nur über adsorbierte Frames, Typ 0 ohne Decke,
+  Herkunft/Filter der PDB-Datei, Doku.
 
 ## Phase 10.6 – Replica Exchange im Treiber: abgenommen 2026-11-06, Branch `phase-10/coupling-remd`
 - `SelfConsistentOptics(remd=..., exchange_steps=..., target_states=...)`: Zyklen mit Austausch,

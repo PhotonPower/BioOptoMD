@@ -9,20 +9,33 @@ Decke (halbharmonisch über ``add_voxel_grid``) → unabhängige REMD-Leitern zu
 
 Platzhalter (siehe docs/OPEN_QUESTIONS.md):
 - ASSUMPTION(OQ-29): λ = 1 für alle Residuen (unkalibriert) ⇒ Adsorptionsstärke nur qualitativ.
+  Die Wand ist je Perle ≈ 5 kJ/mol tief; eine aufliegende Domäne mit einigen zehn Kontakten bindet
+  mit Hunderten kJ/mol, die Adsorption ist dann auch bei 370 K praktisch irreversibel. REMD wandelt
+  die Orientierungsklassen so nicht ineinander um: Die Anteile bei 300 K spiegeln Startorientierung
+  und Kinetik des ersten Kontakts, kein Gleichgewicht. ``summary.json`` zählt deshalb die
+  Desorptionsereignisse je Leiter (Ergodizitätsindikator); erst wenn es viele gibt, sind die
+  Klassenanteile als Gleichgewicht lesbar.
 - ASSUMPTION(OQ-30): CG-Parameter (ENM 0.9 nm / 500 kJ/mol/nm², Gō 2.5 kJ/mol, Perlen-LJ).
 - ASSUMPTION(OQ-18): Bildebene in der obersten Goldlage, f = 1.
 - Glykane (CH2) fehlen; die Domänengrenzen sind aus der Nummerierung von 1IGT gewählt.
-- Decke bei z = 30 nm (k = 100 kJ/mol/nm²): legt das Volumen des gelösten Zustands fest (Box
-  30 × 30 × 30 nm ≈ 60 µM für ein IgG); die Adsorptionsgleichgewichte hängen davon ab.
+- ASSUMPTION(OQ-31): Decke bei z = 30 nm (k = 100 kJ/mol/nm²): legt das Volumen des gelösten
+  Zustands fest (Box 30 × 30 × 30 nm ≈ 60 µM für ein IgG); die Adsorptionsgleichgewichte hängen
+  davon ab.
+- ASSUMPTION(OQ-31): Langevin γ = 1/ps ohne Bezug zur Wasserreibung: Zeiten sind keine
+  physikalischen Kinetiken.
 - Kontakt: Perle mit ζ − z_top < 0.6 nm; eine Gruppe (Fab 1, Fab 2, Fc) liegt auf, wenn
   mindestens 3 ihrer Perlen Kontakt haben. Orientierung: desorbiert, „Fc unten“ (nur Fc), „Fab
-  unten“ (nur Fab), „seitlich“ (ein Fab + Fc), „flach“ (beide Fab + Fc).
-- Langevin γ = 1/ps ohne Bezug zur Wasserreibung: Zeiten sind keine physikalischen Kinetiken.
+  unten“ (nur Fab), „seitlich“ (ein Fab + Fc), „flach“ (beide Fab + Fc). Kontakte nur über
+  Gelenkperlen oder mit < 3 Perlen je Gruppe zählen als desorbiert.
+
+Eingabe: tests/reference/inputs/1igt_protein.pdb = RCSB 1IGT, nur die Zeilen HEADER, TITLE, ATOM,
+TER, END (``grep -E "^(HEADER|TITLE|ATOM|TER|END)" 1IGT.pdb``; Glykane/HETATM und SSBOND entfernt).
+Fehlt die Datei, wird sie aus RCSB geladen und ebenso gefiltert.
 
 Messgrößen alle 100 ps je Slot: Schwerpunkthöhe über der obersten Goldlage, Kontakte je Gruppe,
 cos(Achse, z) je Gruppe (Achse: Gelenk-Schwerpunkt → Gruppenschwerpunkt), Zustand des Slots.
 
-Aufruf:  python examples/igg_on_gold/igg_on_gold.py --ns 1000 --out run_igg
+Aufruf:  python examples/igg_on_gold/igg_on_gold.py --ns 2000 --out run_igg
 Ausgabe: <out>/series.npz, <out>/summary.json, <out>/checkpoint.npz (Fortsetzung).
 """
 
@@ -55,8 +68,8 @@ DOMAINS = [
 ]
 GROUPS = {"fab1": (0, 1), "fab2": (2, 3), "fc": (4, 5, 6)}
 BOX = (30.0, 30.0)
-CEILING_NM, K_CEILING = 30.0, 100.0  # ASSUMPTION: Decke, s. o.
-DT, FRICTION, IONIC = 0.02, 1.0, 0.15
+CEILING_NM, K_CEILING = 30.0, 100.0  # ASSUMPTION(OQ-31): Decke, s. o.
+DT, FRICTION, IONIC = 0.02, 1.0, 0.15  # FRICTION: ASSUMPTION(OQ-31)
 LADDER = np.geomspace(300.0, 370.0, 8)
 EXCHANGE_STEPS = 50  # 1 ps
 FRAME_CYCLES = 100  # 100 ps
@@ -81,7 +94,10 @@ def atomic_checkpoint(ctx, path: Path, **kw) -> None:
 
 def load_model(pdb: Path = PDB):
     if not pdb.exists():
-        pdb.write_text(urllib.request.urlopen(PDB_URL, timeout=60).read().decode())
+        text = urllib.request.urlopen(PDB_URL, timeout=60).read().decode()
+        keep = ("HEADER", "TITLE", "ATOM", "TER", "END")
+        pdb.write_text("".join(line for line in text.splitlines(keepends=True)
+                               if line.startswith(keep)))  # fmt: skip
     return cg.enm_go_from_pdb(pdb, domains=DOMAINS)
 
 
@@ -97,9 +113,9 @@ def ceiling_grid(box, height=CEILING_NM, k=K_CEILING, width=5.0, dz=0.1):
     return vals, (0.0, 0.0, height), (box[0] / 2, box[1] / 2, dz)
 
 
-def build(n_ladders: int = 4, seed: int = 2026, lam=None, model=None):
+def build(n_ladders: int = 4, seed: int = 2026, lam=None, model=None, ceiling: bool = True):
     """Kontext, REMD und Metadaten. Jeder Slot startet in einer eigenen zufälligen Orientierung,
-    die unterste Perle START_GAP_NM über der obersten Goldlage."""
+    die unterste Perle START_GAP_NM über der obersten Goldlage. ``ceiling=False`` nur für Tests."""
     m = load_model() if model is None else model
     spec = m.spec
     z_top = surface.MATERIALS["gold"].z_top_nm
@@ -119,8 +135,11 @@ def build(n_ladders: int = 4, seed: int = 2026, lam=None, model=None):
     t = surface.wall_table("gold", info.lj_table, cg.solvent_scale(m, lam))
     ctx.add_planar_surface(t["prefactor"], t["sigma"], form=t["form"], delta=t["delta"], z0=0.0)
     builder.add_image_charges(ctx, info, "gold")
-    vals, origin, spacing = ceiling_grid(BOX)
-    ctx.add_voxel_grid(vals, origin, spacing, np.ones(len(m.names), np.float32), periodic_xy=True)
+    if ceiling:
+        vals, origin, spacing = ceiling_grid(BOX)
+        scale = np.ones(len(m.names), np.float32)
+        scale[0] = 0.0  # Typ 0 (Padding/Anker) wie in wall_table ohne äußeres Potential
+        ctx.add_voxel_grid(vals, origin, spacing, scale, periodic_xy=True)
     ctx.set_integrator(DT, FRICTION, seed)
     remd = ReplicaExchange(ctx, LADDER, ionic_strength_molar=IONIC, seed=seed, ladders=n_ladders)
     groups = {g: np.flatnonzero(np.isin(m.domain, d)) for g, d in GROUPS.items()}
@@ -173,31 +192,46 @@ def classify(contacts):
     return cls
 
 
+def frame_ns() -> float:
+    return FRAME_CYCLES * EXCHANGE_STEPS * DT / 1000.0
+
+
 def analyse(height, contacts, cosines, state, m):
     """Je Leiter im 300-K-Zustand (zweite Hälfte): adsorbierter Anteil, Klassenanteile, mittlere
-    Kontaktzahl und Höhe, ⟨cos⟩ je Gruppe; dazu die erste Adsorption je Leiter."""
+    Kontaktzahl und Höhe, ⟨cos⟩ je Gruppe (alle Frames und nur adsorbierte), erste Adsorption
+    (irgendein Slot der Leiter in einer Klasse > 0) und Desorptionsereignisse (Wechsel adsorbiert →
+    desorbiert je Slot, d. h. je Walker, über den ganzen Lauf; Ergodizitätsindikator, s. o.)."""
     n_frames, n_slots = height.shape
     half = n_frames // 2
     cls = classify(contacts)
-    out = {"frames": int(n_frames), "classes": list(CLASSES), "by_ladder": []}
+    ads = cls > 0
+    out = {"frames": int(n_frames), "frame_ns": frame_ns(), "classes": list(CLASSES),
+           "by_ladder": []}  # fmt: skip
     for b in range(n_slots // m):
+        sl = slice(b * m, (b + 1) * m)
         cold = state[half:] == b * m
         c = cls[half:][cold]
-        ads = contacts[:, b * m : (b + 1) * m].sum(axis=-1).max(axis=1) > 0
+        cos_cold = cosines[half:][cold]
+        any_ads = ads[:, sl].any(axis=1)
+        desorb = (ads[:-1, sl] & ~ads[1:, sl]).sum(axis=0)
         out["by_ladder"].append({
             "adsorbed_300K": float((c > 0).mean()),
             "class_fractions_300K": [float((c == k).mean()) for k in range(len(CLASSES))],
             "contacts_300K_mean": float(contacts[half:][cold].sum(axis=-1).mean()),
             "height_300K_mean_nm": float(height[half:][cold].mean()),
-            "cos_axis_300K_mean": cosines[half:][cold].mean(axis=0).tolist(),
-            "first_contact_ns": float((np.argmax(ads) + 1) * 0.1) if ads.any() else None,
+            "cos_axis_300K_mean": cos_cold.mean(axis=0).tolist(),
+            "cos_axis_300K_mean_adsorbed": (cos_cold[c > 0].mean(axis=0).tolist()
+                                            if (c > 0).any() else None),
+            "first_adsorption_ns": (float((np.argmax(any_ads) + 1) * frame_ns())
+                                    if any_ads.any() else None),
+            "desorption_events_by_walker": desorb.tolist(),
         })  # fmt: skip
     return out
 
 
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("--ns", type=float, default=1000.0, help="Simulationszeit je Replica [ns]")
+    p.add_argument("--ns", type=float, default=2000.0, help="Simulationszeit je Replica [ns]")
     p.add_argument("--ladders", type=int, default=4)
     p.add_argument("--seed", type=int, default=2026)
     p.add_argument("--out", type=Path, required=True)
@@ -240,13 +274,13 @@ def main(argv=None):
         cosines = np.concatenate([cosines, blk["a"]])
         state = np.concatenate([state, blk["s"]])
         atomic_savez(series_path, height=height, contacts=contacts, cosines=cosines, state=state,
-                     ladder=LADDER, time_ns=np.arange(1, len(height) + 1) * 0.1)  # fmt: skip
+                     ladder=LADDER, time_ns=np.arange(1, len(height) + 1) * frame_ns())  # fmt: skip
         atomic_checkpoint(ctx, ckpt, remd=remd)
         el = time.perf_counter() - t0
         rate = (len(height) - f0) * steps_per_frame * DT / 1000 / el * 86400  # ns/Tag je Replica
         cls = classify(contacts[-1])
         acc = remd.acceptance_ratio()
-        print(f"{len(height) * 0.1:.1f} ns, {el:.0f} s, {rate:.0f} ns/Tag je Replica, Akzeptanz "
+        print(f"{len(height) * frame_ns():.1f} ns, {el:.0f} s, {rate:.0f} ns/Tag je Replica, Akzeptanz "
               f"{np.nanmin(acc):.2f}–{np.nanmax(acc):.2f}, adsorbiert {(cls > 0).sum()}/{n_slots}",
               flush=True)  # fmt: skip
     summary = analyse(height, contacts, cosines, state, m)

@@ -49,4 +49,7 @@ Slot, alle 100 ps), `summary.json` (je Leiter bei 300 K: adsorbierter Anteil, Or
 desorbiert/„Fc unten“/„Fab unten“/seitlich/flach), `checkpoint.npz` (bitgleich fortsetzbar).
 Durchsatz (RTX 3090, 1316 Perlen, Wand + Bilder + Decke, Paarliste): 9.7 µs/Tag je Replica bei
 8 Replicas, 4.6 µs/Tag je Replica (148 µs/Tag gesamt) bei 32 Replicas. Die Adsorptionsstärke ist
-mit λ = 1 nur qualitativ (OQ-29).
+mit λ = 1 nur qualitativ (OQ-29): Je Perle ist die Wand ≈ 5 kJ/mol tief, eine aufliegende Domäne
+bindet mit Hunderten kJ/mol und löst sich auch bei 370 K praktisch nicht. Die Klassenanteile spiegeln
+dann Startorientierung und Kinetik des ersten Kontakts, kein Gleichgewicht; `summary.json` zählt
+die Desorptionsereignisse je Walker als Indikator. Decke und Reibung: OQ-31.
