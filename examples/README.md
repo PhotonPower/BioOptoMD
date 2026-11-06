@@ -29,7 +29,7 @@ python examples/aptamer_spr_gold/aptamer_spr_gold.py --iterations 10 --out spr_r
 
 Ausgabe: Verlauf je Iteration (Δε, ΔW, Rauschen, Selbstfeld), `profiles.npz` (ε(z), W(z), W₀(z)),
 `history.json`, Checkpoints je Iteration; auf der Konsole R mit und ohne Schicht (Sensorsignal δR).
-Referenzlauf (2026-11-06, RTX 3090, 1 m 33 s): δR ≈ −4.0e-3; ΔW sinkt in 10 Iterationen von 1.1e-2
+Referenzlauf (2026-11-06, RTX 3090, 1 m 33 s, ε-Gitter damals bis 8 nm): δR ≈ −4.0e-3; ΔW sinkt in 10 Iterationen von 1.1e-2
 auf 1.7e-3. Δε ist anfangs vor allem die Relaxation des Strangs zum Gold (bei 1 MW/cm² ist die
 optische Kraft klein), dabei wächst der Selbstfeldanteil auf ≈ 17 % (Warnung OQ-24). Für Produktion
 länger äquilibrieren, bevor die Iteration beginnt.

@@ -14,7 +14,7 @@ Platzhalter (klar markiert, siehe docs/OPEN_QUESTIONS.md):
 - Bei 1 MW/cm² sind die optischen Kräfte klein (ADR 0016, Größenordnung); die Rückwirkung der
   Schicht auf das Feld (δW, δR) ist das Ergebnis. ``--intensity`` erhöht die Eingangsintensität.
 
-Aufruf:  python examples/aptamer_spr_gold/aptamer_spr_gold.py --iterations 6 --out spr_run
+Aufruf:  python examples/aptamer_spr_gold/aptamer_spr_gold.py --iterations 10 --out spr_run
 """
 
 from __future__ import annotations
@@ -69,11 +69,12 @@ def build(n_replicas: int = 4, temperature: float = 300.0, seed: int = 2026, *,
     builder.add_anchors(ctx, [anchor], height_nm=anchor_z - wall["z_top"], z_top_nm=wall["z_top"])
     ctx.set_integrator(DT_PS, FRICTION, seed)
 
-    # Gitter: lateral periodisch über die Box; ε lateral gemittelt (TMM), Δz = 0.1 nm bis 8 nm.
+    # Gitter: lateral periodisch über die Box; ε lateral gemittelt (TMM), Δz = 0.1 nm.
+    # ASSUMPTION(OQ-18, OQ-25): optische Goldoberfläche = oberste Au-Lage (z_top), wie die Bildebene.
     z_surface = float(wall["z_top"])
-    nz_eps, dz_eps = 80, 0.1
+    nz_eps, dz_eps = 100, 0.1  # bis 10 nm über Gold (Strang ≈ 7.6 nm Kontur)
     force_grid = coupling.ForceGrid(
-        (12, 12, 37), (0.0, 0.0, z_surface), (box[0] / 12, box[1] / 12, 0.25), periodic_xy=True
+        (12, 12, 45), (0.0, 0.0, z_surface), (box[0] / 12, box[1] / 12, 0.25), periodic_xy=True
     )
     solver = coupling.TmmSolver(
         LAMBDA_NM, ANGLE_DEG, "p", N_PRISM, [(EPS_GOLD, D_GOLD_NM)],
@@ -115,7 +116,7 @@ def summarize(driver, meta) -> dict:
 
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("--iterations", type=int, default=6)
+    p.add_argument("--iterations", type=int, default=10)
     p.add_argument("--replicas", type=int, default=4)
     p.add_argument("--intensity", type=float, default=1e10, help="W/m² im Prisma (1e10 = 1 MW/cm²)")
     p.add_argument("--sample", type=int, default=10000, help="Messschritte je Iteration (4 fs)")

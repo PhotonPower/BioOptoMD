@@ -2,7 +2,7 @@
 
 > Diese Datei wird am Ende **jeder** Arbeitssitzung aktualisiert (AGENTS.md §2.4).
 
-**Aktive Phase:** 10 – MD ↔ FEM-Kopplung (Branch `phase-10/md-fem`, lokal), 10.0 umgesetzt; offen 9.4 (Hairpin-Lauf (b)) und 9.6 (Schlussmessung). Phasen 9.5 und 9.7 abgenommen 2026-11-06.
+**Aktive Phase:** 10 – MD ↔ FEM-Kopplung (Branch `phase-10/md-fem`, lokal), 10.0–10.4 umgesetzt, Abnahme ausstehend; offen 9.4 (Hairpin-Lauf (b)) und 9.6 (Schlussmessung). Phasen 9.5 und 9.7 abgenommen 2026-11-06.
 Alle PRs #1–#6, #9–#14 am 2026-11-05 nach `main` gemergt (Merge-Commits, Reihenfolge des Stapels).
 **Phase 9.3 (GB-neck2) abgenommen** am 2026-11-05, ADR 0012 und Abnahmekriterien bestätigt.
 **Phase 9.2 (Replica Exchange) abgenommen** am 2026-11-05, ADR 0011 und Abnahmekriterien bestätigt.
@@ -44,12 +44,15 @@ Alle PRs #1–#6, #9–#14 am 2026-11-05 nach `main` gemergt (Merge-Commits, Rei
   Fresnel-t_E, Rauschen aus Blockmitteln (ADR Punkt 1), NaN-/W-Prüfung, atomare Checkpoints,
   Konstanten C_LIGHT/EPS0_SI in units, `test_coupling_fixed_point` als slow; Treiber noch ohne REMD.
 - Phase 10.3 abgeschlossen: `HpFemGratingSolver` (hp-FEM 0.4.0 im selben Interpreter; Kretschmann mit
-  Schicht: max. Abweichung zu TMM p 1.0e-3, s 1.7e-7; ohne Schicht 1e-6) und `NpzFileSolver`
+  Schicht: max. Abweichung zu TMM p 3e-5, s 6e-9; ohne Schicht 1e-6; Review: Einheitszelle ab der
+  ε-Herkunft, Mittel an vertikalen Netzlinien, PML 1.25 λ/n, hp-FEM-Warnungen weitergereicht,
+  `test_hpfem_adapter_lateral`) und `NpzFileSolver`
   (externer Prozess bitgleich). hp-FEM ist nicht in der venv installiert; der Test läuft mit
   PYTHONPATH auf das Wheel und wird sonst übersprungen.
 - Phase 10.4: `examples/aptamer_spr_gold` (Aptamer über Gold, Kretschmann, TMM). Referenzlauf 10
   Iterationen: δR ≈ −4.0e-3, ΔW 1.1e-2 → 1.7e-3; Selbstfeld wächst mit der Adsorption des
-  Strangs auf ≈ 17 % (OQ-24-Warnung). Alle Punkte der Phase 10 umgesetzt; Abnahme durch den
+  Strangs auf ≈ 17 % (OQ-24-Warnung). Punkte 10.0–10.4 der ROADMAP umgesetzt; nicht Teil der
+  Abnahmekriterien und offen: 3D-hp-FEM-Adapter (`Scattering3D`), REMD im Treiber. Abnahme durch den
   Projektinhaber steht aus. Offen: `HpFemSolver` (hp-FEM ohne
   gmsh: Einheitszellennetz selbst bauen), npz-Adapter, Beispiel 10.4.
 - Phase 10.1/10.2: `PolarizabilityGridObserver` (`ctx.add_polarizability_grid`) und

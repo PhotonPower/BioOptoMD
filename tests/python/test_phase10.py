@@ -647,3 +647,67 @@ def test_example_aptamer_spr_gold(tmp_path):
     assert res["eps_z"][:20].max() > meta["n_water"] ** 2 + 0.01
     assert res["R_layer"] < res["R_water"]
     assert (tmp_path / "coupling_002.npz").exists() and (tmp_path / "iter_002.npz").exists()
+
+
+def test_hpfem_adapter_lateral():
+    """hp-FEM-Adapter mit lateralem ε-Kontrast (Review 10.3, H1/H2): (a) gemeinsame Verschiebung von
+    Struktur und Gittern um 0.3 Δx ändert W nicht (rel. 1e-6, gleiches Netz relativ zur Struktur);
+    (b) np.roll der ε-Spalten ergibt np.roll von W (rel. 1e-6); (c) ein Knoten auf einer
+    vertikalen Netzlinie erhält das Mittel von links und rechts (die Seiten unterscheiden sich um
+    > 1 %); (d) ``interpolation="linear"``: endlich, nahe am Zellwert, ``_bilinear_periodic_x`` exakt
+    für lineare Daten und periodisch. Nur mit hp-FEM."""
+    import warnings
+
+    pytest.importorskip("hpfem")
+    from biooptomd.coupling import (
+        EpsGrid,
+        ForceGrid,
+        HpFemGratingSolver,
+        _bilinear_periodic_x,
+        field_amplitude_sq,
+    )
+
+    prof = np.array([0.1, 0.4, 0.3, 0.2, 0.05])
+    cols = np.array([1.0, 0.0, 0.5, 0.0])
+    base = EPS_W633 + prof[:, None, None] * cols[None, None, :]  # (5, 1, 4)
+
+    def run(ox, eps_values, interpolation="cell"):
+        grid = ForceGrid((4, 1, 13), (ox, 0.0, 0.0), (1.0, 4.0, 0.25), periodic_xy=True)
+        eps = EpsGrid(eps_values, (ox, 0.0, 0.5), (1.0, 4.0, 0.4), 1.3317)
+        solver = HpFemGratingSolver(LAM, 72.6, "p", N_PRISM, [(EPS_AU, 50.0)],
+                                    intensity_w_m2=1e10, interpolation=interpolation)  # fmt: skip
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)  # mesh_poor_angles des Netzes
+            return solver.solve(eps, grid), solver
+
+    w0, solver = run(0.0, base)
+    w_shift, _ = run(0.3, base)
+    np.testing.assert_allclose(w_shift, w0, rtol=0, atol=1e-6 * w0.max())
+    w_roll, _ = run(0.0, np.roll(base, 1, axis=2))
+    np.testing.assert_allclose(w_roll, np.roll(w0, 1, axis=2), rtol=0, atol=1e-6 * w0.max())
+
+    # (c) Knoten x = 1 nm (Grenze Spalte 0 | 1), z = 0.75 nm (im Bereich, keine z-Linie)
+    k, i = 3, 1
+    res = solver.last_result
+    nm, d = 1e-9, 1e-4
+    z_first = -50.0
+    sides = [(np.abs(res.field(np.array([[x, z_first - 0.75]]) * nm)) ** 2).sum()
+             for x in (1.0 - d, 1.0 + d)]  # fmt: skip
+    e0 = field_amplitude_sq(1e10, N_PRISM)
+    assert abs(sides[0] - sides[1]) > 0.01 * max(sides)
+    assert w0[k, 0, i] == pytest.approx(e0 * 0.5 * (sides[0] + sides[1]), rel=1e-10)
+
+    # (d) bilineare Variante
+    w_lin, _ = run(0.0, base, interpolation="linear")
+    assert np.isfinite(w_lin).all()
+    assert np.abs(w_lin - w0).max() < 0.1 * w0.max()
+    xc, zc = np.arange(4) + 0.5, 0.5 + 0.4 * (np.arange(5) + 0.5)
+    vals = 2.0 + 0.3 * zc[:, None] + 0.0 * xc[None, :]
+    assert _bilinear_periodic_x(vals, xc, zc, 1.7, 1.1, 4.0) == pytest.approx(2.0 + 0.3 * 1.1)
+    per = np.tile(np.array([1.0, 2.0, 3.0, 2.0]), (5, 1))
+    assert _bilinear_periodic_x(per, xc, zc, 3.9 + 4.0, 1.0, 4.0) == pytest.approx(
+        _bilinear_periodic_x(per, xc, zc, 3.9, 1.0, 4.0)
+    )
+    assert _bilinear_periodic_x(per, xc, zc, 0.0, 1.0, 4.0) == pytest.approx(
+        1.5
+    )  # zwischen 2 und 1

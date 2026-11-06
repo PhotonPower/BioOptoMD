@@ -489,15 +489,25 @@ class HpFemGratingSolver:
     den Knoten (x, z) des Kraftgitters über ``GratingResult.field`` ausgewertet und auf y übertragen.
 
     Koordinaten: hp-FEM-y = z_first − z (Licht von oben, ``stack.top`` = 0 an der ersten
-    Grenzfläche), Einheiten m ↔ nm. Die einfallende Welle hat in hp-FEM die Amplitude 1 V/m, daher
-    W = |E₀|² · Σ|E_c|² mit |E₀|² aus ``intensity_w_m2`` (W/m², im Einfallsmedium).
+    Grenzfläche), hp-FEM-x = x (Einheitszelle [x₀, x₀ + L_x) mit x₀ = Herkunft des ε-Gitters, damit
+    die Netzspalten auf den ε-Zellgrenzen liegen), Einheiten m ↔ nm. Die einfallende Welle hat in
+    hp-FEM die Amplitude 1 V/m, daher W = |E₀|² · Σ|E_c|² mit |E₀|² aus ``intensity_w_m2`` (W/m², im
+    Einfallsmedium).
 
-    Netz: strukturiert, Zeilen an allen Stapel-Grenzflächen und ε-Zellgrenzen, Zellhöhe ``h_far``
-    [nm] in Prisma und Wasser, ``h_layer`` in den Substratschichten, die ε-Zellen im Bereich
-    (``refine_region`` Zeilen je Zelle); in x ``nx_per_cell`` Spalten je ε-Zelle; Polynomgrad
-    ``order``; PML ``pml_nm`` oben und unten, Wasserpuffer ``water_nm`` unter dem Bereich. Knoten des
-    Kraftgitters auf einer Netzlinie im Bereich erhalten das Mittel beider Seiten (wie
-    :meth:`TmmResult.intensity`).
+    Netz: strukturiert, Zeilen an allen Stapel-Grenzflächen, ε-Zellgrenzen und PML-Anfängen,
+    Zellhöhe ``h_far`` [nm] in Prisma und Wasser, ``h_layer`` in den Substratschichten, die ε-Zellen im
+    Bereich (``refine_region`` Zeilen je Zelle); in x ``nx_per_cell`` Spalten je ε-Zelle über die
+    ganze Höhe (strukturiert, keine hängenden Knoten). Viele ε-Spalten erzeugen daher dünne, breite
+    Zellen in Prisma und Wasser: 60 × 80 ε-Zellen à 0.1 nm brauchen bei ``order`` 4 etwa 400k
+    Unbekannte und ~1.5 min je Lösung (RTX-3090-Host); lateral gröbere ε-Gitter oder
+    ``hpfem.grating.estimate_memory`` vorab. PML ``pml_nm`` oben und unten (Default: 1.25 lokale
+    Wellenlängen λ/min(n), Zellhöhe ``h_far``/2, über hp-FEMs Empfehlung von einer halben
+    Wellenlänge plus Reserve), Wasserpuffer ``water_nm`` unter dem Bereich.
+    Warnungen aus ``result.diagnostics`` und ein Leistungsbilanz-Residuum über ``balance_warn``
+    werden als ``RuntimeWarning`` weitergereicht.
+
+    Knoten des Kraftgitters auf einer Netzlinie (z und x) erhalten das Mittel der angrenzenden
+    Zellen (2 bzw. an Ecken 4 Seiten), wie :meth:`TmmResult.intensity`.
     """
 
     wavelength_nm: float
@@ -512,10 +522,11 @@ class HpFemGratingSolver:
     h_layer: float = 5.0
     refine_region: int = 1
     nx_per_cell: int = 1
-    pml_nm: float = 280.0
+    pml_nm: float | None = None
     water_nm: float = 400.0
     prism_nm: float = 300.0
     interpolation: str = "cell"
+    balance_warn: float = 1e-3
     last_result: object = field(default=None, repr=False)
 
     def solve(self, eps: EpsGrid, grid: ForceGrid) -> np.ndarray:
@@ -534,11 +545,11 @@ class HpFemGratingSolver:
             raise ValueError(
                 "HpFemGratingSolver: ε-Gitter und Kraftgitter brauchen dieselbe Periode in x"
             )
+        x0 = float(eps.origin[0])
         eps_xz = eps.eps.mean(axis=1)  # (nz, nx), Mittel über y (in hp-FEM invariant)
         eps_w = eps.n_water**2
         d_sub = [float(d) for _, d in self.substrate]
         z_first = self.z_surface - sum(d_sub)
-        # z-Stützstellen (unser z): Wasser ab Oberfläche, ε-Bereich, Wasserpuffer, PML
         z0, dz, nz_e = eps.origin[2], eps.spacing[2], eps.eps.shape[0]
         z_top_region = z0 + nz_e * dz
         if z0 < self.z_surface - 1e-9:
@@ -546,14 +557,21 @@ class HpFemGratingSolver:
                 "HpFemGratingSolver: Beobachtergitter beginnt unterhalb der Oberfläche"
             )
         z_nodes = grid.nodes(2)
+        z_prism = z_first - self.prism_nm  # Beginn der oberen PML (unser z)
+        if z_nodes.min() <= z_prism:
+            raise ValueError("HpFemGratingSolver: Kraftgitterknoten liegen in der oberen PML")
+        pml = self.pml_nm
+        if pml is None:
+            lam_local = self.wavelength_nm / min(self.n_incident, eps.n_water)
+            h_pml = 0.5 * self.h_far
+            pml = float(np.ceil(1.25 * lam_local / h_pml) * h_pml)
         z_bottom = max(z_top_region, float(z_nodes.max())) + self.water_nm
-        pieces = []
 
         def lin(a, b, h):
             n = max(1, int(np.ceil((b - a) / h - 1e-9)))
             return np.linspace(a, b, n + 1)
 
-        pieces.append(lin(z_first - self.prism_nm - self.pml_nm, z_first, self.h_far))
+        pieces = [lin(z_prism - pml, z_prism, 0.5 * self.h_far), lin(z_prism, z_first, self.h_far)]
         z = z_first
         for d in d_sub:
             pieces.append(lin(z, z + d, self.h_layer))
@@ -561,15 +579,21 @@ class HpFemGratingSolver:
         if z0 > self.z_surface:
             pieces.append(lin(self.z_surface, z0, min(self.h_layer, z0 - self.z_surface)))
         pieces.append(np.linspace(z0, z_top_region, nz_e * self.refine_region + 1))
-        pieces.append(lin(z_top_region, z_bottom + self.pml_nm, self.h_far))
-        zs = np.unique(np.round(np.concatenate(pieces), 9))
+        pieces.append(lin(z_top_region, z_bottom, self.h_far))
+        pieces.append(lin(z_bottom, z_bottom + pml, 0.5 * self.h_far))
+        zs = np.sort(np.concatenate(pieces))
+        zs = zs[np.concatenate([[True], np.diff(zs) > 1e-6])]  # Duplikate an Stückgrenzen
         ys = (z_first - zs)[::-1]  # hp-FEM-y aufsteigend
         nx = nx_e * self.nx_per_cell
         ny = len(ys) - 1
-        mesh = hpfem.rectangle(nx, ny, np.array([0.0, 0.0]), np.array([period * nm, 1.0]))
+        mesh = hpfem.rectangle(
+            nx, ny, np.array([x0 * nm, 0.0]), np.array([(x0 + period) * nm, 1.0])
+        )
+        xs_mesh = x0 + np.arange(nx + 1) * (period / nx)
         for v in range(mesh.num_vertices):
             x, y = mesh.vertex(v)
-            mesh.set_vertex(v, np.array([x, ys[int(np.rint(y * ny))] * nm]))
+            i = int(np.rint((x / nm - x0) / (period / nx)))
+            mesh.set_vertex(v, np.array([xs_mesh[i] * nm, ys[int(np.rint(y * ny))] * nm]))
         stack = hpfem.LayerStack2D(
             hpfem.Material.dielectric(self.n_incident),
             [hpfem.Layer(hpfem.Material(complex(e)), float(d) * nm) for e, d in self.substrate],
@@ -578,14 +602,14 @@ class HpFemGratingSolver:
         )
         mm = hpfem.MaterialMap(stack.incidence_medium)
         cent = np.asarray(mesh.cell_centroids)
-        xe = eps.origin[0] + (np.arange(nx_e) + 0.5) * eps.spacing[0]
+        xe = x0 + (np.arange(nx_e) + 0.5) * eps.spacing[0]
         ze = z0 + (np.arange(nz_e) + 0.5) * dz
         for c in range(mesh.num_cells):
             xc, yc = float(cent[c][0]), float(cent[c][1])
             zc = z_first - yc / nm
             if z0 < zc < z_top_region:
                 if self.interpolation == "cell":
-                    i = int(np.floor((xc / nm - eps.origin[0]) / eps.spacing[0])) % nx_e
+                    i = int(np.floor((xc / nm - x0) / eps.spacing[0])) % nx_e
                     k = min(int(np.floor((zc - z0) / dz)), nz_e - 1)
                     value = eps_xz[k, i]
                 else:
@@ -598,25 +622,49 @@ class HpFemGratingSolver:
             2.0 * np.pi * units.C_LIGHT / (self.wavelength_nm * nm), order=self.order,
             cover_line=0.5 * self.prism_nm * nm,
             substrate_line=(z_first - z_bottom + 0.5 * self.water_nm) * nm,
-            pml={"top": self.pml_nm * nm, "bottom": self.pml_nm * nm},
+            pml={"top": pml * nm, "bottom": pml * nm},
         )  # fmt: skip
         self.last_result = res
-        xs = grid.nodes(0)
-        lines = z_first - ys  # unser z der Netzlinien
-        on_line = np.any(np.abs(z_nodes[:, None] - lines[None, :]) <= 1e-9, axis=1)
+        for diag in getattr(res, "diagnostics", None) or []:
+            level = str(getattr(diag, "level", getattr(diag, "severity", ""))).lower()
+            if "warn" in level:
+                warnings.warn(f"HpFemGratingSolver (hp-FEM): {diag}", RuntimeWarning, stacklevel=2)
+        resid = float(getattr(res, "power_balance_residual", 0.0) or 0.0)
+        if abs(resid) > self.balance_warn:
+            warnings.warn(
+                f"HpFemGratingSolver: Leistungsbilanz-Residuum {resid:.1e} (> {self.balance_warn:g});"
+                " PML/Netz verfeinern",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+        return np.broadcast_to(
+            self._sample(res, grid, x0, period, nx, z_first, z_first - ys)[:, None, :],
+            grid.zyx_shape,
+        ).copy()
+
+    def _sample(self, res, grid, x0, period, nx, z_first, z_lines):
+        nm = 1e-9
         delta = 1e-4  # nm
-        w_z_x = np.empty((len(z_nodes), len(xs)))
+        z_nodes, x_nodes = grid.nodes(2), grid.nodes(0)
+        xm = x0 + np.mod(x_nodes - x0, period)  # in die Einheitszelle [x0, x0 + L)
+        h = period / nx
+        frac = (xm - x0) / h
+        x_on = np.abs(frac - np.rint(frac)) * h <= 1e-9
+        z_on = np.any(np.abs(z_nodes[:, None] - z_lines[None, :]) <= 1e-9, axis=1)
+        w = np.empty((len(z_nodes), len(x_nodes)))
         for k, zk in enumerate(z_nodes):
-            shifts = (-delta, delta) if on_line[k] else (0.0,)
-            acc = np.zeros(len(xs))
-            for s in shifts:
-                pts = np.stack([np.mod(xs, period), np.full(len(xs), -(zk + s - z_first))], 1) * nm
-                e_field = res.field(pts)
-                acc += (np.abs(e_field) ** 2).sum(axis=1)
-            w_z_x[k] = acc / len(shifts)
-        e0 = field_amplitude_sq(self.intensity_w_m2, self.n_incident)
-        w = e0 * w_z_x
-        return np.broadcast_to(w[:, None, :], grid.zyx_shape).copy()
+            zsh = (zk - delta, zk + delta) if z_on[k] else (zk,)
+            for i, xi in enumerate(xm):
+                if x_on[i]:
+                    xl = x0 + np.rint(frac[i]) * h
+                    left = xl - delta if xl - x0 > 0.5 * h else x0 + period - delta  # x0 ≡ x0 + L
+                    right = xl + delta if xl - x0 < period - 0.5 * h else x0 + delta
+                    xsh = (left, right)
+                else:
+                    xsh = (xi,)
+                pts = np.array([[xx, z_first - zz] for xx in xsh for zz in zsh]) * nm
+                w[k, i] = (np.abs(res.field(pts)) ** 2).sum(axis=1).mean()
+        return field_amplitude_sq(self.intensity_w_m2, self.n_incident) * w
 
 
 def _bilinear_periodic_x(values, xc, zc, x, z, period):
@@ -652,6 +700,8 @@ class NpzFileSolver:
     ``grid_spacing`` [nm], ``grid_periodic_xy``), dann ``command`` ausgeführt (Liste von Argumenten;
     ``{input}`` und ``{output}`` werden ersetzt; alternativ eine Python-Funktion ``(input, output)``).
     Der Solver schreibt ``workdir/field_{k:03d}.npz`` mit ``w`` = |E₀|² [(V/nm)²] (nz, ny, nx).
+    k zählt die Aufrufe dieser Instanz ab ``calls`` (nach ``resume`` mit neuer Instanz ``calls`` auf
+    die Zahl der bisherigen Solver-Aufrufe setzen, sonst werden alte Dateien überschrieben).
     """
 
     workdir: object
@@ -679,7 +729,8 @@ class NpzFileSolver:
         if callable(self.command):
             self.command(str(inp), str(out))
         else:
-            args = [str(a).format(input=inp, output=out) for a in self.command]
+            args = [str(a).replace("{input}", str(inp)).replace("{output}", str(out))
+                    for a in self.command]  # fmt: skip
             subprocess.run(args, check=True, timeout=self.timeout_s)
         if not out.exists():
             raise RuntimeError(f"NpzFileSolver: {out} wurde nicht geschrieben")
