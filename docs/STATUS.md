@@ -46,7 +46,11 @@ Alle PRs #1–#6, #9–#14 am 2026-11-05 nach `main` gemergt (Merge-Commits, Rei
 - Phase 10.3 abgeschlossen: `HpFemGratingSolver` (hp-FEM 0.4.0 im selben Interpreter; Kretschmann mit
   Schicht: max. Abweichung zu TMM p 1.0e-3, s 1.7e-7; ohne Schicht 1e-6) und `NpzFileSolver`
   (externer Prozess bitgleich). hp-FEM ist nicht in der venv installiert; der Test läuft mit
-  PYTHONPATH auf das Wheel und wird sonst übersprungen. Offen: `HpFemSolver` (hp-FEM ohne
+  PYTHONPATH auf das Wheel und wird sonst übersprungen.
+- Phase 10.4: `examples/aptamer_spr_gold` (Aptamer über Gold, Kretschmann, TMM). Referenzlauf 10
+  Iterationen: δR ≈ −4.0e-3, ΔW 1.1e-2 → 1.7e-3; Selbstfeld wächst mit der Adsorption des
+  Strangs auf ≈ 17 % (OQ-24-Warnung). Alle Punkte der Phase 10 umgesetzt; Abnahme durch den
+  Projektinhaber steht aus. Offen: `HpFemSolver` (hp-FEM ohne
   gmsh: Einheitszellennetz selbst bauen), npz-Adapter, Beispiel 10.4.
 - Phase 10.1/10.2: `PolarizabilityGridObserver` (`ctx.add_polarizability_grid`) und
   `VoxelGridForce3D.set_values`. `test_phase10.py` (7 Tests) grün: Histogramme/Varianz/ε gegen NumPy
@@ -309,7 +313,7 @@ ADR 0007 → **0009** (Mixed Precision), unsere OQ-08…11 → **OQ-11…14**.
 ## Nächster konkreter Schritt
 1. Hairpin-Lauf (OQ-15 b) auswerten, PR #15 aktualisieren, Phase 9.4 zur Abnahme; danach
    Schlussmessung 9.6 auf freier GPU (OQ-19).
-2. Phase 10.4: Beispiel Aptamerschicht über Gold im Kretschmann-Aufbau; danach Abnahme Phase 10.
+2. Abnahme Phase 10 (Projektinhaber); offen bleiben 3D-hp-FEM-Adapter und REMD im Treiber.
 3. Nachholen: Kontrolllauf auf der RTX 6000 Ada; Nsight Compute (Counter-Freigabe).
 
 ## Sitzungslog

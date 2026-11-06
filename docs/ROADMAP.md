@@ -305,7 +305,8 @@ Abnahmetests (revidierte Fassung vom Projektinhaber bestätigt 2026-11-06):
    periodisch, in y invariant; `test_hpfem_adapter_planar`, rel. 1e-3 gegen TMM) und
    `NpzFileSolver` (`test_npz_file_solver`). Offen: allgemeiner 3D-Adapter (`Scattering3D` mit
    `LayerStack3D`), Treiber mit Replica Exchange (Zielzustand über die Slots, ADR 0016 Punkt 5).
-4. Beispiel: Aptamerschicht über Gold im Kretschmann-Aufbau mit dem TMM-Adapter.
+4. Beispiel: Aptamerschicht über Gold im Kretschmann-Aufbau mit dem TMM-Adapter. *Umgesetzt
+   2026-11-06* (`examples/aptamer_spr_gold`, `test_example_aptamer_spr_gold`).
 
 Abnahmetests (Vorschlag): siehe ADR 0016, Konsequenzen (`test_polarizability_grid_vs_numpy`,
 `test_voxel_set_values`, `test_tmm_reference`, `test_coupling_fixed_point`, `test_coupling_scaling`,

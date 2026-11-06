@@ -621,3 +621,29 @@ def test_npz_file_solver(tmp_path):
         NpzFileSolver(tmp_path / "w3", [sys.executable, "-c", "raise SystemExit(3)"]).solve(
             eps, grid
         )
+
+
+@pytest.mark.slow
+@pytest.mark.reference
+def test_example_aptamer_spr_gold(tmp_path):
+    """Beispiel 10.4 (examples/aptamer_spr_gold): Aptamer über Gold, 2 Replicas, 2 Iterationen mit
+    TMM-Kretschmann. Endliche Profile, keine Statusbits, Checkpoints geschrieben; die Schicht senkt
+    R beim Arbeitswinkel (δR < 0, Sensorsignal) und erhöht ε nahe der Oberfläche."""
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[2] / "examples" / "aptamer_spr_gold"
+    spec_ = importlib.util.spec_from_file_location("aptamer_spr_gold", path / "aptamer_spr_gold.py")
+    ex = importlib.util.module_from_spec(spec_)
+    spec_.loader.exec_module(ex)
+
+    ctx, driver, meta = ex.build(n_replicas=2, n_equil=500, n_sample=2000, stride=50,
+                                 checkpoint_dir=tmp_path)  # fmt: skip
+    driver.run(max_iter=2)
+    assert ctx.status() == 0
+    res = ex.summarize(driver, meta)
+    assert len(res["history"]) == 2
+    assert np.isfinite(res["eps_z"]).all() and np.isfinite(res["w_z"]).all()
+    assert res["eps_z"][:20].max() > meta["n_water"] ** 2 + 0.01
+    assert res["R_layer"] < res["R_water"]
+    assert (tmp_path / "coupling_002.npz").exists() and (tmp_path / "iter_002.npz").exists()
