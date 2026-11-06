@@ -30,6 +30,9 @@ Alle PRs #1–#6, #9–#14 am 2026-11-05 nach `main` gemergt (Merge-Commits, Rei
 - ADR 0016: Mean-Field-Fixpunktiteration mit Dämpfung, 3D-ε-Observer, `VoxelGridForce3D::set_values`,
   Solver als Python-Protokoll (TMM-Referenz, hp-FEM-Adapter im selben Prozess, npz-Rückfall);
   Voraussetzungen Lokalfeldtest und dn/dc-Kalibrierung an Literaturwerten (Phase 10.0).
+- Phase 10.0 (a): `test_phase6.py::test_voxel_optical_sphere_consistency` grün. Der Profiler bildet
+  α′, v auf n_p ab; die GPU-Kraft ist die additive Summe (rel. 1e-5); das Verhältnis CM/additiv ist
+  analytisch 1.638 bei n_p = 1.5 in Wasser und exakt 1 in Vakuum. Entscheidung Korrektur: OQ-22.
 - OQ-20 entschieden (hp-FEM). hp-FEM 0.4.0 (Release-Wheel cp311-win_amd64) und BioOptoMD laufen im
   selben Interpreter (geprüft in einem getrennten Verzeichnis, venv unverändert). Offen: OQ-21
   (Mean-Field).

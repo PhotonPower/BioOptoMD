@@ -557,3 +557,84 @@ def test_voxel_optical_normalization():
         expected = -scale.astype(np.float64)[:, None] * g[None, :]
         np.testing.assert_allclose(f, expected, rtol=1e-5, atol=1e-6 * np.abs(expected).max())
         assert np.abs(f[1]).max() < 1e-9 * np.abs(f[0]).max(), label
+
+
+def test_voxel_optical_sphere_consistency():
+    """Lokalfeldfaktor (OQ-04, ADR 0016 Punkt 7a): dichte Atomkugel (kubisches Gitter, v = d³ ⇒ kein
+    Wasser im Inneren) mit Brechungsindex n_p im linearen |E₀|²-Gradienten.
+
+    (1) Der Profiler ergibt für eine voll gefüllte Schicht desselben Gitters n = n_p (Abbildung
+        α′, v ↔ n_p).
+    (2) Die GPU-Gesamtkraft ist die Summe der additiven Überschusskräfte, F = −Σ s_i g (rel. 1e-5).
+    (3) Vergleich mit der Dipolkraft einer dielektrischen Kugel (Clausius-Mossotti im Medium):
+        α′_CM = a³ ε_w (ε_p − ε_w)/(ε_p + 2 ε_w) mit a³ = 3 N d³/(4π). Das additive Modell ergibt
+        a³ (L_p − L_w); das Verhältnis CM/additiv ist analytisch ε_w (ε_w + 2)(ε_p + 2)/(3(ε_p + 2 ε_w))
+        und geht für kleinen Kontrast gegen den Lorentz-Faktor ((n_w² + 2)/3)². In Vakuum (n_w = 1)
+        ist es exakt 1. Ergebnis (n_w = 1.333, n_p = 1.5): Das additive Modell unterschätzt die
+        Kraft um den Faktor ≈ 1.64."""
+    from biooptomd import units
+    from biooptomd.voxel import optical_scale
+
+    d, a, n_p = 0.25, 1.5, 1.5
+    eps_p = n_p**2
+    l_p = (eps_p - 1.0) / (eps_p + 2.0)
+    vol = d**3
+    alpha = 3.0 * l_p * vol / (4.0 * np.pi)  # L_p = (4π/3) α′/d³ bei f_w = 0
+
+    # (1) voll gefüllte Schicht: 16 × 16 × 8 Gitterpunkte in einer 4 × 4 nm-Box
+    xy = (np.arange(16) + 0.5) * d
+    zs = 1.0 + (np.arange(8) + 0.5) * d
+    gx, gy, gz = np.meshgrid(xy, xy, zs, indexing="ij")
+    slab = np.stack([gx.ravel(), gy.ravel(), gz.ravel()], 1).astype(np.float32)
+    ctx = _ctx(1, len(slab), 4.0)
+    ctx.set_positions(slab[None])
+    prof = ctx.add_refractive_index_profiler(
+        d, 24, np.array([alpha], np.float32), np.array([vol], np.float32), n_water=1.333,
+        smearing="point",
+    )  # fmt: skip
+    ctx.observe_now()
+    n_layer = prof.result()["n"][0, 4:12]
+    np.testing.assert_allclose(n_layer, n_p, rtol=1e-5)
+
+    # (2) Kugel im linearen Gradienten W = 40 + g z [(V/nm)²]
+    c = 4.0
+    grid = (np.arange(-8, 9)) * d
+    px, py, pz = np.meshgrid(grid, grid, grid, indexing="ij")
+    r = np.stack([px.ravel(), py.ravel(), pz.ravel()], 1)
+    sphere = (r[np.linalg.norm(r, axis=1) <= a] + c).astype(np.float32)
+    n_atoms = len(sphere)
+    g = 5.0
+    shape, origin, spacing = (13, 13, 13), (c - 3.0, c - 3.0, c - 3.0), 0.5
+    zz = origin[2] + spacing * np.arange(shape[2])
+    w_field = np.broadcast_to((40.0 + g * zz)[:, None, None], shape)
+    values = values_from_potential(w_field, (spacing,) * 3)
+    a3 = 3.0 * n_atoms * vol / (4.0 * np.pi)
+    k = units.FARADAY**2 / (4.0 * units.ONE_4PI_EPS0)  # ¼ α′ |E₀|² → kJ/mol
+    for n_w in (1.333, 1.0):
+        eps_w = n_w**2
+        l_w = (eps_w - 1.0) / (eps_w + 2.0)
+        scale = optical_scale(np.array([alpha]), np.array([vol]), n_w, amplitude="peak")
+        ctx = _ctx(1, n_atoms, 8.0)
+        ctx.set_positions(sphere[None])
+        types = np.zeros((1, n_atoms, 2), np.int32)
+        ctx.set_types(types)
+        ctx.add_voxel_grid(values, origin, (spacing,) * 3, scale)
+        ctx.compute_forces()
+        f_gpu = ctx.forces()[0, :n_atoms, 2].astype(np.float64).sum()
+        f_add = n_atoms * k * (alpha - 3.0 / (4.0 * np.pi) * vol * l_w) * g
+        assert f_gpu == pytest.approx(f_add, rel=1e-5)
+        np.testing.assert_allclose(n_atoms * (alpha - 3 / (4 * np.pi) * vol * l_w), a3 * (l_p - l_w),
+                                   rtol=1e-12)  # fmt: skip
+        # (3) Clausius-Mossotti im Medium
+        f_cm = k * a3 * eps_w * (eps_p - eps_w) / (eps_p + 2.0 * eps_w) * g
+        ratio = f_cm / f_gpu
+        expected = eps_w * (eps_w + 2.0) * (eps_p + 2.0) / (3.0 * (eps_p + 2.0 * eps_w))
+        assert ratio == pytest.approx(expected, rel=2e-5)
+        if n_w == 1.0:
+            assert ratio == pytest.approx(1.0, rel=2e-5)
+        else:
+            lorentz = ((eps_w + 2.0) / 3.0) ** 2
+            assert 1.0 < lorentz < ratio < 1.05 * lorentz
+            print(
+                f"n_w {n_w}, n_p {n_p}: CM/additiv {ratio:.4f}, Lorentz ((n_w²+2)/3)² {lorentz:.4f}"
+            )
